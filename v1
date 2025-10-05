@@ -201,11 +201,7 @@ MainSection:Toggle({
                         -- 🚀 Teleport to next checkpoint
                         if teleports[nextCheckpoint] then
                             hrp.CFrame = teleports[nextCheckpoint]
-                            WindUI:Notify({
-                                Title = "Teleporting...",
-                                Content = "Moving to checkpoint " .. nextCheckpoint,
-                                Duration = 2
-                            })
+                            
                         else
                             WindUI:Notify({
                                 Title = "Error",
