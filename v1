@@ -243,7 +243,7 @@ MainSection:Toggle({
 
 MainSection:Toggle({
     Title = "Auto Summit Mount Botak",
-    Description = "Teleports based on Stage stat (Stage value maps directly to coordinates)",
+    Description = "Teleports based on Stage stat (waits for Stage update before next move)",
     Default = false,
     Callback = function(v)
         if autoMountBotakThread then
@@ -255,94 +255,78 @@ MainSection:Toggle({
             local player = game.Players.LocalPlayer
             local loopCount = 0
 
-            -- Stage 1..17 coordinates (Stage value maps directly to these indices)
+            -- Stage 1–17 coordinates
             local teleports = {
-                [1]  = CFrame.new(456, 315, -629),    -- Stage 1
-                [2]  = CFrame.new(625, 414, -94),     -- Stage 2
-                [3]  = CFrame.new(584, 463, 249),     -- Stage 3
-                [4]  = CFrame.new(557, 504, 465),     -- Stage 4
-                [5]  = CFrame.new(287, 620, 818),     -- Stage 5
-                [6]  = CFrame.new(198, 777, 582),     -- Stage 6
-                [7]  = CFrame.new(50, 1033, -399),    -- Stage 7
-                [8]  = CFrame.new(-243, 1176, -785),  -- Stage 8
-                [9]  = CFrame.new(-117, 1185, -1119), -- Stage 9
-                [10] = CFrame.new(203, 1285, -1510),  -- Stage 10
-                [11] = CFrame.new(733, 1398, -1596),  -- Stage 11
-                [12] = CFrame.new(739, 1345, -835),   -- Stage 12
-                [13] = CFrame.new(758, 1309, -360),   -- Stage 13
-                [14] = CFrame.new(1109, 1643, 381),   -- Stage 14
-                [15] = CFrame.new(1438, 1747, 526),   -- Stage 15
-                [16] = CFrame.new(1731, 1754, 472),   -- Stage 16
-                [17] = CFrame.new(1776, 2059, -284)   -- Stage 17 (finish)
+                [1]  = CFrame.new(456, 315, -629),
+                [2]  = CFrame.new(625, 414, -94),
+                [3]  = CFrame.new(584, 463, 249),
+                [4]  = CFrame.new(557, 504, 465),
+                [5]  = CFrame.new(287, 620, 818),
+                [6]  = CFrame.new(198, 777, 582),
+                [7]  = CFrame.new(50, 1033, -399),
+                [8]  = CFrame.new(-243, 1176, -785),
+                [9]  = CFrame.new(-117, 1185, -1119),
+                [10] = CFrame.new(203, 1285, -1510),
+                [11] = CFrame.new(733, 1398, -1596),
+                [12] = CFrame.new(739, 1345, -835),
+                [13] = CFrame.new(758, 1309, -360),
+                [14] = CFrame.new(1109, 1643, 381),
+                [15] = CFrame.new(1438, 1747, 526),
+                [16] = CFrame.new(1731, 1754, 472),
+                [17] = CFrame.new(1776, 2059, -284)
             }
 
             local maxStage = 17
 
-            -- Set to true if you *want* the bot to always teleport to the next stage (currentStage + 1).
-            -- Leave false to teleport to the coordinate that matches the Stage value exactly.
-            local useNextStage = false
-
             WindUI:Notify({
                 Title = "Auto Summit Mount Botak",
-                Content = "Started teleport loop!",
+                Content = "Started teleport loop (waiting for Stage changes)!",
                 Duration = 3
             })
 
             autoMountBotakThread = task.spawn(function()
-                while task.wait(2) do
+                local lastStage = -1
+
+                while task.wait(1) do
                     if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
                         continue
                     end
 
-                    pcall(function()
-                        local hrp = player.Character.HumanoidRootPart
-                        local leaderstats = player:FindFirstChild("leaderstats")
+                    local hrp = player.Character.HumanoidRootPart
+                    local leaderstats = player:FindFirstChild("leaderstats")
 
-                        local currentStage = 1
-                        if leaderstats then
-                            local stageStat = leaderstats:FindFirstChild("Stage")
-                            if stageStat then
-                                currentStage = tonumber(stageStat.Value) or 1
-                            end
+                    if not leaderstats then continue end
+
+                    local stageStat = leaderstats:FindFirstChild("Stage")
+                    if not stageStat then continue end
+
+                    local currentStage = tonumber(stageStat.Value) or 1
+
+                    -- Only teleport when Stage value increases
+                    if currentStage ~= lastStage then
+                        local nextStage = currentStage
+                        if nextStage > maxStage then
+                            nextStage = 1
                         end
 
-                        -- Choose which stage index to teleport to
-                        local targetStage
-                        if useNextStage then
-                            targetStage = currentStage + 1
-                        else
-                            targetStage = currentStage
-                        end
-
-                        -- Wrap-around safety
-                        if targetStage < 1 then targetStage = 1 end
-                        if targetStage > maxStage then targetStage = 1 end
-
-                        local target = teleports[targetStage]
+                        local target = teleports[nextStage]
                         if target then
                             hrp.CFrame = target
                             WindUI:Notify({
                                 Title = "Teleporting...",
-                                Content = "Moving to Stage " .. tostring(targetStage),
-                                Duration = 2
-                            })
-                        else
-                            WindUI:Notify({
-                                Title = "Error",
-                                Content = "No coordinate for Stage " .. tostring(targetStage),
+                                Content = "Moved to Stage " .. tostring(nextStage),
                                 Duration = 2
                             })
                         end
 
-                        loopCount = loopCount + 1
-                        if loopCount % 20 == 0 then
+                        lastStage = currentStage
+                        loopCount += 1
+
+                        -- Optional: show stats every 10 moves
+                        if loopCount % 10 == 0 then
                             local content = ""
-                            if leaderstats then
-                                for _, stat in pairs(leaderstats:GetChildren()) do
-                                    content = content .. stat.Name .. ": " .. tostring(stat.Value) .. "\n"
-                                end
-                            else
-                                content = "No leaderstats found."
+                            for _, stat in pairs(leaderstats:GetChildren()) do
+                                content = content .. stat.Name .. ": " .. tostring(stat.Value) .. "\n"
                             end
                             WindUI:Notify({
                                 Title = "📊 Your Stats",
@@ -350,7 +334,7 @@ MainSection:Toggle({
                                 Duration = 3
                             })
                         end
-                    end)
+                    end
                 end
             end)
         else
@@ -362,6 +346,7 @@ MainSection:Toggle({
         end
     end
 })
+
 
 
 
