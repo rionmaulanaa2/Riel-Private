@@ -80,16 +80,18 @@ MainSection:Button({
     end
 })
 
-MainSection:Button({
-    Title = "Toggle Hide Everything",
-    Description = "Hide all map, terrain, effects, and sounds (only your character visible)",
+FishSection:Button({
+    Title = "Toggle Hide Map",
+    Description = "Hide or restore all models, effects, and sounds except terrain",
     Callback = function()
         local Players = game:GetService("Players")
         local workspace = game:GetService("Workspace")
         local localPlayer = Players.LocalPlayer
 
-        -- global state toggle
-        _G.AllHidden = not _G.AllHidden
+        -- store global toggle state
+        _G.MapHidden = not _G.MapHidden
+
+        -- keep modified states to restore later
         _G._ModifiedObjects = _G._ModifiedObjects or {}
 
         local function markModified(inst, key, orig)
@@ -129,16 +131,13 @@ MainSection:Button({
 
         local function sanitizeInstance(inst)
             if not inst or not inst:IsDescendantOf(workspace) then return end
+            if inst == workspace.Terrain or inst:IsDescendantOf(workspace.Terrain) then return end
             if inst:IsDescendantOf(localPlayer.Character) then return end
             local cam = workspace.CurrentCamera
             if cam and (inst == cam or inst:IsDescendantOf(cam)) then return end
 
-            -- Hide parts (includes terrain voxels visually)
             if inst:IsA("BasePart") then
                 hidePart(inst)
-            elseif inst:IsA("Terrain") then
-                -- Terrain can't be fully removed, but we can clear it visually
-                pcall(function() inst:Clear() end)
             elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam")
             or inst:IsA("Smoke") or inst:IsA("Fire")
             or inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight")
@@ -168,8 +167,8 @@ MainSection:Button({
             _G._ModifiedObjects = {}
         end
 
-        if _G.AllHidden then
-            -- hide everything including terrain
+        if _G.MapHidden then
+            -- Hide everything except terrain
             for _, child in ipairs(workspace:GetDescendants()) do
                 pcall(function() sanitizeInstance(child) end)
             end
@@ -179,20 +178,21 @@ MainSection:Button({
 
             WindUI:Notify({
                 Title = "Process",
-                Content = "🕶️ Everything hidden (map, terrain, effects, sounds)",
-                Duration = 3
+                Content = "🌫️ Map hidden (only terrain visible)",
+                Duration = 2
             })
         else
-            -- restore everything
+            -- Restore
             restoreAll()
             WindUI:Notify({
                 Title = "Process",
-                Content = "🌍 Map and terrain restored",
-                Duration = 3
+                Content = "🌄 Map restored",
+                Duration = 2
             })
         end
     end
 })
+
 
 
 
