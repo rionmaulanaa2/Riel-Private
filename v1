@@ -243,7 +243,7 @@ MainSection:Toggle({
 
 MainSection:Toggle({
     Title = "Auto Summit Mount Botak",
-    Description = "Teleports based on Stage stat (loops automatically, Stage starts from 1)",
+    Description = "Teleports based on Stage stat (Stage value maps directly to coordinates)",
     Default = false,
     Callback = function(v)
         if autoMountBotakThread then
@@ -255,7 +255,7 @@ MainSection:Toggle({
             local player = game.Players.LocalPlayer
             local loopCount = 0
 
-            -- 🗺️ Corrected teleports (Stage 1–16)
+            -- Stage 1..17 coordinates (Stage value maps directly to these indices)
             local teleports = {
                 [1]  = CFrame.new(456, 315, -629),    -- Stage 1
                 [2]  = CFrame.new(625, 414, -94),     -- Stage 2
@@ -278,6 +278,10 @@ MainSection:Toggle({
 
             local maxStage = 17
 
+            -- Set to true if you *want* the bot to always teleport to the next stage (currentStage + 1).
+            -- Leave false to teleport to the coordinate that matches the Stage value exactly.
+            local useNextStage = false
+
             WindUI:Notify({
                 Title = "Auto Summit Mount Botak",
                 Content = "Started teleport loop!",
@@ -295,7 +299,6 @@ MainSection:Toggle({
                         local leaderstats = player:FindFirstChild("leaderstats")
 
                         local currentStage = 1
-                        -- 🧭 Read Stage stat safely
                         if leaderstats then
                             local stageStat = leaderstats:FindFirstChild("Stage")
                             if stageStat then
@@ -303,32 +306,35 @@ MainSection:Toggle({
                             end
                         end
 
-                        -- ➕ Compute next stage (wrap to 1 after finish)
-                        local nextStage = currentStage + 1
-                        if nextStage > maxStage then
-                            nextStage = 1
+                        -- Choose which stage index to teleport to
+                        local targetStage
+                        if useNextStage then
+                            targetStage = currentStage + 1
+                        else
+                            targetStage = currentStage
                         end
 
-                        -- 🚀 Teleport
-                        local target = teleports[nextStage]
+                        -- Wrap-around safety
+                        if targetStage < 1 then targetStage = 1 end
+                        if targetStage > maxStage then targetStage = 1 end
+
+                        local target = teleports[targetStage]
                         if target then
                             hrp.CFrame = target
                             WindUI:Notify({
                                 Title = "Teleporting...",
-                                Content = "Moving to Stage " .. nextStage,
+                                Content = "Moving to Stage " .. tostring(targetStage),
                                 Duration = 2
                             })
                         else
                             WindUI:Notify({
                                 Title = "Error",
-                                Content = "Invalid Stage index: " .. tostring(nextStage),
+                                Content = "No coordinate for Stage " .. tostring(targetStage),
                                 Duration = 2
                             })
                         end
 
-                        loopCount += 1
-
-                        -- 📊 Stats display every 20 loops
+                        loopCount = loopCount + 1
                         if loopCount % 20 == 0 then
                             local content = ""
                             if leaderstats then
@@ -356,6 +362,7 @@ MainSection:Toggle({
         end
     end
 })
+
 
 
 
