@@ -140,10 +140,9 @@ MainSection:Toggle({
 
 MainSection:Toggle({
     Title = "Auto Summit Mount Aneh",
-    Description = "Teleports to Summit repeatedly (shows loop count)",
+    Description = "Teleports based on current checkpoint stat (loops automatically)",
     Default = false,
     Callback = function(v)
-        -- Cancel any running thread if toggled off
         if autoMountAnehThread then
             task.cancel(autoMountAnehThread)
             autoMountAnehThread = nil
@@ -153,6 +152,20 @@ MainSection:Toggle({
             local player = game.Players.LocalPlayer
             local loopCount = 0
 
+            local teleports = {
+                [0] = CFrame.new(-76, 527, 936),   -- checkpoint 0
+                [1] = CFrame.new(-91, 526, 892),   -- checkpoint 1
+                [2] = CFrame.new(-22, 597, 505),   -- checkpoint 2
+                [3] = CFrame.new(473, 604, 444),   -- checkpoint 3
+                [4] = CFrame.new(1170, 649, 668),  -- checkpoint 4
+                [5] = CFrame.new(2124, 790, 1024), -- checkpoint 5
+                [6] = CFrame.new(2727, 917, 1194), -- checkpoint 6
+                [7] = CFrame.new(3449, 1312, 1772),-- checkpoint 7
+                [8] = CFrame.new(3162, 1615, 2780) -- finish
+            }
+
+            local maxCheckpoint = 8
+
             WindUI:Notify({
                 Title = "Auto Summit Mount Aneh",
                 Content = "Started teleport loop!",
@@ -160,46 +173,59 @@ MainSection:Toggle({
             })
 
             autoMountAnehThread = task.spawn(function()
-                while task.wait(1) do
+                while task.wait(2) do
                     if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
                         continue
                     end
 
                     pcall(function()
                         local hrp = player.Character.HumanoidRootPart
-                        local teleports = {
-                            CFrame.new(-76, 527, 936),
-                            CFrame.new(-91, 526, 892),
-                            CFrame.new(-22, 597, 505),
-                            CFrame.new(473, 604, 444),
-                            CFrame.new(1170, 649, 668),
-                            CFrame.new(2124, 790, 1024),
-                            CFrame.new(2727, 917, 1194),
-                            CFrame.new(3449, 1312, 1772),
-                            CFrame.new(3162, 1615, 2780),
-                            CFrame.new(-76, 527, 936)
-                        }
-
-                        for _, cf in ipairs(teleports) do
-                            hrp.CFrame = cf
-                            task.wait(5)
-                        end
-                        task.wait(5)
-
-                        -- ✅ Get leaderstats safely
                         local leaderstats = player:FindFirstChild("leaderstats")
-                        local content = ""
 
+                        local currentCheckpoint = 0
+
+                        -- 🧭 Read current checkpoint stat safely
                         if leaderstats then
-                            for _, stat in pairs(leaderstats:GetChildren()) do
-                                content = content .. stat.Name .. ": " .. tostring(stat.Value) .. "\n"
+                            local checkpointStat = leaderstats:FindFirstChild("checkpoint") or leaderstats:FindFirstChild("Checkpoint")
+                            if checkpointStat then
+                                currentCheckpoint = tonumber(checkpointStat.Value) or 0
                             end
+                        end
+
+                        -- 🧩 Calculate next checkpoint
+                        local nextCheckpoint = currentCheckpoint + 1
+                        if nextCheckpoint > maxCheckpoint then
+                            nextCheckpoint = 0
+                        end
+
+                        -- 🚀 Teleport to next checkpoint
+                        if teleports[nextCheckpoint] then
+                            hrp.CFrame = teleports[nextCheckpoint]
+                            WindUI:Notify({
+                                Title = "Teleporting...",
+                                Content = "Moving to checkpoint " .. nextCheckpoint,
+                                Duration = 2
+                            })
                         else
-                            content = "No leaderstats found for this player."
+                            WindUI:Notify({
+                                Title = "Error",
+                                Content = "Invalid checkpoint index: " .. tostring(nextCheckpoint),
+                                Duration = 2
+                            })
                         end
 
                         loopCount += 1
-                        if loopCount % 20 == 0 then -- show every 20 loops
+
+                        -- 📊 Show stats every 20 loops
+                        if loopCount % 20 == 0 then
+                            local content = ""
+                            if leaderstats then
+                                for _, stat in pairs(leaderstats:GetChildren()) do
+                                    content = content .. stat.Name .. ": " .. tostring(stat.Value) .. "\n"
+                                end
+                            else
+                                content = "No leaderstats found."
+                            end
                             WindUI:Notify({
                                 Title = "📊 Your Stats",
                                 Content = content,
