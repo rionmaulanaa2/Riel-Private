@@ -58,6 +58,20 @@ MainSection:Button({
 })
 
 MainSection:Button({
+    Title = "Private Server V2",
+    Description = "Move to Private Server",
+    Callback = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/FryzerHub/Scripts/refs/heads/main/Join%20Private%20server%20for%20free%20steal%20a%20brainrot"))()
+        WindUI:Notify({
+            Title = "Private Server",
+            Content = "Moving",
+            Duration = 2
+        })
+    end
+})
+
+
+MainSection:Button({
     Title = "Show Stats",
     Description = "Display your Money, Rebirths, Summits, etc.",
     Callback = function()
