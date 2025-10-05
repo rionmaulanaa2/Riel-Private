@@ -299,7 +299,7 @@ MainSection:Toggle({
                         local stageStat = leaderstats:FindFirstChild("Stage")
                         if not stageStat then return end
 
-                        local currentStage = tonumber(stageStat.Value) or 1
+                        local currentStage = tonumber(stageStat.Value) or 0
 
                         -- Calculate next stage (wrap to 1 after 17)
                         local nextStage = currentStage + 1
