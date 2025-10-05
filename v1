@@ -17,7 +17,7 @@ local autoFarmXPThread
 local autoRebirthThread
 local autoFishingThread
 local autoEggThread
-local dieEnabled = false
+local didEnabled = false
 local flyEnabled = false
 local selectedEgg = "Red Crystal"
 
