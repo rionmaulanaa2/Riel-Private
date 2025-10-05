@@ -241,6 +241,122 @@ MainSection:Toggle({
     end
 })
 
+MainSection:Toggle({
+    Title = "Auto Summit Mount Botak",
+    Description = "Teleports based on Stage stat (loops automatically)",
+    Default = false,
+    Callback = function(v)
+        if autoMountBotakThread then
+            task.cancel(autoMountBotakThread)
+            autoMountBotakThread = nil
+        end
+
+        if v then
+            local player = game.Players.LocalPlayer
+            local loopCount = 0
+
+            -- 🗺️ Teleport coordinates for Mount Botak (replace with your own if needed)
+            local teleports = {
+                [0]  = CFrame.new(456, 315, -629),    -- 0
+                [1]  = CFrame.new(625, 414, -94),     -- 1
+                [2]  = CFrame.new(584, 463, 249),     -- 2
+                [3]  = CFrame.new(557, 504, 465),     -- 3
+                [4]  = CFrame.new(287, 620, 818),     -- 4
+                [5]  = CFrame.new(198, 777, 582),     -- 5
+                [6]  = CFrame.new(50, 1033, -399),    -- 6
+                [7]  = CFrame.new(-243, 1176, -785),  -- 7
+                [8]  = CFrame.new(-117, 1185, -1119), -- 8
+                [9]  = CFrame.new(203, 1285, -1510),  -- 9
+                [10] = CFrame.new(733, 1398, -1596),  -- 10
+                [11] = CFrame.new(739, 1345, -835),   -- 11
+                [12] = CFrame.new(758, 1309, -360),   -- 12
+                [13] = CFrame.new(1109, 1643, 381),   -- 13
+                [14] = CFrame.new(1438, 1747, 526),   -- 14
+                [15] = CFrame.new(1731, 1754, 472),   -- 15
+                [16] = CFrame.new(1776, 2059, -284)   -- 16 (finish)
+            }
+
+            local maxStage = 16
+
+            WindUI:Notify({
+                Title = "Auto Summit Mount Botak",
+                Content = "Started teleport loop!",
+                Duration = 3
+            })
+
+            autoMountBotakThread = task.spawn(function()
+                while task.wait(2) do
+                    if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
+                        continue
+                    end
+
+                    pcall(function()
+                        local hrp = player.Character.HumanoidRootPart
+                        local leaderstats = player:FindFirstChild("leaderstats")
+
+                        local currentStage = 0
+                        -- 🧭 Read Stage stat safely
+                        if leaderstats then
+                            local stageStat = leaderstats:FindFirstChild("Stage")
+                            if stageStat then
+                                currentStage = tonumber(stageStat.Value) or 0
+                            end
+                        end
+
+                        -- ➕ Compute next stage (wrap to 0 after finish)
+                        local nextStage = currentStage + 1
+                        if nextStage > maxStage then
+                            nextStage = 0
+                        end
+
+                        -- 🚀 Teleport
+                        local target = teleports[nextStage]
+                        if target then
+                            hrp.CFrame = target
+                            WindUI:Notify({
+                                Title = "Teleporting...",
+                                Content = "Moving to stage " .. nextStage,
+                                Duration = 2
+                            })
+                        else
+                            WindUI:Notify({
+                                Title = "Error",
+                                Content = "Invalid stage index: " .. tostring(nextStage),
+                                Duration = 2
+                            })
+                        end
+
+                        loopCount += 1
+
+                        -- 📊 Stats display every 20 loops
+                        if loopCount % 20 == 0 then
+                            local content = ""
+                            if leaderstats then
+                                for _, stat in pairs(leaderstats:GetChildren()) do
+                                    content = content .. stat.Name .. ": " .. tostring(stat.Value) .. "\n"
+                                end
+                            else
+                                content = "No leaderstats found."
+                            end
+                            WindUI:Notify({
+                                Title = "📊 Your Stats",
+                                Content = content,
+                                Duration = 3
+                            })
+                        end
+                    end)
+                end
+            end)
+        else
+            WindUI:Notify({
+                Title = "Auto Summit Mount Botak",
+                Content = "Teleport loop stopped!",
+                Duration = 3
+            })
+        end
+    end
+})
+
 
 MainSection:Toggle({
     Title = "Auto Farm Gems",
