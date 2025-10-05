@@ -182,9 +182,9 @@ MainSection:Toggle({
 
                         for _, cf in ipairs(teleports) do
                             hrp.CFrame = cf
-                            task.wait(3)
+                            task.wait(5)
                         end
-                        task.wait(3)
+                        task.wait(5)
 
                         -- ✅ Get leaderstats safely
                         local leaderstats = player:FindFirstChild("leaderstats")
