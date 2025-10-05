@@ -80,6 +80,120 @@ MainSection:Button({
     end
 })
 
+MainSection:Button({
+    Title = "Toggle Hide Map",
+    Description = "Hide or restore all models, effects, and sounds except terrain",
+    Callback = function()
+        local Players = game:GetService("Players")
+        local workspace = game:GetService("Workspace")
+        local localPlayer = Players.LocalPlayer
+
+        -- store global toggle state
+        _G.MapHidden = not _G.MapHidden
+
+        -- keep modified states to restore later
+        _G._ModifiedObjects = _G._ModifiedObjects or {}
+
+        local function markModified(inst, key, orig)
+            if not _G._ModifiedObjects[inst] then _G._ModifiedObjects[inst] = {} end
+            _G._ModifiedObjects[inst][key] = orig
+        end
+
+        local function hidePart(part)
+            if not part or not part:IsA("BasePart") then return end
+            if part:IsDescendantOf(localPlayer.Character) then return end
+            markModified(part, "LocalTransparencyModifier", part.LocalTransparencyModifier)
+            markModified(part, "CanCollide", part.CanCollide)
+            part.LocalTransparencyModifier = 1
+            part.CanCollide = false
+        end
+
+        local function disableEffect(inst)
+            if inst:IsDescendantOf(localPlayer.Character) then return end
+            if inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam")
+            or inst:IsA("Smoke") or inst:IsA("Fire")
+            or inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
+                markModified(inst, "Enabled", inst.Enabled)
+                inst.Enabled = false
+            end
+            if inst:IsA("Decal") or inst:IsA("Texture") then
+                markModified(inst, "Transparency", inst.Transparency)
+                inst.Transparency = 1
+            end
+            if inst:IsA("Sound") then
+                markModified(inst, "Volume", inst.Volume)
+                pcall(function()
+                    inst.Volume = 0
+                    inst:Stop()
+                end)
+            end
+        end
+
+        local function sanitizeInstance(inst)
+            if not inst or not inst:IsDescendantOf(workspace) then return end
+            if inst == workspace.Terrain or inst:IsDescendantOf(workspace.Terrain) then return end
+            if inst:IsDescendantOf(localPlayer.Character) then return end
+            local cam = workspace.CurrentCamera
+            if cam and (inst == cam or inst:IsDescendantOf(cam)) then return end
+
+            if inst:IsA("BasePart") then
+                hidePart(inst)
+            elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam")
+            or inst:IsA("Smoke") or inst:IsA("Fire")
+            or inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight")
+            or inst:IsA("Decal") or inst:IsA("Texture") or inst:IsA("Sound") then
+                disableEffect(inst)
+            elseif inst:IsA("Model") or inst:IsA("Folder") then
+                for _, child in ipairs(inst:GetChildren()) do
+                    sanitizeInstance(child)
+                end
+            end
+        end
+
+        local function restoreAll()
+            for inst, props in pairs(_G._ModifiedObjects) do
+                if inst and inst.Parent then
+                    for k, v in pairs(props) do
+                        pcall(function()
+                            if k == "LocalTransparencyModifier" then inst.LocalTransparencyModifier = v end
+                            if k == "CanCollide" then inst.CanCollide = v end
+                            if k == "Enabled" then inst.Enabled = v end
+                            if k == "Transparency" then inst.Transparency = v end
+                            if k == "Volume" then inst.Volume = v end
+                        end)
+                    end
+                end
+            end
+            _G._ModifiedObjects = {}
+        end
+
+        if _G.MapHidden then
+            -- Hide everything except terrain
+            for _, child in ipairs(workspace:GetDescendants()) do
+                pcall(function() sanitizeInstance(child) end)
+            end
+            workspace.DescendantAdded:Connect(function(desc)
+                pcall(function() sanitizeInstance(desc) end)
+            end)
+
+            WindUI:Notify({
+                Title = "Process",
+                Content = "🌫️ Map hidden (only terrain visible)",
+                Duration = 2
+            })
+        else
+            -- Restore
+            restoreAll()
+            WindUI:Notify({
+                Title = "Process",
+                Content = "🌄 Map restored",
+                Duration = 2
+            })
+        end
+    end
+})
+
+
 MainSection:Toggle({
     Title = "Auto Summit Mount Limau",
     Description = "Teleports to Summit repeatedly (shows loop count)",
