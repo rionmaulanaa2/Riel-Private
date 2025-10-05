@@ -273,7 +273,7 @@ MainSection:Toggle({
                 [14] = CFrame.new(1109, 1643, 381),
                 [15] = CFrame.new(1438, 1747, 526),
                 [16] = CFrame.new(1731, 1754, 472),
-                [17] = CFrame.new(1776, 2059, -284)
+                [17] = CFrame.new(1913, 2057, -345)
             }
 
             local maxStage = 17
