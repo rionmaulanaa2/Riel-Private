@@ -243,7 +243,7 @@ MainSection:Toggle({
 
 MainSection:Toggle({
     Title = "Auto Summit Mount Botak",
-    Description = "Teleports based on Stage stat (loops automatically)",
+    Description = "Teleports based on Stage stat (loops automatically, Stage starts from 1)",
     Default = false,
     Callback = function(v)
         if autoMountBotakThread then
@@ -255,28 +255,28 @@ MainSection:Toggle({
             local player = game.Players.LocalPlayer
             local loopCount = 0
 
-            -- 🗺️ Teleport coordinates for Mount Botak (replace with your own if needed)
+            -- 🗺️ Corrected teleports (Stage 1–16)
             local teleports = {
-                [0]  = CFrame.new(456, 315, -629),    -- 0
-                [1]  = CFrame.new(625, 414, -94),     -- 1
-                [2]  = CFrame.new(584, 463, 249),     -- 2
-                [3]  = CFrame.new(557, 504, 465),     -- 3
-                [4]  = CFrame.new(287, 620, 818),     -- 4
-                [5]  = CFrame.new(198, 777, 582),     -- 5
-                [6]  = CFrame.new(50, 1033, -399),    -- 6
-                [7]  = CFrame.new(-243, 1176, -785),  -- 7
-                [8]  = CFrame.new(-117, 1185, -1119), -- 8
-                [9]  = CFrame.new(203, 1285, -1510),  -- 9
-                [10] = CFrame.new(733, 1398, -1596),  -- 10
-                [11] = CFrame.new(739, 1345, -835),   -- 11
-                [12] = CFrame.new(758, 1309, -360),   -- 12
-                [13] = CFrame.new(1109, 1643, 381),   -- 13
-                [14] = CFrame.new(1438, 1747, 526),   -- 14
-                [15] = CFrame.new(1731, 1754, 472),   -- 15
-                [16] = CFrame.new(1776, 2059, -284)   -- 16 (finish)
+                [1]  = CFrame.new(456, 315, -629),    -- Stage 1
+                [2]  = CFrame.new(625, 414, -94),     -- Stage 2
+                [3]  = CFrame.new(584, 463, 249),     -- Stage 3
+                [4]  = CFrame.new(557, 504, 465),     -- Stage 4
+                [5]  = CFrame.new(287, 620, 818),     -- Stage 5
+                [6]  = CFrame.new(198, 777, 582),     -- Stage 6
+                [7]  = CFrame.new(50, 1033, -399),    -- Stage 7
+                [8]  = CFrame.new(-243, 1176, -785),  -- Stage 8
+                [9]  = CFrame.new(-117, 1185, -1119), -- Stage 9
+                [10] = CFrame.new(203, 1285, -1510),  -- Stage 10
+                [11] = CFrame.new(733, 1398, -1596),  -- Stage 11
+                [12] = CFrame.new(739, 1345, -835),   -- Stage 12
+                [13] = CFrame.new(758, 1309, -360),   -- Stage 13
+                [14] = CFrame.new(1109, 1643, 381),   -- Stage 14
+                [15] = CFrame.new(1438, 1747, 526),   -- Stage 15
+                [16] = CFrame.new(1731, 1754, 472),   -- Stage 16
+                [17] = CFrame.new(1776, 2059, -284)   -- Stage 17 (finish)
             }
 
-            local maxStage = 16
+            local maxStage = 17
 
             WindUI:Notify({
                 Title = "Auto Summit Mount Botak",
@@ -294,19 +294,19 @@ MainSection:Toggle({
                         local hrp = player.Character.HumanoidRootPart
                         local leaderstats = player:FindFirstChild("leaderstats")
 
-                        local currentStage = 0
+                        local currentStage = 1
                         -- 🧭 Read Stage stat safely
                         if leaderstats then
                             local stageStat = leaderstats:FindFirstChild("Stage")
                             if stageStat then
-                                currentStage = tonumber(stageStat.Value) or 0
+                                currentStage = tonumber(stageStat.Value) or 1
                             end
                         end
 
-                        -- ➕ Compute next stage (wrap to 0 after finish)
+                        -- ➕ Compute next stage (wrap to 1 after finish)
                         local nextStage = currentStage + 1
                         if nextStage > maxStage then
-                            nextStage = 0
+                            nextStage = 1
                         end
 
                         -- 🚀 Teleport
@@ -315,13 +315,13 @@ MainSection:Toggle({
                             hrp.CFrame = target
                             WindUI:Notify({
                                 Title = "Teleporting...",
-                                Content = "Moving to stage " .. nextStage,
+                                Content = "Moving to Stage " .. nextStage,
                                 Duration = 2
                             })
                         else
                             WindUI:Notify({
                                 Title = "Error",
-                                Content = "Invalid stage index: " .. tostring(nextStage),
+                                Content = "Invalid Stage index: " .. tostring(nextStage),
                                 Duration = 2
                             })
                         end
@@ -356,6 +356,7 @@ MainSection:Toggle({
         end
     end
 })
+
 
 
 MainSection:Toggle({
