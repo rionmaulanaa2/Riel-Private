@@ -182,7 +182,7 @@ MainSection:Toggle({
 
                         for _, cf in ipairs(teleports) do
                             hrp.CFrame = cf
-                            task.wait(1)
+                            task.wait(2)
                         end
                         task.wait(3)
 
