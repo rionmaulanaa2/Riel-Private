@@ -82,113 +82,112 @@ MainSection:Button({
 })
 
 MainSection:Button({
-    Title = "Toggle Hide Everything",
-    Description = "Hide all map, terrain, effects, and sounds (only your character visible)",
+    Title = "Toggle Complete Void",
+    Description = "Hide everything except your character (terrain, map, lighting, effects gone)",
     Callback = function()
         local Players = game:GetService("Players")
-        local workspace = game:GetService("Workspace")
-        local localPlayer = Players.LocalPlayer
+        local Workspace = game:GetService("Workspace")
+        local Lighting = game:GetService("Lighting")
+        local LocalPlayer = Players.LocalPlayer
 
-        -- global state toggle
-        _G.AllHidden = not _G.AllHidden
+        _G.VoidMode = not _G.VoidMode
         _G._ModifiedObjects = _G._ModifiedObjects or {}
 
-        local function markModified(inst, key, orig)
+        local function markModified(inst, key, val)
             if not _G._ModifiedObjects[inst] then _G._ModifiedObjects[inst] = {} end
-            _G._ModifiedObjects[inst][key] = orig
+            _G._ModifiedObjects[inst][key] = val
         end
 
-        local function hidePart(part)
-            if not part or not part:IsA("BasePart") then return end
-            if part:IsDescendantOf(localPlayer.Character) then return end
-            markModified(part, "LocalTransparencyModifier", part.LocalTransparencyModifier)
-            markModified(part, "CanCollide", part.CanCollide)
-            part.LocalTransparencyModifier = 1
-            part.CanCollide = false
-        end
+        local function hideAll()
+            -- Hide terrain completely
+            if Workspace:FindFirstChildOfClass("Terrain") then
+                local terrain = Workspace:FindFirstChildOfClass("Terrain")
+                pcall(function() terrain:Clear() end)
+                pcall(function() terrain.Transparency = 1 end)
+            end
 
-        local function disableEffect(inst)
-            if inst:IsDescendantOf(localPlayer.Character) then return end
-            if inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam")
-            or inst:IsA("Smoke") or inst:IsA("Fire")
-            or inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
-                markModified(inst, "Enabled", inst.Enabled)
-                inst.Enabled = false
+            -- Hide all parts except character
+            for _, obj in ipairs(Workspace:GetDescendants()) do
+                if obj:IsA("BasePart") and not obj:IsDescendantOf(LocalPlayer.Character) then
+                    markModified(obj, "Transparency", obj.Transparency)
+                    markModified(obj, "CanCollide", obj.CanCollide)
+                    obj.Transparency = 1
+                    obj.CanCollide = false
+                elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
+                    markModified(obj, "Enabled", obj.Enabled)
+                    obj.Enabled = false
+                elseif obj:IsA("Decal") or obj:IsA("Texture") then
+                    markModified(obj, "Transparency", obj.Transparency)
+                    obj.Transparency = 1
+                elseif obj:IsA("Sound") then
+                    markModified(obj, "Volume", obj.Volume)
+                    obj.Volume = 0
+                    obj:Stop()
+                end
             end
-            if inst:IsA("Decal") or inst:IsA("Texture") then
-                markModified(inst, "Transparency", inst.Transparency)
-                inst.Transparency = 1
+
+            -- Clear environment visuals
+            for _, eff in ipairs(Lighting:GetChildren()) do
+                markModified(eff, "Parent", eff.Parent)
+                eff.Parent = nil
             end
-            if inst:IsA("Sound") then
-                markModified(inst, "Volume", inst.Volume)
-                pcall(function()
-                    inst.Volume = 0
-                    inst:Stop()
+
+            -- Darken lighting to void black
+            Lighting.Brightness = 0
+            Lighting.ClockTime = 0
+            Lighting.FogEnd = 0
+            Lighting.Ambient = Color3.new(0,0,0)
+
+            -- Listen for new parts and auto-hide
+            if not _G._VoidConn then
+                _G._VoidConn = Workspace.DescendantAdded:Connect(function(d)
+                    task.defer(function()
+                        if _G.VoidMode and d and d.Parent then
+                            pcall(function()
+                                if d:IsA("BasePart") and not d:IsDescendantOf(LocalPlayer.Character) then
+                                    d.Transparency = 1
+                                    d.CanCollide = false
+                                end
+                            end)
+                        end
+                    end)
                 end)
             end
         end
 
-        local function sanitizeInstance(inst)
-            if not inst or not inst:IsDescendantOf(workspace) then return end
-            if inst:IsDescendantOf(localPlayer.Character) then return end
-            local cam = workspace.CurrentCamera
-            if cam and (inst == cam or inst:IsDescendantOf(cam)) then return end
-
-            -- Hide parts (includes terrain voxels visually)
-            if inst:IsA("BasePart") then
-                hidePart(inst)
-            elseif inst:IsA("Terrain") then
-                -- Terrain can't be fully removed, but we can clear it visually
-                pcall(function() inst:Clear() end)
-            elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam")
-            or inst:IsA("Smoke") or inst:IsA("Fire")
-            or inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight")
-            or inst:IsA("Decal") or inst:IsA("Texture") or inst:IsA("Sound") then
-                disableEffect(inst)
-            elseif inst:IsA("Model") or inst:IsA("Folder") then
-                for _, child in ipairs(inst:GetChildren()) do
-                    sanitizeInstance(child)
-                end
-            end
-        end
-
         local function restoreAll()
+            if _G._VoidConn then
+                _G._VoidConn:Disconnect()
+                _G._VoidConn = nil
+            end
+
             for inst, props in pairs(_G._ModifiedObjects) do
                 if inst and inst.Parent then
                     for k, v in pairs(props) do
-                        pcall(function()
-                            if k == "LocalTransparencyModifier" then inst.LocalTransparencyModifier = v end
-                            if k == "CanCollide" then inst.CanCollide = v end
-                            if k == "Enabled" then inst.Enabled = v end
-                            if k == "Transparency" then inst.Transparency = v end
-                            if k == "Volume" then inst.Volume = v end
-                        end)
+                        pcall(function() inst[k] = v end)
                     end
                 end
             end
+
             _G._ModifiedObjects = {}
+            -- Restore basic lighting
+            Lighting.Brightness = 2
+            Lighting.FogEnd = 100000
+            Lighting.Ambient = Color3.new(1,1,1)
         end
 
-        if _G.AllHidden then
-            -- hide everything including terrain
-            for _, child in ipairs(workspace:GetDescendants()) do
-                pcall(function() sanitizeInstance(child) end)
-            end
-            workspace.DescendantAdded:Connect(function(desc)
-                pcall(function() sanitizeInstance(desc) end)
-            end)
-
+        if _G.VoidMode then
+            hideAll()
             WindUI:Notify({
                 Title = "Process",
-                Content = "🕶️ Everything hidden (map, terrain, effects, sounds)",
+                Content = "☠️ Entered complete void mode",
                 Duration = 3
             })
         else
-            -- restore everything
             restoreAll()
             WindUI:Notify({
                 Title = "Process",
-                Content = "🌍 Map and terrain restored",
+                Content = "🌍 World restored from void",
                 Duration = 3
             })
         end
