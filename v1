@@ -80,7 +80,7 @@ MainSection:Button({
     end
 })
 
-FishSection:Button({
+MainSection:Button({
     Title = "Toggle Hide Map",
     Description = "Hide or restore all models, effects, and sounds except terrain",
     Callback = function()
