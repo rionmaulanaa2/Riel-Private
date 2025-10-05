@@ -1,0 +1,738 @@
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+repeat task.wait() until WindUI and WindUI.CreateWindow
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+
+local autoFarmSpeedThread
+local autoMountAnehThread
+local autoFarmGemsThread
+local autoFarmXPThread
+local autoRebirthThread
+local autoFishingThread
+local autoEggThread
+local flyEnabled = false
+local selectedEgg = "Red Crystal"
+
+local Window = WindUI:CreateWindow({
+    Title = " Riel Private",
+    Size = UDim2.fromOffset(500, 450),
+    Transparent = false,
+    Theme = "Dark"
+})
+
+WindUI:Notify({
+    Title = "Script Loaded",
+    Content = "Riel Private by Noirrr!",
+    Duration = 5
+})
+
+
+local MainTab = Window:Tab({
+    Title = "Main",
+    Icon = "home"
+})
+
+local MainSection = MainTab:Section({
+    Title = "Auto Farm"
+})
+
+MainSection:Button({
+    Title = "Private Server",
+    Description = "Move to Private Server",
+    Callback = function()
+        loadstring(game:HttpGet("https://pastebin.com/raw/SKSDCPhJ"))()
+        WindUI:Notify({
+            Title = "Private Server",
+            Content = "Moving",
+            Duration = 2
+        })
+    end
+})
+
+MainSection:Button({
+    Title = "Show Stats",
+    Description = "Display your Money, Rebirths, Summits, etc.",
+    Callback = function()
+        local player = game.Players.LocalPlayer
+        local leaderstats = player:FindFirstChild("leaderstats")
+        local content = ""
+
+        if leaderstats then
+            for _, stat in pairs(leaderstats:GetChildren()) do
+                content = content .. stat.Name .. ": " .. tostring(stat.Value) .. "\n"
+            end
+        else
+            content = "No leaderstats found for this player."
+        end
+
+        WindUI:Notify({
+            Title = "📊 Your Stats",
+            Content = content,
+            Duration = 6
+        })
+    end
+})
+
+MainSection:Toggle({
+    Title = "Auto Summit Mount Limau",
+    Description = "Teleports to Summit repeatedly (shows loop count)",
+    Default = false,
+    Callback = function(v)
+        if autoFarmSpeedThread then
+            task.cancel(autoFarmSpeedThread)
+            autoFarmSpeedThread = nil
+        end
+
+        if v then
+            local loopCount = 0
+            WindUI:Notify({
+                Title = "Auto Summit Mount Limau",
+                Content = "Started teleport loop!",
+                Duration = 3
+            })
+
+            autoFarmSpeedThread = task.spawn(function()
+                while task.wait(2) do
+                    if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
+                        continue
+                    end
+
+                    pcall(function()
+                        player.Character.HumanoidRootPart.CFrame = CFrame.new(1527, 2589, -987)
+						local player = game.Players.LocalPlayer
+						local leaderstats = player:FindFirstChild("leaderstats")
+						local content = ""
+
+						if leaderstats then
+							for _, stat in pairs(leaderstats:GetChildren()) do
+								content = content .. stat.Name .. ": " .. tostring(stat.Value) .. "\n"
+							end
+						else
+							content = "No leaderstats found for this player."
+						end
+                        loopCount += 1
+                        if loopCount % 20 == 0 then -- show every 20 loops to avoid spam
+                            WindUI:Notify({
+                                Title = "📊 Your Stats",
+                                Content = content,
+                                Duration = 2
+                            })
+                        end
+                    end)
+                end
+            end)
+        else
+            WindUI:Notify({
+                Title = "Auto Summit Mount Limau",
+                Content = "Teleport loop stopped!",
+                Duration = 3
+            })
+        end
+    end
+})
+
+MainSection:Toggle({
+    Title = "Auto Summit Mount Aneh",
+    Description = "Teleports to Summit repeatedly (shows loop count)",
+    Default = false,
+    Callback = function(v)
+        -- Cancel any running thread if toggled off
+        if autoMountAnehThread then
+            task.cancel(autoMountAnehThread)
+            autoMountAnehThread = nil
+        end
+
+        if v then
+            local player = game.Players.LocalPlayer
+            local loopCount = 0
+
+            WindUI:Notify({
+                Title = "Auto Summit Mount Aneh",
+                Content = "Started teleport loop!",
+                Duration = 3
+            })
+
+            autoMountAnehThread = task.spawn(function()
+                while task.wait(1) do
+                    if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
+                        continue
+                    end
+
+                    pcall(function()
+                        local hrp = player.Character.HumanoidRootPart
+                        local teleports = {
+                            CFrame.new(-76, 527, 936),
+                            CFrame.new(-91, 526, 892),
+                            CFrame.new(-22, 597, 505),
+                            CFrame.new(473, 604, 444),
+                            CFrame.new(1170, 649, 668),
+                            CFrame.new(2124, 790, 1024),
+                            CFrame.new(2727, 917, 1194),
+                            CFrame.new(3449, 1312, 1772),
+                            CFrame.new(3162, 1615, 2780),
+                            CFrame.new(-76, 527, 936)
+                        }
+
+                        for _, cf in ipairs(teleports) do
+                            hrp.CFrame = cf
+                            task.wait(1)
+                        end
+                        task.wait(3)
+
+                        -- ✅ Get leaderstats safely
+                        local leaderstats = player:FindFirstChild("leaderstats")
+                        local content = ""
+
+                        if leaderstats then
+                            for _, stat in pairs(leaderstats:GetChildren()) do
+                                content = content .. stat.Name .. ": " .. tostring(stat.Value) .. "\n"
+                            end
+                        else
+                            content = "No leaderstats found for this player."
+                        end
+
+                        loopCount += 1
+                        if loopCount % 20 == 0 then -- show every 20 loops
+                            WindUI:Notify({
+                                Title = "📊 Your Stats",
+                                Content = content,
+                                Duration = 3
+                            })
+                        end
+                    end)
+                end
+            end)
+        else
+            WindUI:Notify({
+                Title = "Auto Summit Mount Aneh",
+                Content = "Teleport loop stopped!",
+                Duration = 3
+            })
+        end
+    end
+})
+
+
+MainSection:Toggle({
+    Title = "Auto Farm Gems",
+    Description = "Collects Gems",
+    Default = false,
+    Callback = function(v)
+        if autoFarmGemsThread then
+            task.cancel(autoFarmGemsThread)
+            autoFarmGemsThread = nil
+        end
+        
+        if v then
+            autoFarmGemsThread = task.spawn(function()
+                while task.wait(0.01) do
+                    pcall(function()
+                        local orbEvent = ReplicatedStorage.rEvents.orbEvent
+                        orbEvent:FireServer("collectOrb", "Gem", "City")
+                    end)
+                end
+            end)
+        end
+    end
+})
+
+MainSection:Toggle({
+    Title = "Auto Farm XP-Level",
+    Description = "Collects Yellow Orbs",
+    Default = false,
+    Callback = function(v)
+        if autoFarmXPThread then
+            task.cancel(autoFarmXPThread)
+            autoFarmXPThread = nil
+        end
+        
+        if v then
+            autoFarmXPThread = task.spawn(function()
+                while task.wait(0.01) do
+                    pcall(function()
+                        local orbEvent = ReplicatedStorage.rEvents.orbEvent
+                        orbEvent:FireServer("collectOrb", "Yellow Orb", "City")
+                    end)
+                end
+            end)
+        end
+    end
+})
+
+MainSection:Toggle({
+    Title = "Auto Rebirth",
+    Description = "Auto Rebirth",
+    Default = false,
+    Callback = function(v)
+        if autoRebirthThread then
+            pcall(function()
+                task.cancel(autoRebirthThread)
+            end)
+            autoRebirthThread = nil
+        end
+        
+        if v then
+            autoRebirthThread = task.spawn(function()
+                while task.wait(0.01) do
+                    if not autoRebirthThread then break end
+                    pcall(function()
+                        local rebirthEvent = ReplicatedStorage.rEvents.rebirthEvent
+                        rebirthEvent:FireServer("rebirthRequest")
+                    end)
+                end
+            end)
+        end
+    end
+})
+
+local FishTab = Window:Tab({
+    Title = "Fishing",
+    Icon = "home"
+})
+
+
+local FishSection = FishTab:Section({
+    Title = "Menu"
+})
+
+-- Auto Sell buttons
+FishSection:Button({
+    Title = "Sell All",
+    Description = "Sell all fish",
+    Callback = function()
+        pcall(function()
+				local RFSellAllItems = ReplicatedStorage.Packages._Index["sleitnick_net@0.2.0"].net["RF/SellAllItems"]
+                RFSellAllItems:InvokeServer()
+            end)
+        WindUI:Notify({
+            Title = "Process",
+            Content = "Selling All Fish",
+            Duration = 2
+        })
+    end
+})
+
+
+local running = true
+local delayBetweenSteps = 2 -- seconds, adjust if needed
+FishSection:Toggle({
+    Title = "Auto Fishing",
+    Description = "Auto Fishing",
+    Default = false,
+    Callback = function(v)
+		local Net = ReplicatedStorage:WaitForChild("Packages")
+		:WaitForChild("_Index")
+		:WaitForChild("sleitnick_net@0.2.0")
+		:WaitForChild("net")
+
+		local RF_ChargeFishingRod = Net:WaitForChild("RF/ChargeFishingRod")
+		local RF_RequestFishingMinigameStarted = Net:WaitForChild("RF/RequestFishingMinigameStarted")
+		local RE_FishingCompleted = Net:WaitForChild("RE/FishingCompleted")
+        if autoFishingThread then
+            pcall(function()
+                task.cancel(autoFishingThread)
+            end)
+            autoFishingThread = nil
+        end
+        
+        if v then
+            autoFishingThread = task.spawn(function()
+                while task.wait(0.5) do
+                    if not autoFishingThread then break end
+                    pcall(function()
+                        local args1 = {1759600647.429451}
+						RF_ChargeFishingRod:InvokeServer(unpack(args1))
+
+						task.wait(delayBetweenSteps)
+
+						-- Step 2: RequestFishingMinigameStarted
+						local args2 = {-1.233184814453125, 0.9544006849697018}
+						RF_RequestFishingMinigameStarted:InvokeServer(unpack(args2))
+
+						task.wait(delayBetweenSteps)
+
+						-- Step 3: FishingCompleted
+						RE_FishingCompleted:FireServer()
+
+						task.wait(delayBetweenSteps)
+                    end)
+                end
+            end)
+        end
+    end
+})
+
+FishSection:Button({
+    Title = "Add Friend All",
+    Description = "Add all players in the server as friends",
+    Callback = function()
+        local Players = game:GetService("Players")
+        local LocalPlayer = Players.LocalPlayer
+
+        for _, player in pairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                pcall(function()
+                    LocalPlayer:RequestFriendship(player)
+                end)
+            end
+        end
+
+        WindUI:Notify({
+            Title = "Process Complete",
+            Content = "Sent friend requests to all players!",
+            Duration = 2
+        })
+    end
+})
+
+local EggsTab = Window:Tab({
+    Title = "Eggs",
+    Icon = "egg"
+})
+
+local EggsSection = EggsTab:Section({
+    Title = "Egg Selection"
+})
+
+-- Egg buttons
+EggsSection:Button({
+    Title = "Red Crystal",
+    Description = "Select Red Crystal",
+    Callback = function()
+        selectedEgg = "Red Crystal"
+        WindUI:Notify({
+            Title = "Egg Selected",
+            Content = "Selected: Red Crystal",
+            Duration = 2
+        })
+    end
+})
+
+EggsSection:Button({
+    Title = "Blue Crystal",
+    Description = "Select Blue Crystal",
+    Callback = function()
+        selectedEgg = "Blue Crystal"
+        WindUI:Notify({
+            Title = "Egg Selected",
+            Content = "Selected: Blue Crystal",
+            Duration = 2
+        })
+    end
+})
+
+EggsSection:Button({
+    Title = "Purple Crystal",
+    Description = "Select Purple Crystal",
+    Callback = function()
+        selectedEgg = "Purple Crystal"
+        WindUI:Notify({
+            Title = "Egg Selected",
+            Content = "Selected: Purple Crystal",
+            Duration = 2
+        })
+    end
+})
+
+EggsSection:Button({
+    Title = "Yellow Crystal",
+    Description = "Select Yellow Crystal",
+    Callback = function()
+        selectedEgg = "Yellow Crystal"
+        WindUI:Notify({
+            Title = "Egg Selected",
+            Content = "Selected: Yellow Crystal",
+            Duration = 2
+        })
+    end
+})
+
+EggsSection:Button({
+    Title = "Lightning Crystal",
+    Description = "Select Lightning Crystal",
+    Callback = function()
+        selectedEgg = "Lightning Crystal"
+        WindUI:Notify({
+            Title = "Egg Selected",
+            Content = "Selected: Lightning Crystal",
+            Duration = 2
+        })
+    end
+})
+
+EggsSection:Button({
+    Title = "Snow Crystal",
+    Description = "Select Snow Crystal",
+    Callback = function()
+        selectedEgg = "Snow Crystal"
+        WindUI:Notify({
+            Title = "Egg Selected",
+            Content = "Selected: Snow Crystal",
+            Duration = 2
+        })
+    end
+})
+
+EggsSection:Button({
+    Title = "Lava Crystal",
+    Description = "Select Lava Crystal",
+    Callback = function()
+        selectedEgg = "Lava Crystal"
+        WindUI:Notify({
+            Title = "Egg Selected",
+            Content = "Selected: Lava Crystal",
+            Duration = 2
+        })
+    end
+})
+
+EggsSection:Button({
+    Title = "Inferno Crystal",
+    Description = "Select Inferno Crystal",
+    Callback = function()
+        selectedEgg = "Inferno Crystal"
+        WindUI:Notify({
+            Title = "Egg Selected",
+            Content = "Selected: Inferno Crystal",
+            Duration = 2
+        })
+    end
+})
+
+EggsSection:Button({
+    Title = "Electro Legends Crystal",
+    Description = "Select Electro Legends Crystal",
+    Callback = function()
+        selectedEgg = "Electro Legends Crystal"
+        WindUI:Notify({
+            Title = "Egg Selected",
+            Content = "Selected: Electro Legends Crystal",
+            Duration = 2
+        })
+    end
+})
+
+EggsSection:Button({
+    Title = "Jungle Crystal",
+    Description = "Select Jungle Crystal",
+    Callback = function()
+        selectedEgg = "Jungle Crystal"
+        WindUI:Notify({
+            Title = "Egg Selected",
+            Content = "Selected: Jungle Crystal",
+            Duration = 2
+        })
+    end
+})
+
+EggsSection:Toggle({
+    Title = "Auto Buy Selected Egg",
+    Description = "Currently: " .. selectedEgg,
+    Default = false,
+    Callback = function(v)
+        if autoEggThread then
+            pcall(function()
+                task.cancel(autoEggThread)
+            end)
+            autoEggThread = nil
+        end
+        
+        if v then
+            autoEggThread = task.spawn(function()
+                while task.wait(0.01) do
+                    if not autoEggThread then break end
+                    pcall(function()
+                        local openCrystalRemote = ReplicatedStorage.rEvents.openCrystalRemote
+                        openCrystalRemote:InvokeServer("openCrystal", selectedEgg)
+                    end)
+                end
+            end)
+        end
+    end
+})
+
+local MovementTab = Window:Tab({
+    Title = "Movement",
+    Icon = "wind"
+})
+
+local MovementSection = MovementTab:Section({
+    Title = "Flight"
+})
+
+local flySpeed = 50
+local flyControl = {f = 0, b = 0, l = 0, r = 0}
+local flyConnection
+local bodyVelocity
+local bodyGyro
+
+local function startFly()
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return end
+    
+    bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+    bodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bodyVelocity.Parent = humanoidRootPart
+    
+    bodyGyro = Instance.new("BodyGyro")
+    bodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    bodyGyro.CFrame = humanoidRootPart.CFrame
+    bodyGyro.Parent = humanoidRootPart
+    
+    flyConnection = RunService.Heartbeat:Connect(function()
+        if not flyEnabled then return end
+        
+        local camera = workspace.CurrentCamera
+        local moveDirection = Vector3.new(
+            flyControl.r - flyControl.l,
+            0,
+            flyControl.f - flyControl.b
+        )
+        
+        if moveDirection:Dot(moveDirection) > 0 then
+            moveDirection = moveDirection.Unit
+        end
+        
+        local velocity = (camera.CFrame.RightVector * moveDirection.X + camera.CFrame.LookVector * moveDirection.Z) * flySpeed
+        bodyVelocity.Velocity = velocity
+        bodyGyro.CFrame = camera.CFrame
+    end)
+end
+
+local function stopFly()
+    if bodyVelocity then bodyVelocity:Destroy() bodyVelocity = nil end
+    if bodyGyro then bodyGyro:Destroy() bodyGyro = nil end
+    if flyConnection then flyConnection:Disconnect() flyConnection = nil end
+    flyControl = {f = 0, b = 0, l = 0, r = 0}
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed or not flyEnabled then return end
+    
+    if input.KeyCode == Enum.KeyCode.W then
+        flyControl.f = 1
+    elseif input.KeyCode == Enum.KeyCode.S then
+        flyControl.b = 1
+    elseif input.KeyCode == Enum.KeyCode.A then
+        flyControl.l = 1
+    elseif input.KeyCode == Enum.KeyCode.D then
+        flyControl.r = 1
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if not flyEnabled then return end
+    
+    if input.KeyCode == Enum.KeyCode.W then
+        flyControl.f = 0
+    elseif input.KeyCode == Enum.KeyCode.S then
+        flyControl.b = 0
+    elseif input.KeyCode == Enum.KeyCode.A then
+        flyControl.l = 0
+    elseif input.KeyCode == Enum.KeyCode.D then
+        flyControl.r = 0
+    end
+end)
+
+MovementSection:Toggle({
+    Title = "Fly",
+    Description = "Enable flight with WASD",
+    Default = false,
+    Callback = function(v)
+        flyEnabled = v
+        if flyEnabled then
+            startFly()
+        else
+            stopFly()
+        end
+    end
+})
+
+local noFallEnabled = false
+local fallConnection
+
+local function enableNoFall()
+    if fallConnection then fallConnection:Disconnect() end
+    if not humanoid then return end
+
+    fallConnection = humanoid.StateChanged:Connect(function(_, newState)
+        if noFallEnabled and (newState == Enum.HumanoidStateType.Freefall or newState == Enum.HumanoidStateType.Landed) then
+            -- Stop any possible fall damage
+            -- task.wait(0.1)
+            -- humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+			humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Landed, false)
+        end
+    end)
+end
+
+local function disableNoFall()
+    if fallConnection then
+        fallConnection:Disconnect()
+        fallConnection = nil
+    end
+end
+
+MovementSection:Toggle({
+    Title = "No Fall Damage",
+    Description = "Prevents taking damage after falling",
+    Default = false,
+    Callback = function(v)
+        noFallEnabled = v
+        if v then
+            enableNoFall()
+            WindUI:Notify({
+                Title = "No Fall Damage",
+                Content = "No fall damage enabled!",
+                Duration = 3
+            })
+        else
+            disableNoFall()
+            WindUI:Notify({
+                Title = "No Fall Damage",
+                Content = "No fall damage disabled!",
+                Duration = 3
+            })
+        end
+    end
+})
+
+local DiscordTab = Window:Tab({
+    Title = "Discord",
+    Icon = "message-circle"
+})
+
+local DiscordSection = DiscordTab:Section({
+    Title = "Community"
+})
+
+DiscordSection:Button({
+    Title = "Join our discord for more (Copy)",
+    Description = "Click to copy Discord link",
+    Callback = function()
+        setclipboard("https://discord.gg/AYYfZVCRZG")
+        WindUI:Notify({
+            Title = "Discord Link Copied",
+            Content = "Discord link copied to clipboard!",
+            Duration = 3
+        })
+    end
+})
+
+player.CharacterAdded:Connect(function(char)
+    character = char
+    humanoid = char:WaitForChild("Humanoid")
+    if flyEnabled then
+        task.wait(1)
+        stopFly()
+        startFly()
+    end
+end)
