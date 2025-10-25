@@ -683,11 +683,19 @@ FishSection:Button({
     end
 })
 
+local WeatherTab = Window:Tab({
+    Title = "Weather",
+    Icon = "home"
+})
 
+
+local WeatherSection = Weather:Section({
+    Title = "Menu"
+})
 
 for _, weather in ipairs(weathers) do
-    FishTab:Button({
-        Name = "Buy " .. weather,
+    Weather:Button({
+        Title = "Buy " .. weather,
         Callback = function()
             local success, event = pcall(function()
                 return ReplicatedStorage.Packages
