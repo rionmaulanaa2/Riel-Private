@@ -681,25 +681,42 @@ FishSection:Button({
     end
 })
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 local WeatherSection = FishTab:CreateSection("Buy Weather")
 
 local weathers = {"Cloudy", "Snow", "Storm", "Radiant", "SharkHunt", "Wind"}
 
 for _, weather in ipairs(weathers) do
-    FishTab:CreateButton({
+    WeatherSection:CreateButton({
         Name = "Buy " .. weather,
         Callback = function()
-            local RFPurchaseWeatherEvent = ReplicatedStorage.Packages._Index["sleitnick_net@0.2.0"].net["RF/PurchaseWeatherEvent"]
-            RFPurchaseWeatherEvent:InvokeServer(weather)
-            Rayfield:Notify({
-                Title = "Shop",
-                Content = "Purchased " .. weather .. " weather!",
-                Duration = 3,
-                Image = 4483362458,
-            })
+            local success, event = pcall(function()
+                return ReplicatedStorage.Packages
+                    ._Index["sleitnick_net@0.2.0"]
+                    .net["RF/PurchaseWeatherEvent"]
+            end)
+
+            if success and event then
+                event:InvokeServer(weather)
+                Rayfield:Notify({
+                    Title = "Shop",
+                    Content = "✅ Purchased " .. weather .. " weather!",
+                    Duration = 3,
+                    Image = 4483362458,
+                })
+            else
+                Rayfield:Notify({
+                    Title = "Error",
+                    Content = "⚠️ Could not find PurchaseWeatherEvent.",
+                    Duration = 3,
+                    Image = 4483362458,
+                })
+            end
         end,
     })
 end
+
 
 local EggsTab = Window:Tab({
     Title = "Eggs",
