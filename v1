@@ -9,6 +9,7 @@ local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
+local weathers = {"Cloudy", "Snow", "Storm", "Radiant", "SharkHunt", "Wind"}
 
 local autoFarmSpeedThread
 local autoMountAnehThread
@@ -682,9 +683,6 @@ FishSection:Button({
 })
 
 
-local WeatherSection = FishTab:CreateSection("Buy Weather")
-
-local weathers = {"Cloudy", "Snow", "Storm", "Radiant", "SharkHunt", "Wind"}
 
 for _, weather in ipairs(weathers) do
     FishTab:CreateButton({
