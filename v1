@@ -588,7 +588,7 @@ FishSection:Button({
 
 
 local running = true
-local delayBetweenSteps = 2 -- seconds, adjust if needed
+local delayBetweenSteps = 0.01 -- seconds, adjust if needed
 FishSection:Toggle({
     Title = "Auto Fishing",
     Description = "Auto Fishing",
@@ -658,6 +658,48 @@ FishSection:Button({
         })
     end
 })
+
+FishSection:Button({
+    Title = "Teleport Sisipus",
+    Description = "Teleport Sisipus",
+    Callback = function()
+        local player = game:GetService("Players").LocalPlayer
+        if player and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            player.Character.HumanoidRootPart.CFrame = CFrame.new(1527, 2589, -987)
+            WindUI:Notify({
+                Title = "Process Complete",
+                Content = "Teleported to Sisipus",
+                Duration = 2
+            })
+        else
+            WindUI:Notify({
+                Title = "Error",
+                Content = "Character not found!",
+                Duration = 2
+            })
+        end
+    end
+})
+
+local WeatherSection = FishTab:CreateSection("Buy Weather")
+
+local weathers = {"Cloudy", "Snow", "Storm", "Radiant", "SharkHunt", "Wind"}
+
+for _, weather in ipairs(weathers) do
+    FishTab:CreateButton({
+        Name = "Buy " .. weather,
+        Callback = function()
+            local RFPurchaseWeatherEvent = ReplicatedStorage.Packages._Index["sleitnick_net@0.2.0"].net["RF/PurchaseWeatherEvent"]
+            RFPurchaseWeatherEvent:InvokeServer(weather)
+            Rayfield:Notify({
+                Title = "Shop",
+                Content = "Purchased " .. weather .. " weather!",
+                Duration = 3,
+                Image = 4483362458,
+            })
+        end,
+    })
+end
 
 local EggsTab = Window:Tab({
     Title = "Eggs",
