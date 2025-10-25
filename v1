@@ -683,16 +683,20 @@ FishSection:Button({
     end
 })
 
+-- 🌀 Create the "Weather" tab
 local WeatherTab = Window:Tab({
     Title = "Weather",
     Icon = "home"
 })
 
-
-local WeatherSection = Weather:Section({
+-- 🧭 Create a section under that tab
+local WeatherSection = WeatherTab:Section({
     Title = "Menu"
 })
 
+
+
+-- 🔁 Create buttons for each weather
 for _, weather in ipairs(weathers) do
     WeatherSection:Button({
         Title = "Buy " .. weather,
