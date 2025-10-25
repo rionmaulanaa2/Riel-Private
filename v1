@@ -681,14 +681,13 @@ FishSection:Button({
     end
 })
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local WeatherSection = FishTab:CreateSection("Buy Weather")
 
 local weathers = {"Cloudy", "Snow", "Storm", "Radiant", "SharkHunt", "Wind"}
 
 for _, weather in ipairs(weathers) do
-    WeatherSection:CreateButton({
+    FishTab:CreateButton({
         Name = "Buy " .. weather,
         Callback = function()
             local success, event = pcall(function()
