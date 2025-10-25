@@ -5,11 +5,12 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local weathers = {"Cloudy", "Snow", "Storm", "Radiant", "SharkHunt", "Wind"}
 
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
-local weathers = {"Cloudy", "Snow", "Storm", "Radiant", "SharkHunt", "Wind"}
+
 
 local autoFarmSpeedThread
 local autoMountAnehThread
@@ -685,7 +686,7 @@ FishSection:Button({
 
 
 for _, weather in ipairs(weathers) do
-    FishTab:CreateButton({
+    FishTab:Button({
         Name = "Buy " .. weather,
         Callback = function()
             local success, event = pcall(function()
