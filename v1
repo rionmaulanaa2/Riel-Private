@@ -683,49 +683,7 @@ FishSection:Button({
     end
 })
 
--- 🌀 Create the "Weather" tab
-local WeatherTab = Window:Tab({
-    Title = "Weather",
-    Icon = "home"
-})
 
--- 🧭 Create a section under that tab
-local WeatherSection = WeatherTab:Section({
-    Title = "Menu"
-})
-
-
-
--- 🔁 Create buttons for each weather
-for _, weather in ipairs(weathers) do
-    WeatherSection:Button({
-        Title = "Buy " .. weather,
-        Callback = function()
-            local success, event = pcall(function()
-                return ReplicatedStorage.Packages
-                    ._Index["sleitnick_net@0.2.0"]
-                    .net["RF/PurchaseWeatherEvent"]
-            end)
-
-            if success and event then
-                event:InvokeServer(weather)
-                Rayfield:Notify({
-                    Title = "Shop",
-                    Content = "✅ Purchased " .. weather .. " weather!",
-                    Duration = 3,
-                    Image = 4483362458,
-                })
-            else
-                Rayfield:Notify({
-                    Title = "Error",
-                    Content = "⚠️ Could not find PurchaseWeatherEvent.",
-                    Duration = 3,
-                    Image = 4483362458,
-                })
-            end
-        end,
-    })
-end
 
 
 local EggsTab = Window:Tab({
