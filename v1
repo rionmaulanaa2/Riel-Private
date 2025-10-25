@@ -694,7 +694,7 @@ local WeatherSection = Weather:Section({
 })
 
 for _, weather in ipairs(weathers) do
-    Weather:Button({
+    WeatherSection:Button({
         Title = "Buy " .. weather,
         Callback = function()
             local success, event = pcall(function()
