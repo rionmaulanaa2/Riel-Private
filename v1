@@ -686,56 +686,62 @@ FishSection:Button({
 
 
 
-local EggsTab = Window:Tab({
-    Title = "Eggs",
+local WeatherTab = Window:Tab({
+    Title = "Weather",
     Icon = "egg"
 })
 
-local EggsSection = EggsTab:Section({
-    Title = "Egg Selection"
+local WeatherSection = WeatherTab:Section({
+    Title = "Weather Selection"
 })
 
--- Egg buttons
-EggsSection:Button({
-    Title = "Red Crystal",
-    Description = "Select Red Crystal",
+-- Weather buttons
+WeatherSection:Button({
+    Title = "Storm",
+    Description = "Select Storm",
     Callback = function()
-        selectedEgg = "Red Crystal"
+        local RFPurchaseWeatherEvent = ReplicatedStorage.Packages._Index["sleitnick_net@0.2.0"].net["RF/PurchaseWeatherEvent"]
+		weather = "Storm"
+        RFPurchaseWeatherEvent:InvokeServer(weather)
         WindUI:Notify({
-            Title = "Egg Selected",
-            Content = "Selected: Red Crystal",
+            Title = "Storm",
+            Content = "Storm",
             Duration = 2
         })
     end
 })
 
-EggsSection:Button({
-    Title = "Blue Crystal",
-    Description = "Select Blue Crystal",
+WeatherSection:Button({
+    Title = "Cloudy",
+    Description = "Select Cloudy",
     Callback = function()
-        selectedEgg = "Blue Crystal"
+        local RFPurchaseWeatherEvent = ReplicatedStorage.Packages._Index["sleitnick_net@0.2.0"].net["RF/PurchaseWeatherEvent"]
+		weather = "Cloudy"
+        RFPurchaseWeatherEvent:InvokeServer(weather)
         WindUI:Notify({
-            Title = "Egg Selected",
-            Content = "Selected: Blue Crystal",
+            Title = "Cloudy",
+            Content = "Cloudy",
             Duration = 2
         })
     end
 })
 
-EggsSection:Button({
-    Title = "Purple Crystal",
-    Description = "Select Purple Crystal",
+WeatherSection:Button({
+    Title = "Wind",
+    Description = "Select Wind",
     Callback = function()
-        selectedEgg = "Purple Crystal"
+        local RFPurchaseWeatherEvent = ReplicatedStorage.Packages._Index["sleitnick_net@0.2.0"].net["RF/PurchaseWeatherEvent"]
+		weather = "Wind"
+        RFPurchaseWeatherEvent:InvokeServer(weather)
         WindUI:Notify({
-            Title = "Egg Selected",
-            Content = "Selected: Purple Crystal",
+            Title = "Wind",
+            Content = "Wind",
             Duration = 2
         })
     end
 })
 
-EggsSection:Button({
+WeatherSection:Button({
     Title = "Yellow Crystal",
     Description = "Select Yellow Crystal",
     Callback = function()
@@ -748,7 +754,7 @@ EggsSection:Button({
     end
 })
 
-EggsSection:Button({
+WeatherSection:Button({
     Title = "Lightning Crystal",
     Description = "Select Lightning Crystal",
     Callback = function()
@@ -761,7 +767,7 @@ EggsSection:Button({
     end
 })
 
-EggsSection:Button({
+WeatherSection:Button({
     Title = "Snow Crystal",
     Description = "Select Snow Crystal",
     Callback = function()
@@ -774,7 +780,7 @@ EggsSection:Button({
     end
 })
 
-EggsSection:Button({
+WeatherSection:Button({
     Title = "Lava Crystal",
     Description = "Select Lava Crystal",
     Callback = function()
@@ -787,7 +793,7 @@ EggsSection:Button({
     end
 })
 
-EggsSection:Button({
+WeatherSection:Button({
     Title = "Inferno Crystal",
     Description = "Select Inferno Crystal",
     Callback = function()
@@ -800,7 +806,7 @@ EggsSection:Button({
     end
 })
 
-EggsSection:Button({
+WeatherSection:Button({
     Title = "Electro Legends Crystal",
     Description = "Select Electro Legends Crystal",
     Callback = function()
@@ -813,7 +819,7 @@ EggsSection:Button({
     end
 })
 
-EggsSection:Button({
+WeatherSection:Button({
     Title = "Jungle Crystal",
     Description = "Select Jungle Crystal",
     Callback = function()
@@ -826,7 +832,7 @@ EggsSection:Button({
     end
 })
 
-EggsSection:Toggle({
+WeatherSection:Toggle({
     Title = "Auto Buy Selected Egg",
     Description = "Currently: " .. selectedEgg,
     Default = false,
