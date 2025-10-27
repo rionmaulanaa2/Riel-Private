@@ -632,7 +632,7 @@ FishSection:Toggle({
                         }
                         RF_RequestFishingMinigameStarted:InvokeServer(unpack(args2))
 
-                        task.wait(1.5)
+                        task.wait(2)
 
                         -- ✅ Step 3: Complete Fishing
                         RE_FishingCompleted:FireServer()
