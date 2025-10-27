@@ -714,77 +714,60 @@ FishSection:Button({
 
 
 FishSection:Button({
-    Title = "🎣 Toggle Always Amazing 4 (Auto Cast)",
-    Description = "Auto-charges fishing rod to max and instantly casts (Amazing every time).",
+    Title = "🎣 Find Fishing Charge Remote",
+    Description = "Logs only fishing-related remote calls (Charge / Throw / Start Fishing).",
     Callback = function()
         local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local HttpService = game:GetService("HttpService")
 
-        local fishingController
-        pcall(function()
-            fishingController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("FishingController"))
-        end)
+        WindUI:Notify({
+            Title = "🎣 Fishing Remote Sniffer",
+            Content = "Started sniffing... Try charging and releasing your fishing rod.",
+            Duration = 5
+        })
 
-        if not fishingController then
-            WindUI:Notify({
-                Title = "⚠️ Error",
-                Content = "FishingController not found!",
-                Duration = 4
-            })
-            return
-        end
-
-        _G.AlwaysAmazing = not _G.AlwaysAmazing
-
-        if _G.AlwaysAmazing then
-            -- Backup original functions
-            fishingController._oldGetPower = fishingController._oldGetPower or fishingController._getPower
-            fishingController._oldUpdateChargeState = fishingController._oldUpdateChargeState or fishingController.UpdateChargeState
-
-            -- Hook power function
-            fishingController._getPower = function(...)
-                return 255 -- always max
-            end
-
-            -- Hook charge state update to instantly release
-            fishingController.UpdateChargeState = function(self, ...)
-                if _G.confirmFishingInput then
-                    -- Auto-release when maxed
-                    task.defer(function()
-                        pcall(function()
-                            _G.confirmFishingInput(true)
-                        end)
-                    end)
-                end
-                -- still run original update
-                if self._oldUpdateChargeState then
-                    return self._oldUpdateChargeState(self, ...)
+        -- Function to safely connect to RemoteEvents & RemoteFunctions
+        local function safeConnect(remote)
+            if remote:IsA("RemoteEvent") then
+                remote.OnClientEvent:Connect(function(...)
+                    if remote.Name:lower():find("fish") then
+                        WindUI:Notify({
+                            Title = "📡 RemoteEvent Triggered",
+                            Content = remote:GetFullName() .. "\nArgs: " .. HttpService:JSONEncode({...}),
+                            Duration = 5
+                        })
+                    end
+                end)
+            elseif remote:IsA("RemoteFunction") then
+                local old = remote.InvokeServer
+                remote.InvokeServer = function(self, ...)
+                    if self.Name:lower():find("fish") then
+                        WindUI:Notify({
+                            Title = "⚙️ RemoteFunction Invoked",
+                            Content = self:GetFullName() .. "\nArgs: " .. HttpService:JSONEncode({...}),
+                            Duration = 5
+                        })
+                    end
+                    return old(self, ...)
                 end
             end
-
-            WindUI:Notify({
-                Title = "✅ Hook Enabled",
-                Content = "Always Amazing active — instant full charge & auto cast!",
-                Duration = 4
-            })
-        else
-            -- Restore originals
-            if fishingController._oldGetPower then
-                fishingController._getPower = fishingController._oldGetPower
-                fishingController._oldGetPower = nil
-            end
-            if fishingController._oldUpdateChargeState then
-                fishingController.UpdateChargeState = fishingController._oldUpdateChargeState
-                fishingController._oldUpdateChargeState = nil
-            end
-
-            WindUI:Notify({
-                Title = "🛑 Disabled",
-                Content = "Restored normal fishing behavior.",
-                Duration = 3
-            })
         end
+
+        -- Hook every remote in ReplicatedStorage
+        for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
+            if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+                safeConnect(v)
+            end
+        end
+
+        WindUI:Notify({
+            Title = "✅ Sniffer Active",
+            Content = "Now charge and throw your fishing rod to capture the remote call.",
+            Duration = 5
+        })
     end
 })
+
 
 
 
