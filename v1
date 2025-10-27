@@ -659,7 +659,7 @@ FishSection:Toggle({
 })
 
 FishSection:Button({
-    Title = "🎣 Start Fishing Logger2",
+    Title = "🎣 Fishing Logger 2",
     Description = "Detect and log fishing remotes automatically",
     Callback = function()
         local ReplicatedStorage = game:GetService("ReplicatedStorage")
