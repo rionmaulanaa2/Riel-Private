@@ -591,7 +591,7 @@ FishSection:Button({
 
 
 
-local delayBetweenSteps = 0.01 -- adjust delay between fishing steps
+local delayBetweenSteps = 3 -- adjust delay between fishing steps
 local autoFishingThread -- store the active loop thread
 
 FishSection:Toggle({
@@ -620,23 +620,21 @@ FishSection:Toggle({
                 while true do
                     pcall(function()
                         -- ✅ Step 1: Charge Fishing Rod
-						local amazingStrength = 1761558933.803717
-                        RF_ChargeFishingRod:InvokeServer(amazingStrength)
+						local args1 = {1759600647.429451}
+						RF_ChargeFishingRod:InvokeServer(unpack(args1))
 
-                        task.wait(2)
+                        task.wait(delayBetweenSteps)
 
                         -- ✅ Step 2: Start Fishing Minigame
-                        local args2 = {
-                            -0.5718746185302734,
-                            1.0,
-                            tick()
-                        }
-                        RF_RequestFishingMinigameStarted:InvokeServer(unpack(args2))
+                        local args2 = {-1.233184814453125, 0.9544006849697018}
+						RF_RequestFishingMinigameStarted:InvokeServer(unpack(args2))
 
-                        task.wait(2)
+                        task.wait(delayBetweenSteps)
 
                         -- ✅ Step 3: Complete Fishing
                         RE_FishingCompleted:FireServer()
+
+						task.wait(delayBetweenSteps)
 
                        
                     end)
