@@ -658,8 +658,58 @@ FishSection:Toggle({
     end
 })
 
+FishSection:Button({
+    Title = "🕵️ Sniff All Remotes 2 (Fishing)",
+    Description = "Log all remote calls while fishing to find the right one.",
+    Callback = function()
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local HttpService = game:GetService("HttpService")
+        local Players = game:GetService("Players")
+        local LocalPlayer = Players.LocalPlayer
 
+        WindUI:Notify({
+            Title = "🕵️ Remote Sniffer",
+            Content = "Started sniffing! Try charging and throwing your rod.",
+            Duration = 5
+        })
 
+        -- Safe event connect
+        local function safeConnect(remote)
+            if remote:IsA("RemoteEvent") then
+                remote.OnClientEvent:Connect(function(...)
+                    WindUI:Notify({
+                        Title = "📡 RemoteEvent Triggered",
+                        Content = remote:GetFullName() .. "\nArgs: " .. HttpService:JSONEncode({...}),
+                        Duration = 4
+                    })
+                end)
+            elseif remote:IsA("RemoteFunction") then
+                local old = remote.InvokeServer
+                remote.InvokeServer = function(self, ...)
+                    WindUI:Notify({
+                        Title = "⚙️ RemoteFunction Invoked",
+                        Content = self:GetFullName() .. "\nArgs: " .. HttpService:JSONEncode({...}),
+                        Duration = 4
+                    })
+                    return old(self, ...)
+                end
+            end
+        end
+
+        -- Hook every remote in ReplicatedStorage
+        for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
+            if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+                safeConnect(v)
+            end
+        end
+
+        WindUI:Notify({
+            Title = "✅ Remote Sniffer Active",
+            Content = "Sniffing all remotes under ReplicatedStorage...",
+            Duration = 5
+        })
+    end
+})
 
 
 
