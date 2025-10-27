@@ -622,7 +622,7 @@ FishSection:Toggle({
                         -- ✅ Step 1: Charge Fishing Rod
                         RF_ChargeFishingRod:InvokeServer()
 
-                        task.wait(delayBetweenSteps)
+                        task.wait(0.5)
 
                         -- ✅ Step 2: Start Fishing Minigame
                         local args2 = {
@@ -632,12 +632,12 @@ FishSection:Toggle({
                         }
                         RF_RequestFishingMinigameStarted:InvokeServer(unpack(args2))
 
-                        task.wait(delayBetweenSteps)
+                        task.wait(1)
 
                         -- ✅ Step 3: Complete Fishing
                         RE_FishingCompleted:FireServer()
 
-                        task.wait(0.5) -- small pause before next loop
+                        task.wait(1) -- small pause before next loop
                     end)
 
                     if not autoFishingThread then break end
