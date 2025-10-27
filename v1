@@ -837,6 +837,37 @@ FishSection:Button({
 
 
 
+FishSection:Button({
+    Title = "🎣 Always Amazing (Hook _getPower)",
+    Description = "Force fishing charge power to always max internally.",
+    Callback = function()
+        local Controllers = game:GetService("ReplicatedStorage"):WaitForChild("Controllers")
+        local FishingController = require(Controllers:WaitForChild("FishingController"))
+
+        if FishingController and FishingController._getPower then
+            local oldGetPower = FishingController._getPower
+
+            FishingController._getPower = function(...)
+                return 0.96 -- try between 0.95–0.99 for 'Amazing' (1.0 may be 'Perfect')
+            end
+
+            WindUI:Notify({
+                Title = "🎣 Always Amazing Enabled",
+                Content = "_getPower successfully hooked (returns 0.96).",
+                Duration = 4
+            })
+        else
+            WindUI:Notify({
+                Title = "⚠️ Error",
+                Content = "FishingController or _getPower not found!",
+                Duration = 4
+            })
+        end
+    end
+})
+
+
+
 
 
 
