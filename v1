@@ -637,7 +637,7 @@ FishSection:Toggle({
                         -- ✅ Step 3: Complete Fishing
                         RE_FishingCompleted:FireServer()
 
-                        -- task.wait(2.5) -- small pause before next loop
+                       
                     end)
 
                     if not autoFishingThread then break end
