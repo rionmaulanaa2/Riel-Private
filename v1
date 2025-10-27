@@ -622,7 +622,7 @@ FishSection:Toggle({
                         -- ✅ Step 1: Charge Fishing Rod
                         RF_ChargeFishingRod:InvokeServer()
 
-                        task.wait(1)
+                        task.wait(2)
 
                         -- ✅ Step 2: Start Fishing Minigame
                         local args2 = {
