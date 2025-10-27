@@ -659,95 +659,98 @@ FishSection:Toggle({
 })
 
 FishSection:Button({
-    Title = "🎣 Start Fishing Logger",
-    Description = "Log fishing events (Charge, Throw, Complete, Result)",
+    Title = "🎣 Start Fishing Logger2",
+    Description = "Detect and log fishing remotes automatically",
     Callback = function()
         local ReplicatedStorage = game:GetService("ReplicatedStorage")
         local HttpService = game:GetService("HttpService")
 
-        local NetFolder = ReplicatedStorage:WaitForChild("Packages")
-            :WaitForChild("_Index")
-            :WaitForChild("sleitnick_net@0.2.0")
-            :WaitForChild("net")
+        local function notify(title, text, duration)
+            WindUI:Notify({
+                Title = title,
+                Content = text,
+                Duration = duration or 3
+            })
+        end
 
-        -- References
-        local ChargeRod = NetFolder:WaitForChild("RF/ChargeFishingRod", 5)
-        local StartMinigame = NetFolder:WaitForChild("RF/RequestFishingMinigameStarted", 5)
-        local FishingCompleted = NetFolder:FindFirstChild("RE/FishingCompleted")
-        local FishingResult = NetFolder:FindFirstChild("RE/FishingResult") or nil
+        notify("🎣 Fishing Logger", "🔍 Searching for fishing remotes...", 3)
 
-        -- Timing data
+        -- find remotes anywhere
+        local function findRemote(partialName)
+            for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
+                if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+                    if string.find(v.Name:lower(), partialName:lower()) then
+                        return v
+                    end
+                end
+            end
+            return nil
+        end
+
+        local RF_ChargeFishingRod = findRemote("ChargeFishingRod")
+        local RF_RequestFishingMinigameStarted = findRemote("RequestFishingMinigameStarted")
+        local RE_FishingCompleted = findRemote("FishingCompleted")
+        local RE_FishingResult = findRemote("FishingResult")
+
+        -- print which ones found
+        for name, remote in pairs({
+            ["ChargeFishingRod"] = RF_ChargeFishingRod,
+            ["RequestFishingMinigameStarted"] = RF_RequestFishingMinigameStarted,
+            ["FishingCompleted"] = RE_FishingCompleted,
+            ["FishingResult"] = RE_FishingResult
+        }) do
+            if remote then
+                notify("🎣 Logger", "✅ Found: " .. name, 2)
+            else
+                notify("🎣 Logger", "⚠️ Not found: " .. name, 3)
+            end
+        end
+
         local chargeStart = 0
         local throwStart = 0
 
-        -- Intercept ChargeFishingRod
-        local oldCharge = ChargeRod.InvokeServer
-        ChargeRod.InvokeServer = function(self, ...)
-            local args = {...}
-            chargeStart = tick()
-
-            WindUI:Notify({
-                Title = "🎣 Fishing Logger",
-                Content = string.format("🎯 ChargeFishingRod called | args: %s",
-                    HttpService:JSONEncode(args)
-                ),
-                Duration = 3
-            })
-
-            return oldCharge(self, ...)
+        -- hook ChargeFishingRod
+        if RF_ChargeFishingRod and RF_ChargeFishingRod:IsA("RemoteFunction") then
+            local old = RF_ChargeFishingRod.InvokeServer
+            RF_ChargeFishingRod.InvokeServer = function(self, ...)
+                local args = {...}
+                chargeStart = tick()
+                notify("🎣 ChargeFishingRod", "Args: " .. HttpService:JSONEncode(args))
+                return old(self, ...)
+            end
         end
 
-        -- Intercept RequestFishingMinigameStarted
-        local oldMinigame = StartMinigame.InvokeServer
-        StartMinigame.InvokeServer = function(self, ...)
-            local args = {...}
-            throwStart = tick()
-            local holdDuration = throwStart - chargeStart
-
-            WindUI:Notify({
-                Title = "🎣 Fishing Logger",
-                Content = string.format("🎯 RequestFishingMinigameStarted | Hold: %.3fs | args: %s",
-                    holdDuration,
-                    HttpService:JSONEncode(args)
-                ),
-                Duration = 4
-            })
-
-            return oldMinigame(self, ...)
+        -- hook RequestFishingMinigameStarted
+        if RF_RequestFishingMinigameStarted and RF_RequestFishingMinigameStarted:IsA("RemoteFunction") then
+            local old = RF_RequestFishingMinigameStarted.InvokeServer
+            RF_RequestFishingMinigameStarted.InvokeServer = function(self, ...)
+                local args = {...}
+                throwStart = tick()
+                local hold = throwStart - chargeStart
+                notify("🎯 RequestFishingMinigameStarted", "Hold: " .. string.format("%.3fs", hold) .. "\nArgs: " .. HttpService:JSONEncode(args))
+                return old(self, ...)
+            end
         end
 
-        -- On fishing complete
-        if FishingCompleted then
-            FishingCompleted.OnClientEvent:Connect(function(...)
-                local finish = tick()
-                local total = finish - (chargeStart or finish)
-
-                WindUI:Notify({
-                    Title = "🎣 Fishing Logger",
-                    Content = string.format("✅ FishingCompleted | Total: %.3fs", total),
-                    Duration = 3
-                })
+        -- hook FishingCompleted
+        if RE_FishingCompleted and RE_FishingCompleted:IsA("RemoteEvent") then
+            RE_FishingCompleted.OnClientEvent:Connect(function(...)
+                local t = tick() - (chargeStart or tick())
+                notify("✅ FishingCompleted", "Total Time: " .. string.format("%.3fs", t))
             end)
         end
 
-        -- On fishing result (if exists)
-        if FishingResult then
-            FishingResult.OnClientEvent:Connect(function(resultType, ...)
-                WindUI:Notify({
-                    Title = "🎣 Fishing Logger",
-                    Content = string.format("⭐ FishingResult: %s", tostring(resultType)),
-                    Duration = 3
-                })
+        -- hook FishingResult
+        if RE_FishingResult and RE_FishingResult:IsA("RemoteEvent") then
+            RE_FishingResult.OnClientEvent:Connect(function(result, ...)
+                notify("⭐ FishingResult", "Result: " .. tostring(result))
             end)
         end
 
-        WindUI:Notify({
-            Title = "🎣 Fishing Logger Activated",
-            Content = "Now tracking fishing actions (Charge → Throw → Complete → Result).",
-            Duration = 5
-        })
+        notify("🎣 Fishing Logger", "✅ Logger activated. Start fishing to see logs!", 5)
     end
 })
+
 
 
 
