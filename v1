@@ -659,7 +659,7 @@ FishSection:Toggle({
 })
 
 FishSection:Button({
-    Title = "🕵️ Sniff All Remotes 2 (Fishing)",
+    Title = "🕵️ Sniff Al Remotes 2 (Fishing)",
     Description = "Log all remote calls while fishing to find the right one.",
     Callback = function()
         local ReplicatedStorage = game:GetService("ReplicatedStorage")
