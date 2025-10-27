@@ -714,7 +714,7 @@ FishSection:Button({
 
 
 FishSection:Button({
-    Title = "🎣 Toggle Always Amazing 2 (Auto Cast)",
+    Title = "🎣 Toggle Always Amazing 3 (Auto Cast)",
     Description = "Auto-charges fishing rod to max and instantly casts (Amazing every time).",
     Callback = function()
         local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -742,7 +742,7 @@ FishSection:Button({
 
             -- Hook power function
             fishingController._getPower = function(...)
-                return 1 -- always max
+                return 255 -- always max
             end
 
             -- Hook charge state update to instantly release
