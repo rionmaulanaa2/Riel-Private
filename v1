@@ -771,6 +771,72 @@ FishSection:Button({
 
 
 
+FishSection:Button({
+    Title = "🎣 Sniff FishingController Network",
+    Description = "Hooks into controller remotes (RF/RE) including sleitnick_net remotes.",
+    Callback = function()
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local HttpService = game:GetService("HttpService")
+
+        WindUI:Notify({
+            Title = "🎣 Fishing Controller Sniffer",
+            Content = "Scanning all controllers for remotes...",
+            Duration = 5
+        })
+
+        local function hookRemote(remote)
+            if remote:IsA("RemoteEvent") then
+                remote.OnClientEvent:Connect(function(...)
+                    WindUI:Notify({
+                        Title = "📡 RemoteEvent Triggered",
+                        Content = remote:GetFullName() .. "\nArgs: " .. HttpService:JSONEncode({...}),
+                        Duration = 4
+                    })
+                end)
+            elseif remote:IsA("RemoteFunction") then
+                local old = remote.InvokeServer
+                remote.InvokeServer = function(self, ...)
+                    WindUI:Notify({
+                        Title = "⚙️ RemoteFunction Invoked",
+                        Content = self:GetFullName() .. "\nArgs: " .. HttpService:JSONEncode({...}),
+                        Duration = 4
+                    })
+                    return old(self, ...)
+                end
+            end
+        end
+
+        -- 🔍 Search inside ReplicatedStorage.Controllers
+        local Controllers = ReplicatedStorage:FindFirstChild("Controllers")
+        if Controllers then
+            for _, obj in ipairs(Controllers:GetDescendants()) do
+                if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+                    hookRemote(obj)
+                end
+            end
+        end
+
+        -- 🔍 Also search in Packages._Index.sleitnick_net
+        local NetFolder = ReplicatedStorage:FindFirstChild("Packages")
+        if NetFolder then
+            for _, obj in ipairs(NetFolder:GetDescendants()) do
+                if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+                    hookRemote(obj)
+                end
+            end
+        end
+
+        WindUI:Notify({
+            Title = "✅ Controller Sniffer Active",
+            Content = "Now charge and throw your rod again — watch notifications.",
+            Duration = 5
+        })
+    end
+})
+
+
+
+
 
 
 
