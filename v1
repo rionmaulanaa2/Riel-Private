@@ -659,97 +659,58 @@ FishSection:Toggle({
 })
 
 FishSection:Button({
-    Title = "🎣 Fishing Logger 2",
-    Description = "Detect and log fishing remotes automatically",
+    Title = "🕵️ Sniff All Remotes (Fishing)",
+    Description = "Log all remote calls while fishing to find the right one.",
     Callback = function()
         local ReplicatedStorage = game:GetService("ReplicatedStorage")
         local HttpService = game:GetService("HttpService")
+        local Players = game:GetService("Players")
+        local LocalPlayer = Players.LocalPlayer
 
-        local function notify(title, text, duration)
-            WindUI:Notify({
-                Title = title,
-                Content = text,
-                Duration = duration or 3
-            })
-        end
+        WindUI:Notify({
+            Title = "🕵️ Remote Sniffer",
+            Content = "Started sniffing! Try charging and throwing your rod.",
+            Duration = 5
+        })
 
-        notify("🎣 Fishing Logger", "🔍 Searching for fishing remotes...", 3)
-
-        -- find remotes anywhere
-        local function findRemote(partialName)
-            for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
-                if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
-                    if string.find(v.Name:lower(), partialName:lower()) then
-                        return v
-                    end
+        -- Safe event connect
+        local function safeConnect(remote)
+            if remote:IsA("RemoteEvent") then
+                remote.OnClientEvent:Connect(function(...)
+                    WindUI:Notify({
+                        Title = "📡 RemoteEvent Triggered",
+                        Content = remote:GetFullName() .. "\nArgs: " .. HttpService:JSONEncode({...}),
+                        Duration = 4
+                    })
+                end)
+            elseif remote:IsA("RemoteFunction") then
+                local old = remote.InvokeServer
+                remote.InvokeServer = function(self, ...)
+                    WindUI:Notify({
+                        Title = "⚙️ RemoteFunction Invoked",
+                        Content = self:GetFullName() .. "\nArgs: " .. HttpService:JSONEncode({...}),
+                        Duration = 4
+                    })
+                    return old(self, ...)
                 end
             end
-            return nil
         end
 
-        local RF_ChargeFishingRod = findRemote("ChargeFishingRod")
-        local RF_RequestFishingMinigameStarted = findRemote("RequestFishingMinigameStarted")
-        local RE_FishingCompleted = findRemote("FishingCompleted")
-        local RE_FishingResult = findRemote("FishingResult")
-
-        -- print which ones found
-        for name, remote in pairs({
-            ["ChargeFishingRod"] = RF_ChargeFishingRod,
-            ["RequestFishingMinigameStarted"] = RF_RequestFishingMinigameStarted,
-            ["FishingCompleted"] = RE_FishingCompleted,
-            ["FishingResult"] = RE_FishingResult
-        }) do
-            if remote then
-                notify("🎣 Logger", "✅ Found: " .. name, 2)
-            else
-                notify("🎣 Logger", "⚠️ Not found: " .. name, 3)
+        -- Hook every remote in ReplicatedStorage
+        for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
+            if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+                safeConnect(v)
             end
         end
 
-        local chargeStart = 0
-        local throwStart = 0
-
-        -- hook ChargeFishingRod
-        if RF_ChargeFishingRod and RF_ChargeFishingRod:IsA("RemoteFunction") then
-            local old = RF_ChargeFishingRod.InvokeServer
-            RF_ChargeFishingRod.InvokeServer = function(self, ...)
-                local args = {...}
-                chargeStart = tick()
-                notify("🎣 ChargeFishingRod", "Args: " .. HttpService:JSONEncode(args))
-                return old(self, ...)
-            end
-        end
-
-        -- hook RequestFishingMinigameStarted
-        if RF_RequestFishingMinigameStarted and RF_RequestFishingMinigameStarted:IsA("RemoteFunction") then
-            local old = RF_RequestFishingMinigameStarted.InvokeServer
-            RF_RequestFishingMinigameStarted.InvokeServer = function(self, ...)
-                local args = {...}
-                throwStart = tick()
-                local hold = throwStart - chargeStart
-                notify("🎯 RequestFishingMinigameStarted", "Hold: " .. string.format("%.3fs", hold) .. "\nArgs: " .. HttpService:JSONEncode(args))
-                return old(self, ...)
-            end
-        end
-
-        -- hook FishingCompleted
-        if RE_FishingCompleted and RE_FishingCompleted:IsA("RemoteEvent") then
-            RE_FishingCompleted.OnClientEvent:Connect(function(...)
-                local t = tick() - (chargeStart or tick())
-                notify("✅ FishingCompleted", "Total Time: " .. string.format("%.3fs", t))
-            end)
-        end
-
-        -- hook FishingResult
-        if RE_FishingResult and RE_FishingResult:IsA("RemoteEvent") then
-            RE_FishingResult.OnClientEvent:Connect(function(result, ...)
-                notify("⭐ FishingResult", "Result: " .. tostring(result))
-            end)
-        end
-
-        notify("🎣 Fishing Logger", "✅ Logger activated. Start fishing to see logs!", 5)
+        WindUI:Notify({
+            Title = "✅ Remote Sniffer Active",
+            Content = "Sniffing all remotes under ReplicatedStorage...",
+            Duration = 5
+        })
     end
 })
+
 
 
 
