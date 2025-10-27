@@ -659,57 +659,194 @@ FishSection:Toggle({
 })
 
 FishSection:Button({
-    Title = "🕵️ Sniff All Remotes 2 (Fishing)",
-    Description = "Log all remote calls while fishing to find the right one.",
+    Title = "🎯 Hook Fishing Module (Log Charge/Throw)",
+    Description = "Patch client fishing module to show charge/throw events via WindUI notifications",
     Callback = function()
-        local ReplicatedStorage = game:GetService("ReplicatedStorage")
         local HttpService = game:GetService("HttpService")
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
         local Players = game:GetService("Players")
         local LocalPlayer = Players.LocalPlayer
 
-        WindUI:Notify({
-            Title = "🕵️ Remote Sniffer",
-            Content = "Started sniffing! Try charging and throwing your rod.",
-            Duration = 5
-        })
+        local function notify(title, content, duration)
+            pcall(function()
+                WindUI:Notify({
+                    Title = title,
+                    Content = content,
+                    Duration = duration or 4
+                })
+            end)
+        end
 
-        -- Safe event connect
-        local function safeConnect(remote)
-            if remote:IsA("RemoteEvent") then
-                remote.OnClientEvent:Connect(function(...)
-                    WindUI:Notify({
-                        Title = "📡 RemoteEvent Triggered",
-                        Content = remote:GetFullName() .. "\nArgs: " .. HttpService:JSONEncode({...}),
-                        Duration = 4
-                    })
-                end)
-            elseif remote:IsA("RemoteFunction") then
-                local old = remote.InvokeServer
-                remote.InvokeServer = function(self, ...)
-                    WindUI:Notify({
-                        Title = "⚙️ RemoteFunction Invoked",
-                        Content = self:GetFullName() .. "\nArgs: " .. HttpService:JSONEncode({...}),
-                        Duration = 4
-                    })
-                    return old(self, ...)
+        notify("Finder", "Searching for client fishing module...", 2)
+
+        -- heuristics: search common places for a ModuleScript that contains RequestChargeFishingRod
+        local function findFishingModule()
+            local roots = {
+                ReplicatedStorage,
+                workspace,
+                game:GetService("StarterPlayer"),
+                LocalPlayer:FindFirstChild("PlayerScripts"),
+                LocalPlayer:FindFirstChild("PlayerGui"),
+                ReplicatedStorage:FindFirstChild("Packages") -- include packages index (if decompiled modules are packed)
+            }
+            for _, root in ipairs(roots) do
+                if root then
+                    for _, obj in ipairs(root:GetDescendants()) do
+                        if obj:IsA("ModuleScript") then
+                            local ok, src = pcall(function() return obj.Source end)
+                            if ok and type(src) == "string" then
+                                if string.find(src, "RequestChargeFishingRod") or string.find(src, "UpdateChargeState") or string.find(src, "SendFishingRequestToServer") then
+                                    return obj
+                                end
+                            end
+                        end
+                    end
                 end
             end
+            return nil
         end
 
-        -- Hook every remote in ReplicatedStorage
-        for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
-            if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
-                safeConnect(v)
+        local moduleScript = findFishingModule()
+        if not moduleScript then
+            notify("Finder", "Could not find fishing module automatically. Paste its path or require it manually.", 6)
+            return
+        end
+
+        notify("Finder", "Found module: " .. moduleScript:GetFullName(), 3)
+
+        local ok, moduleTable = pcall(function() return require(moduleScript) end)
+        if not ok or type(moduleTable) ~= "table" then
+            notify("Error", "Failed to require module.", 5)
+            return
+        end
+
+        notify("Patcher", "Module required. Patching methods...", 2)
+
+        -- store originals so we can restore if needed
+        moduleTable._originals = moduleTable._originals or {}
+
+        -- helper to patch safely
+        local function safePatch(tbl, fname, wrapper)
+            if not tbl[fname] or type(tbl[fname]) ~= "function" then
+                notify("Patch", ("Function %s not found in module"):format(fname), 3)
+                return false
             end
+            if not moduleTable._originals[fname] then
+                moduleTable._originals[fname] = tbl[fname]
+            end
+            tbl[fname] = wrapper(tbl[fname])
+            notify("Patch", ("Patched %s"):format(fname), 2)
+            return true
         end
 
-        WindUI:Notify({
-            Title = "✅ Remote Sniffer Active",
-            Content = "Sniffing all remotes under ReplicatedStorage...",
-            Duration = 5
-        })
+        -- 1) Patch RequestChargeFishingRod to log when charging starts and what server time gets used
+        safePatch(moduleTable, "RequestChargeFishingRod", function(orig)
+            return function(...)
+                -- log call
+                local args = {...}
+                local startTick = tick()
+                notify("Charge", "RequestChargeFishingRod called at " .. string.format("%.3f", startTick) .. "\nArgs: " .. HttpService:JSONEncode(args), 4)
+
+                -- call original and collect result (orig may return or schedule)
+                local ok, res = pcall(function() return orig(...) end)
+                if not ok then
+                    notify("Charge", "Original RequestChargeFishingRod errored: " .. tostring(res), 4)
+                    return res
+                end
+
+                -- after original runs, module uses workspace:GetServerTimeNow and invokes remote;
+                -- attempt to read any module field that stores serverTime (var35_upvw in decompile)
+                pcall(function()
+                    local serverTime = moduleTable._serverTime or moduleTable.ServerTime or moduleTable._lastServerTime or moduleTable.lastServerTime or moduleTable._chargeServerTime
+                    if serverTime then
+                        notify("Charge", "Module serverTime (possible): " .. tostring(serverTime), 4)
+                    end
+                end)
+
+                return res
+            end
+        end)
+
+        -- 2) Patch UpdateChargeState to log when UI is updated and server time passed
+        safePatch(moduleTable, "UpdateChargeState", function(orig)
+            return function(selfArg, arg1, arg2)
+                pcall(function()
+                    notify("UpdateChargeState", ("Called. arg1=%s arg2=%s"):format(tostring(arg1), tostring(arg2)), 3)
+                end)
+                return orig(selfArg, arg1, arg2)
+            end
+        end)
+
+        -- 3) Patch _getPower to log returned power (live)
+        if moduleTable._getPower then
+            safePatch(moduleTable, "_getPower", function(orig)
+                return function(...)
+                    local ok, result = pcall(function() return orig(...) end)
+                    pcall(function()
+                        notify("Power", ("_getPower() -> %s"):format(tostring(result)), 2)
+                    end)
+                    return ok and result or 0
+                end
+            end)
+        else
+            notify("Patch", "_getPower not found on module", 3)
+        end
+
+        -- 4) Patch SendFishingRequestToServer to capture the outgoing angle/power and the server response
+        if moduleTable.SendFishingRequestToServer then
+            safePatch(moduleTable, "SendFishingRequestToServer", function(orig)
+                return function(...)
+                    local args = {...}
+                    pcall(function()
+                        notify("SendToServer", "SendFishingRequestToServer called. Args: " .. HttpService:JSONEncode(args), 4)
+                    end)
+                    local ok, a, b = pcall(function() return orig(...) end)
+                    if not ok then
+                        notify("SendToServer", "SendFishingRequestToServer errored: " .. tostring(a), 4)
+                        return a, b
+                    end
+                    -- if original returns success and info, log them
+                    pcall(function()
+                        notify("SendToServer", ("Server response: success=%s, data=%s"):format(tostring(a), HttpService:JSONEncode(b)), 4)
+                    end)
+                    return a, b
+                end
+            end)
+        else
+            notify("Patch", "SendFishingRequestToServer not found on module", 3)
+        end
+
+        -- optional: patch _updateChargeFrame to show UI power when it updates (this can be noisy)
+        if moduleTable._updateChargeFrame then
+            safePatch(moduleTable, "_updateChargeFrame", function(orig)
+                return function(...)
+                    pcall(function()
+                        -- call orig first so module state is fresh
+                        local ok, res = pcall(function() return orig(...) end)
+                        -- after update, call _getPower to get newest value (safe)
+                        local power = nil
+                        pcall(function() power = moduleTable._getPower() end)
+                        notify("UI", ("_updateChargeFrame updated (power ~ %.3f)"):format(tonumber(power) or 0), 1.5)
+                        return ok and res
+                    end)
+                end
+            end)
+        end
+
+        notify("Done", "Patched module. Start charging and throwing, you will get WindUI notifications for each event.", 5)
+
+        -- expose a restore function
+        _G.__restoreFishingModule = function()
+            if not moduleTable._originals then return end
+            for k, v in pairs(moduleTable._originals) do
+                moduleTable[k] = v
+            end
+            notify("Restore", "Original module functions restored (if any).", 3)
+            moduleTable._originals = nil
+        end
     end
 })
+
 
 
 
