@@ -589,54 +589,76 @@ FishSection:Button({
 })
 
 
-local running = true
-local delayBetweenSteps = 0.01 -- seconds, adjust if needed
+
+
+local delayBetweenSteps = 0.01 -- adjust delay between fishing steps
+local autoFishingThread -- store the active loop thread
+
 FishSection:Toggle({
     Title = "Auto Fishing",
-    Description = "Auto Fishing",
+    Description = "Automatically perform fishing steps in loop",
     Default = false,
     Callback = function(v)
-		local Net = ReplicatedStorage:WaitForChild("Packages")
-		:WaitForChild("_Index")
-		:WaitForChild("sleitnick_net@0.2.0")
-		:WaitForChild("net")
+        -- fetch remotes once
+        local Net = ReplicatedStorage:WaitForChild("Packages")
+            :WaitForChild("_Index")
+            :WaitForChild("sleitnick_net@0.2.0")
+            :WaitForChild("net")
 
-		local RF_ChargeFishingRod = Net:WaitForChild("RF/ChargeFishingRod")
-		local RF_RequestFishingMinigameStarted = Net:WaitForChild("RF/RequestFishingMinigameStarted")
-		local RE_FishingCompleted = Net:WaitForChild("RE/FishingCompleted")
+        local RF_ChargeFishingRod = Net:WaitForChild("RF/ChargeFishingRod")
+        local RF_RequestFishingMinigameStarted = Net:WaitForChild("RF/RequestFishingMinigameStarted")
+        local RE_FishingCompleted = Net:WaitForChild("RE/FishingCompleted")
+
+        -- stop previous thread if toggle turned off
         if autoFishingThread then
-            pcall(function()
-                task.cancel(autoFishingThread)
-            end)
+            task.cancel(autoFishingThread)
             autoFishingThread = nil
         end
-        
+
         if v then
             autoFishingThread = task.spawn(function()
-                while task.wait(0.5) do
-                    if not autoFishingThread then break end
+                while true do
                     pcall(function()
-                        local args1 = {1759600647.429451}
-						RF_ChargeFishingRod:InvokeServer(unpack(args1))
+                        -- ✅ Step 1: Charge Fishing Rod
+                        RF_ChargeFishingRod:InvokeServer()
 
-						task.wait(delayBetweenSteps)
+                        task.wait(delayBetweenSteps)
 
-						-- Step 2: RequestFishingMinigameStarted
-						local args2 = {-1.233184814453125, 0.9544006849697018}
-						RF_RequestFishingMinigameStarted:InvokeServer(unpack(args2))
+                        -- ✅ Step 2: Start Fishing Minigame
+                        local args2 = {
+                            -0.5718746185302734,
+                            0.9772793832435607,
+                            1761558933.803717
+                        }
+                        RF_RequestFishingMinigameStarted:InvokeServer(unpack(args2))
 
-						task.wait(delayBetweenSteps)
+                        task.wait(delayBetweenSteps)
 
-						-- Step 3: FishingCompleted
-						RE_FishingCompleted:FireServer()
+                        -- ✅ Step 3: Complete Fishing
+                        RE_FishingCompleted:FireServer()
 
-						task.wait(delayBetweenSteps)
+                        task.wait(0.5) -- small pause before next loop
                     end)
+
+                    if not autoFishingThread then break end
                 end
             end)
+
+            WindUI:Notify({
+                Title = "Auto Fishing",
+                Content = "🎣 Auto fishing started!",
+                Duration = 2
+            })
+        else
+            WindUI:Notify({
+                Title = "Auto Fishing",
+                Content = "🛑 Auto fishing stopped.",
+                Duration = 2
+            })
         end
     end
 })
+
 
 FishSection:Button({
     Title = "Add Friend All",
