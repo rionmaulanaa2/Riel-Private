@@ -620,7 +620,8 @@ FishSection:Toggle({
                 while true do
                     pcall(function()
                         -- ✅ Step 1: Charge Fishing Rod
-                        RF_ChargeFishingRod:InvokeServer()
+						local amazingStrength = 1
+                        RF_ChargeFishingRod:InvokeServer(amazingStrength)
 
                         task.wait(2)
 
