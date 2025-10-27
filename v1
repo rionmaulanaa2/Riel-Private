@@ -714,7 +714,7 @@ FishSection:Button({
 
 
 FishSection:Button({
-    Title = "🎣 Toggle Always Amazing 3 (Auto Cast)",
+    Title = "🎣 Toggle Always Amazing 4 (Auto Cast)",
     Description = "Auto-charges fishing rod to max and instantly casts (Amazing every time).",
     Callback = function()
         local ReplicatedStorage = game:GetService("ReplicatedStorage")
