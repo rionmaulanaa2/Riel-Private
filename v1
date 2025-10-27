@@ -714,13 +714,12 @@ FishSection:Button({
 
 
 FishSection:Button({
-    Title = "🎣 Toggle Always Amazing Charge",
-    Description = "Forces fishing rod charge to always be max (Amazing result).",
+    Title = "🎣 Toggle Always Amazing 2 (Auto Cast)",
+    Description = "Auto-charges fishing rod to max and instantly casts (Amazing every time).",
     Callback = function()
         local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-        -- Load the FishingController
-        local fishingController = nil
+        local fishingController
         pcall(function()
             fishingController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("FishingController"))
         end)
@@ -728,57 +727,65 @@ FishSection:Button({
         if not fishingController then
             WindUI:Notify({
                 Title = "⚠️ Error",
-                Content = "FishingController not found in ReplicatedStorage.Controllers!",
+                Content = "FishingController not found!",
                 Duration = 4
             })
             return
         end
 
-        -- Toggle state
         _G.AlwaysAmazing = not _G.AlwaysAmazing
 
         if _G.AlwaysAmazing then
-            -- Hook _getPower
-            if typeof(fishingController._getPower) == "function" then
-                fishingController._oldGetPower = fishingController._oldGetPower or fishingController._getPower
+            -- Backup original functions
+            fishingController._oldGetPower = fishingController._oldGetPower or fishingController._getPower
+            fishingController._oldUpdateChargeState = fishingController._oldUpdateChargeState or fishingController.UpdateChargeState
 
-                fishingController._getPower = function(...)
-                    local oldResult = fishingController._oldGetPower(...)
-                    WindUI:Notify({
-                        Title = "🎣 Fishing Power Hook",
-                        Content = string.format("Old: %.3f → Overridden: 1.000 (Amazing)", oldResult or 0),
-                        Duration = 3
-                    })
-                    return 1
-                end
-
-                WindUI:Notify({
-                    Title = "✅ Hook Enabled",
-                    Content = "Now every throw will be **AMAZING**!",
-                    Duration = 3
-                })
-            else
-                WindUI:Notify({
-                    Title = "⚠️ Error",
-                    Content = "_getPower function not found inside FishingController!",
-                    Duration = 4
-                })
+            -- Hook power function
+            fishingController._getPower = function(...)
+                return 1 -- always max
             end
+
+            -- Hook charge state update to instantly release
+            fishingController.UpdateChargeState = function(self, ...)
+                if _G.confirmFishingInput then
+                    -- Auto-release when maxed
+                    task.defer(function()
+                        pcall(function()
+                            _G.confirmFishingInput(true)
+                        end)
+                    end)
+                end
+                -- still run original update
+                if self._oldUpdateChargeState then
+                    return self._oldUpdateChargeState(self, ...)
+                end
+            end
+
+            WindUI:Notify({
+                Title = "✅ Hook Enabled",
+                Content = "Always Amazing active — instant full charge & auto cast!",
+                Duration = 4
+            })
         else
-            -- Restore the original function
+            -- Restore originals
             if fishingController._oldGetPower then
                 fishingController._getPower = fishingController._oldGetPower
                 fishingController._oldGetPower = nil
             end
+            if fishingController._oldUpdateChargeState then
+                fishingController.UpdateChargeState = fishingController._oldUpdateChargeState
+                fishingController._oldUpdateChargeState = nil
+            end
 
             WindUI:Notify({
-                Title = "🛑 Hook Disabled",
-                Content = "Fishing charge is back to normal behavior.",
+                Title = "🛑 Disabled",
+                Content = "Restored normal fishing behavior.",
                 Duration = 3
             })
         end
     end
 })
+
 
 
 
