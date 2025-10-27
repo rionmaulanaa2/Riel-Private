@@ -629,7 +629,7 @@ FishSection:Toggle({
                         local args2 = {
                             -0.5718746185302734,
                             1.0,
-                            1761558933.803717
+                            tick()
                         }
                         RF_RequestFishingMinigameStarted:InvokeServer(unpack(args2))
 
