@@ -620,7 +620,7 @@ FishSection:Toggle({
                 while true do
                     pcall(function()
                         -- ✅ Step 1: Charge Fishing Rod
-						local amazingStrength = 0.9
+						local amazingStrength = 1
                         RF_ChargeFishingRod:InvokeServer(amazingStrength)
 
                         task.wait(2)
@@ -628,7 +628,7 @@ FishSection:Toggle({
                         -- ✅ Step 2: Start Fishing Minigame
                         local args2 = {
                             -0.5718746185302734,
-                            1.9772793832435607,
+                            1.0,
                             tick()
                         }
                         RF_RequestFishingMinigameStarted:InvokeServer(unpack(args2))
