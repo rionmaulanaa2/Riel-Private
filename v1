@@ -658,6 +658,98 @@ FishSection:Toggle({
     end
 })
 
+FishSection:Button({
+    Title = "🎣 Start Fishing Logger",
+    Description = "Log fishing events (Charge, Throw, Complete, Result)",
+    Callback = function()
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local HttpService = game:GetService("HttpService")
+
+        local NetFolder = ReplicatedStorage:WaitForChild("Packages")
+            :WaitForChild("_Index")
+            :WaitForChild("sleitnick_net@0.2.0")
+            :WaitForChild("net")
+
+        -- References
+        local ChargeRod = NetFolder:WaitForChild("RF/ChargeFishingRod", 5)
+        local StartMinigame = NetFolder:WaitForChild("RF/RequestFishingMinigameStarted", 5)
+        local FishingCompleted = NetFolder:FindFirstChild("RE/FishingCompleted")
+        local FishingResult = NetFolder:FindFirstChild("RE/FishingResult") or nil
+
+        -- Timing data
+        local chargeStart = 0
+        local throwStart = 0
+
+        -- Intercept ChargeFishingRod
+        local oldCharge = ChargeRod.InvokeServer
+        ChargeRod.InvokeServer = function(self, ...)
+            local args = {...}
+            chargeStart = tick()
+
+            WindUI:Notify({
+                Title = "🎣 Fishing Logger",
+                Content = string.format("🎯 ChargeFishingRod called | args: %s",
+                    HttpService:JSONEncode(args)
+                ),
+                Duration = 3
+            })
+
+            return oldCharge(self, ...)
+        end
+
+        -- Intercept RequestFishingMinigameStarted
+        local oldMinigame = StartMinigame.InvokeServer
+        StartMinigame.InvokeServer = function(self, ...)
+            local args = {...}
+            throwStart = tick()
+            local holdDuration = throwStart - chargeStart
+
+            WindUI:Notify({
+                Title = "🎣 Fishing Logger",
+                Content = string.format("🎯 RequestFishingMinigameStarted | Hold: %.3fs | args: %s",
+                    holdDuration,
+                    HttpService:JSONEncode(args)
+                ),
+                Duration = 4
+            })
+
+            return oldMinigame(self, ...)
+        end
+
+        -- On fishing complete
+        if FishingCompleted then
+            FishingCompleted.OnClientEvent:Connect(function(...)
+                local finish = tick()
+                local total = finish - (chargeStart or finish)
+
+                WindUI:Notify({
+                    Title = "🎣 Fishing Logger",
+                    Content = string.format("✅ FishingCompleted | Total: %.3fs", total),
+                    Duration = 3
+                })
+            end)
+        end
+
+        -- On fishing result (if exists)
+        if FishingResult then
+            FishingResult.OnClientEvent:Connect(function(resultType, ...)
+                WindUI:Notify({
+                    Title = "🎣 Fishing Logger",
+                    Content = string.format("⭐ FishingResult: %s", tostring(resultType)),
+                    Duration = 3
+                })
+            end)
+        end
+
+        WindUI:Notify({
+            Title = "🎣 Fishing Logger Activated",
+            Content = "Now tracking fishing actions (Charge → Throw → Complete → Result).",
+            Duration = 5
+        })
+    end
+})
+
+
 
 FishSection:Button({
     Title = "Add Friend All",
