@@ -591,7 +591,7 @@ FishSection:Button({
 
 
 
-local delayBetweenSteps = 3 -- adjust delay between fishing steps
+local delayBetweenSteps = 2 -- adjust delay between fishing steps
 local autoFishingThread -- store the active loop thread
 
 FishSection:Toggle({
