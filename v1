@@ -869,6 +869,8 @@ FishSection:Button({
 
 
 
+
+
 FishSection:Button({
     Title = "Add Friend All",
     Description = "Add all players in the server as friends",
