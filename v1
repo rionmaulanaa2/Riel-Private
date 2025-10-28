@@ -21,6 +21,7 @@ local autoFishingThread
 local autoEggThread
 local didEnabled = false
 local flyEnabled = false
+
 local selectedEgg = "Red Crystal"
 
 local Window = WindUI:CreateWindow({
