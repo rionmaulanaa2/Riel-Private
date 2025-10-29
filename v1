@@ -11,6 +11,7 @@ local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
 
 
+
 local autoFarmSpeedThread
 local autoMountAnehThread
 local autoFarmGemsThread
