@@ -621,12 +621,12 @@ FishSection:Toggle({
                     pcall(function()
                         -- ✅ Step 1: Charge Fishing Rod
 						local args1 = {1759600647.429451}
-						RF_ChargeFishingRod:InvokeServer(unpack(args1))
+						RF_ChargeFishingRod:InvokeServer()
 
-                        task.wait(delayBetweenSteps)
+                        task.wait(0.27)
 
                         -- ✅ Step 2: Start Fishing Minigame
-                        local args2 = {-1.233184814453125, 0.9544006849697018}
+                        local args2 = {-1.233184814453125, 0.9544006849697018,tick()}
 						RF_RequestFishingMinigameStarted:InvokeServer(unpack(args2))
 
                         task.wait(delayBetweenSteps)
@@ -634,7 +634,7 @@ FishSection:Toggle({
                         -- ✅ Step 3: Complete Fishing
                         RE_FishingCompleted:FireServer()
 
-						task.wait(delayBetweenSteps)
+						
 
                        
                     end)
