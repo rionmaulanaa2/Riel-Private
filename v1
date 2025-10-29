@@ -713,6 +713,84 @@ FishSection:Button({
 
 
 
+FishSection:Button({
+    Title = "🎣 Auto Amazing Charge",
+    Description = "Automatically casts when charge ≥ 0.9 for guaranteed Amazing throws.",
+    Callback = function()
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local RunService = game:GetService("RunService")
+
+        -- ✅ Load required modules
+        local Net = ReplicatedStorage:WaitForChild("Packages")
+            :WaitForChild("_Index")
+            :WaitForChild("sleitnick_net@0.2.0")
+            :WaitForChild("net")
+
+        local RF_RequestFishingMinigameStarted = Net:WaitForChild("RF/RequestFishingMinigameStarted")
+        local FishingController = require(ReplicatedStorage.Controllers.FishingController)
+
+        -- 🧠 State
+        local autoAmazing = not _G.AutoAmazingActive
+        _G.AutoAmazingActive = autoAmazing
+
+        if not autoAmazing then
+            WindUI:Notify({
+                Title = "🎣 Auto Amazing Charge",
+                Content = "Stopped auto cast.",
+                Duration = 3
+            })
+            return
+        end
+
+        WindUI:Notify({
+            Title = "🎣 Auto Amazing Charge",
+            Content = "Started! Will cast automatically when charge ≥ 0.9",
+            Duration = 4
+        })
+
+        local debounce = false
+
+        -- Try to hook into UpdateChargeState
+        local oldUpdate = FishingController.UpdateChargeState
+        FishingController.UpdateChargeState = function(self, dt, ...)
+            local result = oldUpdate(self, dt, ...)
+
+            if not _G.AutoAmazingActive then
+                return result
+            end
+
+            local power = 0
+            pcall(function()
+                power = self:_getPower() or 0
+            end)
+
+            if not debounce and power >= 0.9 then
+                debounce = true
+
+                WindUI:Notify({
+                    Title = "🌟 Auto Cast Triggered!",
+                    Content = string.format("Power: %.2f — Casting now!", power),
+                    Duration = 2
+                })
+
+                -- Call the remote to cast
+                pcall(function()
+                    local args2 = {-1.233184814453125, 0.9544006849697018, tick()}
+                    RF_RequestFishingMinigameStarted:InvokeServer(unpack(args2))
+                end)
+
+                task.delay(2, function()
+                    debounce = false
+                end)
+            end
+
+            return result
+        end
+    end
+})
+
+
+
 
 
 FishSection:Button({
