@@ -1283,7 +1283,7 @@ RunThread(function()
                 if not Config.AutoJoinRunning then break end
 
                 Log("`2Joining (`0" .. i .. "`2/`0" .. #worldsToVisit .. "`2): `0" .. worldName)
-                RequestJoinWorld(worldName)
+                SendPacket(3, "action|join_request\nname|" .. worldName .. "\ninvitedWorld|0")
                 Sleep(Config.JoinPacketDelay)
 
                 local timeout = Config.JoinTimeoutSeconds
