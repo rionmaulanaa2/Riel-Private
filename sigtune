@@ -747,7 +747,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.3", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.4", guiOpen) then
 
         -- Status bar
         local statusTxt = Run
@@ -1129,59 +1129,7 @@ RunThread(function()
     end
 end)
 
--- ============================================================
--- MAIN PUNCH LOOP
--- ============================================================
 
-Log("Script loaded! Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
-Log("Punching with ItemID: " .. Config.ItemID)
-Log("Type `4/stop`9 to stop the script.")
-
-local punchCount = 0
-
--- Wait for world to load first, but allow breaking out if UI toggles Run
-while true do
-    if Run and not Paused then
-        if not GetLocal() or not GetWorld() then
-            Sleep(500)
-        else
-            -- Check start position once world is loaded
-            if not startX then
-                startX = math.floor(GetLocal().pos.x / 32)
-                startY = math.floor(GetLocal().pos.y / 32)
-                Log("World detected: `e" .. GetWorld().name)
-            end
-
-            -- Determine the correct delay based on the active mode
-            local currentDelay = Config.PunchDelay
-
-            if Config.AutoPlace then
-                AutoPlaceStep()
-                currentDelay = Config.PlaceDelay
-            elseif Config.AutoPunchWorld then
-                AutoPunchWorldStep()
-                currentDelay = Config.PunchWorldDelay
-            else
-                if Config.AutoPunch then
-                    PunchTile()
-                end
-            end
-            punchCount = punchCount + 1
-            
-            if Config.AutoTake and (punchCount % 10 == 0) then
-                CollectItems()
-            end
-
-            if Config.AutoBackpack and (punchCount % 20 == 0) then
-                CheckBackpack()
-            end
-            
-            Sleep(currentDelay)
-        end
-    else
-        Sleep(100)
-    end
-end
 
 -- ============================================================
 -- AUTO JOINER THREAD
@@ -1361,3 +1309,57 @@ AddHook("onsendpacket", "SafePunchControl", function(type, packet)
     end
     return false
 end)
+
+-- ============================================================
+-- MAIN PUNCH LOOP
+-- ============================================================
+
+Log("Script loaded! Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
+Log("Punching with ItemID: " .. Config.ItemID)
+Log("Type `4/stop`9 to stop the script.")
+
+local punchCount = 0
+
+-- Wait for world to load first, but allow breaking out if UI toggles Run
+while true do
+    if Run and not Paused then
+        if not GetLocal() or not GetWorld() then
+            Sleep(500)
+        else
+            -- Check start position once world is loaded
+            if not startX then
+                startX = math.floor(GetLocal().pos.x / 32)
+                startY = math.floor(GetLocal().pos.y / 32)
+                Log("World detected: `e" .. GetWorld().name)
+            end
+
+            -- Determine the correct delay based on the active mode
+            local currentDelay = Config.PunchDelay
+
+            if Config.AutoPlace then
+                AutoPlaceStep()
+                currentDelay = Config.PlaceDelay
+            elseif Config.AutoPunchWorld then
+                AutoPunchWorldStep()
+                currentDelay = Config.PunchWorldDelay
+            else
+                if Config.AutoPunch then
+                    PunchTile()
+                end
+            end
+            punchCount = punchCount + 1
+            
+            if Config.AutoTake and (punchCount % 10 == 0) then
+                CollectItems()
+            end
+
+            if Config.AutoBackpack and (punchCount % 20 == 0) then
+                CheckBackpack()
+            end
+            
+            Sleep(currentDelay)
+        end
+    else
+        Sleep(100)
+    end
+end
