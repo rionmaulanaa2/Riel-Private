@@ -779,7 +779,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.6", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.7", guiOpen) then
 
         -- Status bar
         local statusTxt = Run
@@ -1047,7 +1047,7 @@ local function ShowUI()
             if ImGui.Button("Auto Create Account") then
                 CreateRandomAccount()
             end
-            ImGui.TextWrapped("Generates a random account, applies it, and sends info to Webhook.")
+            ImGui.Text("Generates a random account, applies it, and sends info to Webhook.")
         end
 
         -- PACKET DEBUG
