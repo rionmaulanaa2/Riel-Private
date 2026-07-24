@@ -736,7 +736,37 @@ end
 -- ============================================================
 -- IMGUI UI
 -- ============================================================
-local guiOpen = true
+local function CreateRandomAccount()
+    local letters = "abcdefghijklmnopqrstuvwxyz"
+    local name = ""
+    for i = 1, math.random(5, 7) do
+        local r = math.random(1, #letters)
+        name = name .. letters:sub(r, r)
+    end
+    name = name .. tostring(math.random(10, 99))
+    
+    local password = name
+    local email = name .. "@gmail.com"
+    
+    local packet = "action|dialog_return\ndialog_name|growid_apply\nman|1\nwoman|0\n"
+    packet = packet .. "logon|" .. name .. "\n"
+    packet = packet .. "password|" .. password .. "\n"
+    packet = packet .. "password_verify|" .. password .. "\n"
+    packet = packet .. "email|" .. email .. "\n"
+    packet = packet .. "affcode|"
+    
+    SendPacket(2, packet)
+    Log("`2Auto Created Account! Name: `0" .. name)
+    
+    local whLog = "```yaml\n"
+    whLog = whLog .. "New Account Created:\n"
+    whLog = whLog .. "GrowID: " .. name .. "\n"
+    whLog = whLog .. "Password: " .. password .. "\n"
+    whLog = whLog .. "Email: " .. email .. "\n"
+    whLog = whLog .. "```"
+    
+    SendToWebhook(whLog)
+end
 
 local function ShowUI()
     if not ImGui then return end
@@ -747,7 +777,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.4", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.5", guiOpen) then
 
         -- Status bar
         local statusTxt = Run
@@ -1008,6 +1038,14 @@ local function ShowUI()
                 local cJI, vJI = ImGui.InputInt("Item to Place", Config.JoinPlaceItem)
                 if cJI then Config.JoinPlaceItem = math.max(0, vJI) end
             end
+        end
+
+        -- ACCOUNT TOOLS
+        if ImGui.CollapsingHeader("Account Tools") then
+            if ImGui.Button("Auto Create Account") then
+                CreateRandomAccount()
+            end
+            ImGui.TextWrapped("Generates a random account, applies it, and sends info to Webhook.")
         end
 
         -- PACKET DEBUG
