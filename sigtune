@@ -747,7 +747,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.1", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.2", guiOpen) then
 
         -- Status bar
         local statusTxt = Run
@@ -1266,8 +1266,16 @@ RunThread(function()
             end
 
             if Config.Join2LetterWorlds then
-                local start1 = string.byte(Config.StartLetter1:lower())
-                local start2 = string.byte(Config.StartLetter2:lower())
+                Log("`2[AutoJoin] Generating 2-Letter worlds...")
+                local char1_str = type(Config.StartLetter1) == "string" and Config.StartLetter1:lower() or "a"
+                local char2_str = type(Config.StartLetter2) == "string" and Config.StartLetter2:lower() or "a"
+                
+                local start1 = string.byte(char1_str) or 97
+                local start2 = string.byte(char2_str) or 97
+
+                if start1 < 97 or start1 > 122 then start1 = 97 end
+                if start2 < 97 or start2 > 122 then start2 = 97 end
+
                 for char1 = start1, 122 do
                     local innerStart = (char1 == start1) and start2 or 97
                     for char2 = innerStart, 122 do
