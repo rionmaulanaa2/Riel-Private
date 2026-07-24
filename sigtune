@@ -20,8 +20,9 @@ local Config = {
     TakeList        = { 2, 3, 18 }, -- Add Item IDs to collect here (only used if UseTakeList is true)
     TeleportToItems = false, -- (Experimental) If true, teleports instantly to items instead of walking.
 
-    AutoBackpack    = false, -- If true, auto-stash items into backpack when they reach 200
-    BackpackList    = { 5666 }, -- List of item IDs to auto stash
+    AutoBackpack      = false, -- If true, auto-stash items into backpack when they hit the limit
+    AutoBackpackLimit = 200,   -- How many items to reach before stashing
+    BackpackList      = { 5666 }, -- List of item IDs to auto stash
 
     AutoPlace       = false, -- If true, automatically places PlaceItemID across the whole world on blank tiles
     PlaceItemID     = 4584,  -- Item ID to place (e.g. pepper seeds)
@@ -176,11 +177,11 @@ local itemAcronyms = {
 }
 
 -- State
-local Run          = true
+local Run          = false
 local Paused       = false
 local lastPlayers  = {}  -- Track previous player list (netid -> name)
 local startX, startY    -- Remember standing position
-local webhookCooldown = false -- Rate limiter for webhook (uses RunDelayed)
+
 local modDetected  = false   -- True if a mod/dev was detected invisibly
 local whitelistInput = ""   -- UI text input buffer for adding whitelist UIDs
 local waitingForBackpackItem = nil -- State for backpack resupply
@@ -228,15 +229,7 @@ local function SendToWebhook(content)
         Log("`4[WH] MakeRequest is nil — not available in this Bothax build.")
         return
     end
-    -- Step 4: check cooldown
-    if webhookCooldown then
-        return  -- silent skip during cooldown
-    end
-
-    webhookCooldown = true
-    RunDelayed(Config.DebugRateLimit, function()
-        webhookCooldown = false
-    end)
+    -- Removed cooldown block here so we don't drop fast logs!
 
     -- Safe JSON string escaper: escapes backslash, quotes, and preserves newlines as \n for Discord
     local function esc(s)
@@ -294,6 +287,9 @@ RunThread(function()
             else
                 Log("`4[WH] MakeRequest returned nil — no network response")
             end
+            
+            -- Sleep after sending to respect Discord's rate limits
+            Sleep(Config.DebugRateLimit)
         else
             Sleep(50)
         end
@@ -387,10 +383,22 @@ AddHook("onvariant", "ModDevDetector", function(var)
         -- Also check for invis/mstate flags that might indicate staff
         local isInvis = spawnData:find("invis|1") or spawnData:find("mstate|1")
         
-        -- We ignore our own spawn packet
         local name = spawnData:match("name|([^\n]+)") or "Unknown"
+        local userid = tonumber(spawnData:match("userID|(%d+)"))
+        
+        -- We ignore our own spawn packet (Growtopia sends local|1 for the local player)
+        if spawnData:find("\nlocal|1\n") or spawnData:find("local|1") then
+            return false
+        end
+        
+        -- Fallback local player check using userid
         local local_ = GetLocal()
-        if local_ and name:find(local_.name) then
+        if local_ and local_.userid and userid == local_.userid then
+            return false
+        end
+        
+        -- Also ignore if they are in our whitelist (so you can whitelist your mod friends)
+        if userid and IsWhitelisted(userid) then
             return false
         end
 
@@ -472,7 +480,7 @@ local function CheckBackpack()
     if not Config.AutoBackpack then return end
     
     for _, id in ipairs(Config.BackpackList) do
-        if GetItemCount(id) >= 200 then
+        if GetItemCount(id) >= Config.AutoBackpackLimit then
             Log("Inventory full! Stashing ID `b" .. tostring(id) .. "`0 to backpack...")
             SendPacket(2, "action|dialog_return\ndialog_name|backpack_menu\nitemid|" .. tostring(id))
             Sleep(500) -- Delay to prevent packet spam
@@ -867,8 +875,11 @@ local function ShowUI()
 
         -- AUTO BACKPACK
         if ImGui.CollapsingHeader("Auto Backpack Stash") then
-            local c, v = ImGui.Checkbox("Enable Auto Backpack (at 200)", Config.AutoBackpack)
+            local c, v = ImGui.Checkbox("Enable Auto Backpack", Config.AutoBackpack)
             if c then Config.AutoBackpack = v end
+
+            local c3, v3 = ImGui.InputInt("Stash Limit Quantity", Config.AutoBackpackLimit)
+            if c3 then Config.AutoBackpackLimit = math.max(1, v3) end
 
             ImGui.Text("Item IDs to stash (comma separated):")
             local bpStr = table.concat(Config.BackpackList, ", ")
@@ -957,6 +968,13 @@ local function ShowUI()
             ImGui.Text("World Generators:")
             local cL, vL = ImGui.Checkbox("2-Letter Worlds", Config.Join2LetterWorlds)
             if cL then Config.Join2LetterWorlds = vL end
+            
+            if Config.Join2LetterWorlds then
+                local cL1, vL1 = ImGui.InputText("Start Letter 1 (a-z)", Config.StartLetter1, 2)
+                if cL1 then Config.StartLetter1 = vL1 end
+                local cL2, vL2 = ImGui.InputText("Start Letter 2 (a-z)", Config.StartLetter2, 2)
+                if cL2 then Config.StartLetter2 = vL2 end
+            end
 
             local cVi, vVi = ImGui.Checkbox("Viral Worlds", Config.JoinViralWorlds)
             if cVi then Config.JoinViralWorlds = vVi end
@@ -1201,6 +1219,11 @@ RunThread(function()
     while true do
         if Config.AutoJoinRunning and not prevRunning then
             prevRunning = true
+            
+            Log("`2Initializing Auto Joiner... (Quitting to exit & waiting 2s)")
+            SendPacket(3, "action|quit_to_exit")
+            Sleep(2000)
+            
             local worldsToVisit = {}
 
             if Config.JoinLiveWOTD then
