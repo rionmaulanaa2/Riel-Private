@@ -768,6 +768,8 @@ local function CreateRandomAccount()
     SendToWebhook(whLog)
 end
 
+local guiOpen = true
+
 local function ShowUI()
     if not ImGui then return end
     if not guiOpen then return end
@@ -777,7 +779,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.5", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.6", guiOpen) then
 
         -- Status bar
         local statusTxt = Run
