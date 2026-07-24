@@ -747,7 +747,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.0", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.1", guiOpen) then
 
         -- Status bar
         local statusTxt = Run
