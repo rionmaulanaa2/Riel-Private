@@ -1,0 +1,1320 @@
+-- ============================================================
+-- AUTO PUNCH SAFE: Punch tile (92, 26) using item ID 18
+-- Auto PAUSES when a non-whitelisted player is detected.
+-- Auto RESUMES when all non-whitelisted players leave.
+-- Whitelisted players are ignored — punch keeps going.
+-- Auto COLLECTS floating items (optional).
+-- ============================================================
+
+-- Configuration
+local Config = {
+    TileX      = 92,   -- Target tile X coordinate
+    TileY      = 26,   -- Target tile Y coordinate
+    ItemID     = 18,   -- Item used to punch (ID 18 = Fist/Punch)
+    PunchDelay = 200,  -- Delay between punches (ms)
+    CheckDelay = 1000, -- How often to check for players (ms)
+
+    AutoPunch       = true,  -- If true, automatically punches the target tile
+    AutoTake        = false, -- If true, will automatically collect floating items
+    UseTakeList     = false, -- If true, only collects items in TakeList. If false, collects ALL floating items.
+    TakeList        = { 2, 3, 18 }, -- Add Item IDs to collect here (only used if UseTakeList is true)
+    TeleportToItems = false, -- (Experimental) If true, teleports instantly to items instead of walking.
+
+    AutoBackpack    = false, -- If true, auto-stash items into backpack when they reach 200
+    BackpackList    = { 5666 }, -- List of item IDs to auto stash
+
+    AutoPlace       = false, -- If true, automatically places PlaceItemID across the whole world on blank tiles
+    PlaceItemID     = 4584,  -- Item ID to place (e.g. pepper seeds)
+    PlaceDirection  = "top", -- "top" to start from sky downwards, "bottom" to start from bedrock upwards
+    PlaceDelay      = 200,   -- Delay after placing an item (ms)
+    PlaceResupplyMode = 0,   -- 0 = Stop, 1 = Backpack
+
+    AutoPunchWorld   = false, -- If true, breaks a specific block ID across the whole world
+    PunchWorldTarget = 4584,  -- Item ID of the block to punch
+    PunchWorldDelay  = 200,   -- Delay between punches (ms)
+
+    DebugSendPacket      = false,
+    DebugSendPacketRaw   = false,
+    DebugVariant         = false,
+    DebugWebhookURL  = "https://discord.com/api/webhooks/1529551010459029565/Nsz5X3y8ibL0jdWeDWX1jLiTPXfb_yA9FVFLuUTY6ns-ZNdBUmBKhmwQfwe5pIdW4N4n",    -- Your Discord webhook URL
+    DebugRateLimit   = 2000,  -- Min ms between webhook messages
+
+    -- Whitelisted User IDs: players with these UIDs will NOT trigger a pause.
+    -- Add as many as you need. Find a player's UID in the console log when they join.
+    Whitelist = {
+        -- 123456789,  -- Example UID (remove the -- to activate)
+        -- 987654321,
+    },
+
+    AutoJoin       = false, -- If true, automatically attempts to join JoinWorld
+    JoinWorld      = "",    -- World name to automatically join
+    JoinDelay      = 5000,  -- Delay between join attempts in ms
+    
+    -- Auto Joiner Engine Settings
+    AutoJoinRunning       = false,
+    Join2LetterWorlds     = false,
+    StartLetter1          = "a", 
+    StartLetter2          = "a", 
+    JoinViralWorlds       = false,
+    JoinPopularWorlds     = false,
+    JoinBuyWorlds         = false,
+    JoinBuyItemWorlds     = false,
+    JoinLiveWOTD          = false,
+    JoinHistoricWOTD      = false,
+    BuyItemStartID        = 0,
+    JoinItemAcronymWorlds = false,
+    JoinPacketDelay       = 1000,
+    JoinTimeoutSeconds    = 10,
+    JoinPlaceItem         = 242,
+    JoinPlaceAndLeave     = true,
+}
+
+-- ==========================================================================
+-- WORLD LISTS
+-- ==========================================================================
+local historicWOTDWorlds = {
+    "NASA11", "DUNGEONSUCKERS", "ALBUM", "DEVELOPERS", "GROWTOPIAN",
+    "ITEMS", "AIRSHIP", "KITCHEN", "THEVULCANO", "MARIOMUSIC",
+    "HOCKEYRINK", "MUSEUM", "SUMO", "YHLAND", "7DEADLYSINS",
+    "LOVERSLOUNGE", "PYRAMIDRUN", "THEFINALPARKOUR", "GTVILLAGE", "LOCKSTREET",
+    "EPICWORLD", "ARTGALLERY", "CITYOFLIGHT", "MEDIEVALFORT", "SPACESTATION",
+    "UNDERWATERBASE", "MAGICFOREST", "DRAGONLAIR", "JUNGLEPARADISE",
+    "PIXELPALACE", "HAUNTEDCASTLE", "SAKURAGARDEN", "MECHANICA",
+    "ANCIENTRUINS", "LOSTCITY", "NEONSCAPE", "STEAMPUNKLAB",
+    "WINTERWONDER", "SPRINGBLOOM", "SUMMERSOLSTICE", "AUTUMNLEAF",
+    "DESERTMAZE", "UNDERSEA", "CLOUDKINGDOM", "THUNDERSTORM",
+    "VOLCANOPEAK", "GLACIERFALL", "FORESTSPIRIT", "MOONLIGHTCOVE",
+    "SUNSETSEA", "STARGAZER", "COSMICVOID", "NEBULAHAVEN", "CRYSTALPALACE",
+    "STARLIGHTHAVEN", "FANTASYISLE", "DARKCASTLE", "ENCHANTEDFOREST",
+    "CRYSTALCAVE", "MYSTICISLAND", "CELESTIALRISE", "PRISMATICA",
+    "HORIZONRIFT", "LUNARSPIRE", "STELLARGATE", "DREAMWARDEN",
+    "SOLARISVAULT", "DAWNBREAK", "GROWTOPIAART", "MASTERPIECE",
+    "RAYMANVILLAGE", "ATELIER", "ETERNALVALLEY", "SHADOWNEXUS",
+}
+
+local viralWorlds = {
+    "LOVE", "INDO", "NOOB", "PRO", "RICH", "DONATE", "TRADE",
+    "SELL", "BUY", "HELP", "SCAM", "FREE", "HACK", "FARM",
+}
+
+local popularWorlds = {
+    "START", "SEEDS", "DIRT", "CAVE", "LAVA", "HELL", "HEAVEN",
+    "PARKOUR", "DROP", "GROWTOPIASEED", "GROWTOPIA",
+}
+
+local buyWorlds = {
+    "BUYCLOTHES", "BUYFT", "BUYCHAND", "BUYPINBALL", "BUYGEMS",
+    "BUYWL", "BUYDL", "BUYBGL", "BUYRAYMAN", "BUYMAGPLANT",
+    "BUYGACHA", "BUYSEED", "BUYFARM", "BUYDROP", "BUYITEMS",
+}
+
+local itemAcronyms = {
+    ["World Lock"]              = {"WL"},
+    ["Diamond Lock"]            = {"DL"},
+    ["Blue Gem Lock"]           = {"BGL"},
+    ["Emerald Lock"]            = {"EL"},
+    ["Amethyst Lock"]           = {"AL"},
+    ["Platinum Lock"]           = {"PL"},
+    ["Golden Lock"]             = {"GL"},
+    ["Chandelier"]              = {"CHAND"},
+    ["Fish Tank"]               = {"FT"},
+    ["Magplant 5000"]           = {"MAG", "MAGPLANT"},
+    ["Magplant 5000 Remote"]    = {"MAGREMOTE", "RMAG"},
+    ["Pinball"]                 = {"PINBALL"},
+    ["Gashapon Machine"]        = {"GACHA", "GACH"},
+    ["Growtoken"]               = {"GT"},
+    ["Rayman"]                  = {"RAY"},
+    ["Surgery"]                 = {"SURG"},
+    ["Super Broadcast"]         = {"SB"},
+    ["Super Duper Broadcast"]   = {"SDB"},
+    ["Super Fireworks"]         = {"SFW"},
+    ["Small Seed Pack"]         = {"SSP"},
+    ["Legendary Wizard"]        = {"LW"},
+    ["Legendary"]               = {"LEG"},
+    ["Wizard Pants"]            = {"WP"},
+    ["Sungate"]                 = {"SG"},
+    ["Startopia"]               = {"ST"},
+    ["Auto Farm"]               = {"AF"},
+    ["Angel Wings"]             = {"AW"},
+    ["Devil Wings"]             = {"DW"},
+    ["Golden Wings"]            = {"GW"},
+    ["Dragon Wings"]            = {"DWING"},
+    ["Harvester of Sorrow"]     = {"HOS"},
+    ["Celestial Wings"]         = {"CW"},
+    ["Fairy Wings"]             = {"FW"},
+    ["Bat Wings"]               = {"BW"},
+    ["Phoenix Wings"]           = {"PW"},
+    ["Dark Wings"]              = {"DKW"},
+    ["Crystal Wings"]           = {"CRW"},
+    ["Steampunk Wings"]         = {"SPW"},
+    ["Neon Wings"]              = {"NW"},
+    ["Mummy"]                   = {"MUM"},
+    ["Fireworks"]               = {"FW"},
+    ["Geiger Charger"]          = {"GC"},
+    ["Geiger"]                  = {"GEI"},
+    ["Spotlight"]               = {"SL"},
+    ["Surg Kit"]                = {"SURGKIT"},
+    ["Laser Grid"]              = {"LG", "LASERGRID"},
+    ["Laser"]                   = {"LASER"},
+    ["Ice Cream Machine"]       = {"ICM"},
+    ["Vending Machine"]         = {"VM"},
+    ["Transmitter"]             = {"TX"},
+    ["Farmable"]                = {"FARM"},
+    ["Golden Booster"]          = {"GB"},
+    ["Fossil"]                  = {"FOSS"},
+    ["Brain"]                   = {"BRAIN"},
+    ["Dirt"]                    = {"DIRT"},
+    ["Lava"]                    = {"LAVA"},
+    ["Rock"]                    = {"ROCK"},
+    ["Bedrock"]                 = {"BED"},
+    ["Chemical G"]              = {"CG"},
+    ["Chemical H"]              = {"CH"},
+    ["Chemical K"]              = {"CK"},
+    ["Chemical R"]              = {"CR"},
+    ["Chemical S"]              = {"CS"},
+    ["Chemical X"]              = {"CX"},
+}
+
+-- State
+local Run          = true
+local Paused       = false
+local lastPlayers  = {}  -- Track previous player list (netid -> name)
+local startX, startY    -- Remember standing position
+local webhookCooldown = false -- Rate limiter for webhook (uses RunDelayed)
+local modDetected  = false   -- True if a mod/dev was detected invisibly
+local whitelistInput = ""   -- UI text input buffer for adding whitelist UIDs
+local waitingForBackpackItem = nil -- State for backpack resupply
+
+-- ============================================================
+-- UTILITIES
+-- ============================================================
+
+local function Log(msg)
+    LogToConsole("`0[`2SafePunch`0] `9" .. tostring(msg))
+end
+
+-- ============================================================
+-- DISCORD WEBHOOK
+-- ============================================================
+-- MakeRequest yields internally. It CANNOT be called from a hook
+-- (C-callback boundary). Solution: push jobs to a queue and drain
+-- from a dedicated RunThread where coroutine yields are legal.
+
+local webhookQueue = {} -- { {url, data}, ... }
+
+-- Helper to safely get time without crashing if OS lib is missing in sandbox
+local function GetTimeStr()
+    local t = ""
+    pcall(function()
+        if os and os.date then
+            t = " " .. os.date("[%H:%M:%S]")
+        end
+    end)
+    return t
+end
+
+local function SendToWebhook(content)
+    -- Step 1: check enabled
+    if not (Config.DebugSendPacket or Config.DebugSendPacketRaw or Config.DebugVariant) then
+        return
+    end
+    -- Step 2: check URL
+    if Config.DebugWebhookURL == "" then
+        Log("`4[WH] No webhook URL set.")
+        return
+    end
+    -- Step 3: check MakeRequest exists
+    if not MakeRequest then
+        Log("`4[WH] MakeRequest is nil — not available in this Bothax build.")
+        return
+    end
+    -- Step 4: check cooldown
+    if webhookCooldown then
+        return  -- silent skip during cooldown
+    end
+
+    webhookCooldown = true
+    RunDelayed(Config.DebugRateLimit, function()
+        webhookCooldown = false
+    end)
+
+    -- Safe JSON string escaper: escapes backslash, quotes, and preserves newlines as \n for Discord
+    local function esc(s)
+        s = tostring(s)
+        s = s:gsub("\\", "\\\\")    -- backslash first
+        s = s:gsub('"',  '\\"')     -- double quotes
+        s = s:gsub("\r", "")        -- strip carriage return
+        s = s:gsub("\n", "\\n")     -- encode newlines as literal \n for JSON
+        s = s:gsub("\t", " ")       -- replace tabs
+        s = s:gsub("[%z\1-\9\11\12\14-\31]", "") -- strip remaining control chars except \n
+        return s
+    end
+
+    -- Format the message inside a Discord codeblock
+    local msg = "```text\n" .. content .. "\n```"
+    if #msg > 1990 then msg = msg:sub(1, 1990) .. "\n```" end
+
+    local jsonData = '{"content":"' .. esc(msg) .. '"}'
+
+    Log("`e[WH] Queuing webhook job...`0")
+    table.insert(webhookQueue, { url = Config.DebugWebhookURL, body = jsonData })
+end
+
+-- Drain thread — MakeRequest is safe here (own coroutine, can yield freely)
+RunThread(function()
+    Log("`2[WH] Webhook drain thread started.")
+    while true do
+        if #webhookQueue > 0 then
+            local job = table.remove(webhookQueue, 1)
+            Log("`e[WH] Sending...")
+            local headers = {
+                ["Content-Type"] = "application/json",
+                ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            local res = MakeRequest(job.url, "POST", headers, job.body)
+            if res then
+                -- Bothax may use .status, .statusCode or .code
+                local code = res.status or res.statusCode or res.code or 0
+                if code >= 200 and code < 300 then
+                    Log("`2[WH] OK (HTTP " .. tostring(code) .. ")")
+                elseif code == 0 then
+                    -- status 0 = Bothax HTTP client got no parseable response.
+                    -- Retry without explicit headers (some builds need this).
+                    Log("`e[WH] status 0 — retrying without headers...")
+                    local res2 = MakeRequest(job.url, "POST", job.body)
+                    local code2 = (res2 and (res2.status or res2.statusCode or res2.code)) or 0
+                    if code2 >= 200 and code2 < 300 then
+                        Log("`2[WH] OK on retry (HTTP " .. tostring(code2) .. ")")
+                    else
+                        Log("`4[WH] Retry failed (HTTP " .. tostring(code2) .. ") — verify webhook URL or internet")
+                    end
+                else
+                    Log("`4[WH] HTTP " .. tostring(code) .. " — check URL / content")
+                end
+            else
+                Log("`4[WH] MakeRequest returned nil — no network response")
+            end
+        else
+            Sleep(50)
+        end
+    end
+end)
+
+-- ============================================================
+-- PACKET DEBUG HOOKS
+-- ============================================================
+
+AddHook("onsendpacket", "DebugPacketLogger", function(type, data)
+    if not Config.DebugSendPacket then return false end
+
+    if type == 2 or type == 3 then
+        local out = "SendPacket" .. GetTimeStr() .. "\n"
+        out = out .. "type " .. type .. ": " .. tostring(data)
+        
+        Log("`bSendPacket`0 (type " .. type .. ") logged to WH")
+        SendToWebhook(out)
+    end
+    return false
+end)
+
+-- onsendpacketraw passes a single table argument containing the packet properties
+AddHook("onsendpacketraw", "DebugPacketRawLogger", function(packet)
+    if not Config.DebugSendPacketRaw then return false end
+
+    if type(packet) == "table" then
+        local out = "SendPacketRaw" .. GetTimeStr() .. "\n"
+        out = out .. "type: " .. tostring(packet.type or 0) .. "\n"
+        out = out .. "dropped: " .. tostring(packet.dropped or 0) .. "\n"
+        out = out .. "padding1: " .. tostring(packet.padding1 or 0) .. "\n"
+        out = out .. "padding2: " .. tostring(packet.padding2 or 0) .. "\n"
+        out = out .. "netid: " .. tostring(packet.netid or 0) .. "\n"
+        out = out .. "snetid: " .. tostring(packet.snetid or 0) .. "\n"
+        out = out .. "state: " .. tostring(packet.state or 0) .. "\n"
+        out = out .. "padding4: " .. string.format("%.3f", tonumber(packet.padding4) or 0.0) .. "\n"
+        out = out .. "value: " .. tostring(packet.value or 0) .. "\n"
+        out = out .. "x, y: " .. string.format("%.3f", tonumber(packet.x) or 0.0) .. " " .. string.format("%.3f", tonumber(packet.y) or 0.0) .. "\n"
+        out = out .. "xspeed, yspeed: " .. string.format("%.3f", tonumber(packet.xspeed) or 0.0) .. " " .. string.format("%.3f", tonumber(packet.yspeed) or 0.0) .. "\n"
+        out = out .. "padding5: " .. tostring(packet.padding5 or 0) .. "\n"
+        out = out .. "tilex, tiley: " .. tostring(packet.px or 0) .. " " .. tostring(packet.py or 0) .. "\n"
+        out = out .. "extDataSize: " .. tostring(packet.extDataSize or 0)
+
+        Log("`eSendPacketRaw`0 logged to WH")
+        SendToWebhook(out)
+    else
+        Log("`eSendPacketRaw`0: unknown format (" .. type(packet) .. ")")
+    end
+    return false
+end)
+
+AddHook("onvariant", "DebugVariantLogger", function(var)
+    if not Config.DebugVariant then return false end
+
+    if type(var) == "table" then
+        local out = "VariantList" .. GetTimeStr() .. "\n"
+        for k, v in pairs(var) do
+            out = out .. "params " .. tostring(k) .. ": " .. tostring(v) .. "\n"
+        end
+        Log("`dVariantList`0 logged to WH")
+        SendToWebhook(out)
+    end
+    -- We deliberately return false here so we don't accidentally block packets
+    -- (ModDevDetector has its own hook and returns false as well)
+    return false
+end)
+
+-- Returns true if a userid is in the whitelist
+local function IsWhitelisted(userid)
+    for _, uid in ipairs(Config.Whitelist) do
+        if uid == userid then return true end
+    end
+    return false
+end
+
+-- ============================================================
+-- MOD / DEVELOPER DETECTION (invisible entry)
+-- ============================================================
+-- Developers and Moderators can enter invisible (not in GetPlayerList).
+-- They trigger an OnSpawn variant where their properties are sent.
+
+AddHook("onvariant", "ModDevDetector", function(var)
+    if var[0] == "OnSpawn" then
+        local spawnData = tostring(var[1] or "")
+        -- Check for Developer/Moderator type flags or invisible states
+        local typeVal = tonumber(spawnData:match("type|(%d+)"))
+        local isMod = typeVal and ((typeVal & 4) ~= 0)
+        local isDev = typeVal and ((typeVal & 8) ~= 0)
+        
+        -- Also check for invis/mstate flags that might indicate staff
+        local isInvis = spawnData:find("invis|1") or spawnData:find("mstate|1")
+        
+        -- We ignore our own spawn packet
+        local name = spawnData:match("name|([^\n]+)") or "Unknown"
+        local local_ = GetLocal()
+        if local_ and name:find(local_.name) then
+            return false
+        end
+
+        if isMod or isDev or isInvis then
+            local role = isDev and "`4[DEVELOPER]" or (isMod and "`6[MODERATOR]" or "`b[INVISIBLE STAFF]")
+            Log("`4ALL FEATURES PAUSED! " .. role .. "`0 detected entering world: `e" .. name)
+            modDetected = true
+            Paused = true
+            Run = false
+        end
+    end
+    
+    -- Handle Backpack Resupply UI parsing
+    if var[0] == "OnDialogRequest" and waitingForBackpackItem and type(var[1]) == "string" and var[1]:find("backpack_menu") then
+        local dialog = var[1]
+        local itemIDStr = tostring(waitingForBackpackItem)
+        -- Match: add_button_with_icon|<SLOT>|<Name>|frame|<ITEM_ID>|<AMOUNT>|
+        local pattern = "add_button_with_icon|(%d+)|[^|]*|frame|" .. itemIDStr .. "|"
+        local slot = dialog:match(pattern)
+        
+        if slot then
+            SendPacket(2, "action|dialog_return\ndialog_name|backpack_menu\nbuttonClicked|" .. slot)
+            Log("`2Resupplied item `b" .. itemIDStr .. "`2 from backpack slot `b" .. slot .. "`0")
+        else
+            Log("`4Item `b" .. itemIDStr .. "`4 not found in backpack! Pausing AutoPlace.`0")
+            Config.AutoPlace = false
+        end
+        
+        waitingForBackpackItem = nil
+        return true -- Block the dialog from showing on screen
+    end
+    
+    return false
+end)
+
+-- Get a table of current players (excluding local player), keyed by netid
+local function GetOtherPlayers()
+    local players = {}
+    local local_ = GetLocal()
+    if not local_ then return players end
+
+    local list = GetPlayerList()
+    if not list then return players end
+
+    for _, p in pairs(list) do
+        if p and p.netid ~= local_.netid then
+            players[p.netid] = { name = p.name, userid = p.userid }
+        end
+    end
+    return players
+end
+
+-- Punch the target tile once
+local function PunchTile()
+    SendPacketRaw(false, {
+        type  = 3,
+        value = Config.ItemID,
+        px    = Config.TileX,
+        py    = Config.TileY,
+        x     = Config.TileX * 32,
+        y     = Config.TileY * 32,
+    })
+end
+
+-- Helper function to check inventory count of an item
+local function GetItemCount(id)
+    local inv = GetInventory()
+    if not inv then return 0 end
+    for _, itm in pairs(inv) do
+        if itm.id == id then
+            return itm.amount
+        end
+    end
+    return 0
+end
+
+-- Check inventory and stash to backpack if needed
+local function CheckBackpack()
+    if not Config.AutoBackpack then return end
+    
+    for _, id in ipairs(Config.BackpackList) do
+        if GetItemCount(id) >= 200 then
+            Log("Inventory full! Stashing ID `b" .. tostring(id) .. "`0 to backpack...")
+            SendPacket(2, "action|dialog_return\ndialog_name|backpack_menu\nitemid|" .. tostring(id))
+            Sleep(500) -- Delay to prevent packet spam
+        end
+    end
+end
+
+-- Helper function to check if item is in take list
+local function IsInTakeList(id)
+    for _, listId in ipairs(Config.TakeList) do
+        if listId == id then return true end
+    end
+    return false
+end
+
+-- Helper function to calculate distance
+local function GetDistance(x1, y1, x2, y2)
+    return math.sqrt((x2 - x1)^2 + (y2 - y1)^2)
+end
+
+-- Collect floating items and return to start position
+local function CollectItems()
+    local objs = GetObjectList()
+    if not objs then return end
+
+    local validObjs = {}
+    local localPos = GetLocal().pos
+
+    for _, obj in pairs(objs) do
+        local shouldTake = not Config.UseTakeList
+        if Config.UseTakeList and IsInTakeList(obj.id) then
+            shouldTake = true
+        end
+        if shouldTake then
+            table.insert(validObjs, obj)
+        end
+    end
+
+    -- Sort by distance to player (closest first)
+    table.sort(validObjs, function(a, b)
+        return GetDistance(localPos.x, localPos.y, a.pos.x, a.pos.y) < GetDistance(localPos.x, localPos.y, b.pos.x, b.pos.y)
+    end)
+
+    local moved = false
+    for _, obj in ipairs(validObjs) do
+        -- Abort immediately if a stranger enters while we are collecting
+        if Paused then break end
+
+        local objX = math.floor(obj.pos.x / 32)
+        local objY = math.floor(obj.pos.y / 32)
+        
+        -- Only move if it's not on our exact current tile
+        local currPos = GetLocal().pos
+        local currX = math.floor(currPos.x / 32)
+        local currY = math.floor(currPos.y / 32)
+        
+        if currX ~= objX or currY ~= objY then
+            if Config.TeleportToItems then
+                -- 0ms delay pathing (extremely fast walking, acts like teleport to server)
+                FindPath(objX, objY, 0)
+                Sleep(50)
+            else
+                FindPath(objX, objY, 100)
+                Sleep(200)
+            end
+            moved = true
+        end
+
+        -- After picking up each item, check if backpack needs stashing
+        if Config.AutoBackpack then
+            CheckBackpack()
+        end
+    end
+
+    if moved and startX and startY then
+        -- Return to original position
+        if Config.TeleportToItems then
+            FindPath(startX, startY, 0)
+            Sleep(50)
+        else
+            FindPath(startX, startY, 100)
+            Sleep(300)
+        end
+    end
+end
+
+-- ============================================================
+-- AUTO PLACE LOGIC
+-- ============================================================
+local placeX, placeY = nil, nil
+
+local function InitializePlace()
+    local world = GetWorld()
+    if not world then return end
+    if Config.PlaceDirection == "top" then
+        placeY = 0
+    else
+        placeY = world.height - 1
+    end
+    placeX = 0
+end
+
+local function AutoPlaceStep()
+    local world = GetWorld()
+    if not world then return end
+
+    if placeX == nil or placeY == nil then
+        InitializePlace()
+    end
+
+    local tiles = GetTiles()
+    if not tiles then return end
+
+    -- Optimize by creating a grid
+    local grid = {}
+    for _, t in pairs(tiles) do
+        if not grid[t.x] then grid[t.x] = {} end
+        grid[t.x][t.y] = t
+    end
+
+    local targetX, targetY = nil, nil
+
+    while true do
+        if Config.PlaceDirection == "top" and placeY >= world.height then break end
+        if Config.PlaceDirection == "bottom" and placeY < 0 then break end
+
+        local tile = grid[placeX] and grid[placeX][placeY]
+        
+        -- fg == 0 means blank tile
+        if tile and tile.fg == 0 then
+            targetX = placeX
+            targetY = placeY
+            -- Advance coordinate for next call
+            placeX = placeX + 1
+            if placeX >= world.width then
+                placeX = 0
+                placeY = Config.PlaceDirection == "top" and (placeY + 1) or (placeY - 1)
+            end
+            break
+        end
+
+        -- Advance if not blank
+        placeX = placeX + 1
+        if placeX >= world.width then
+            placeX = 0
+            placeY = Config.PlaceDirection == "top" and (placeY + 1) or (placeY - 1)
+        end
+    end
+
+    if targetX and targetY then
+        -- Check inventory
+        if GetItemCount(Config.PlaceItemID) == 0 then
+            if Config.PlaceResupplyMode == 1 then
+                Log("`eOut of items! Attempting to resupply from backpack...`0")
+                SendPacket(2, "action|input\n|text|/bp")
+                waitingForBackpackItem = Config.PlaceItemID
+                Sleep(1500) -- Sleep to let the dialog arrive and be processed
+                return
+            else
+                Log("`4Out of items to place! Pausing AutoPlace.`0")
+                Config.AutoPlace = false
+                return
+            end
+        end
+
+        -- Place remotely (no movement)
+        SendPacketRaw(false, {
+            type = 3,
+            value = Config.PlaceItemID,
+            px = targetX,
+            py = targetY,
+            x = targetX * 32,
+            y = targetY * 32
+        })
+    else
+        Log("`2Auto Place finished filling the world! Disabled.`0")
+        Config.AutoPlace = false
+        placeX = nil -- reset for next time
+    end
+end
+
+-- ============================================================
+-- AUTO PUNCH WORLD LOGIC
+-- ============================================================
+local punchWX, punchWY = nil, nil
+
+local function AutoPunchWorldStep()
+    local world = GetWorld()
+    local tiles = GetTiles()
+    if not world or not tiles then return end
+
+    if punchWX == nil or punchWY == nil then
+        punchWX = 0
+        punchWY = 0
+    end
+
+    local grid = {}
+    for _, t in pairs(tiles) do
+        if not grid[t.x] then grid[t.x] = {} end
+        grid[t.x][t.y] = t
+    end
+
+    local targetX, targetY = nil, nil
+
+    while true do
+        if punchWY >= world.height then break end
+
+        local tile = grid[punchWX] and grid[punchWX][punchWY]
+        
+        if tile and tile.fg == Config.PunchWorldTarget then
+            targetX = punchWX
+            targetY = punchWY
+            break
+        end
+
+        punchWX = punchWX + 1
+        if punchWX >= world.width then
+            punchWX = 0
+            punchWY = punchWY + 1
+        end
+    end
+
+    if targetX and targetY then
+        -- Punch remotely (no movement)
+        SendPacketRaw(false, {
+            type = 3,
+            value = Config.PunchWorldTarget,
+            px = targetX,
+            py = targetY,
+            x = targetX * 32,
+            y = targetY * 32
+        })
+    else
+        local skipped = false
+        for _, t in pairs(tiles) do
+            if t.fg == Config.PunchWorldTarget then
+                skipped = true
+                break
+            end
+        end
+
+        if skipped then
+            Log("`6Found skipped blocks! Restarting world scan...`0")
+            punchWX, punchWY = 0, 0
+        else
+            Log("`2Auto Punch World finished! Disabled.`0")
+            Config.AutoPunchWorld = false
+            punchWX = nil
+        end
+    end
+end
+
+-- ============================================================
+-- IMGUI UI
+-- ============================================================
+local guiOpen = true
+
+local function ShowUI()
+    if not ImGui then return end
+    if not guiOpen then return end
+
+    local world  = GetWorld()
+    local local_ = GetLocal()
+
+    -- Match sb imgui.lua pattern exactly:
+    -- ImGui.End() must be INSIDE the if block
+    if guiOpen and ImGui.Begin("SafePunch v1.0", guiOpen) then
+
+        -- Status bar
+        local statusTxt = Run
+            and (Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING")
+            or  "STATUS: STOPPED"
+        ImGui.Text(statusTxt)
+        ImGui.Text("World: " .. (world and world.name or "N/A") .. "  |  Player: " .. (local_ and local_.name or "N/A"))
+        ImGui.Separator()
+
+        -- PUNCH
+        if ImGui.CollapsingHeader("Auto Punch") then
+            local c, v = ImGui.Checkbox("Enable Auto Punch", Config.AutoPunch)
+            if c then Config.AutoPunch = v end
+
+            local c2, v2 = ImGui.InputInt("Tile X", Config.TileX)
+            if c2 then Config.TileX = v2 end
+
+            local c3, v3 = ImGui.InputInt("Tile Y", Config.TileY)
+            if c3 then Config.TileY = v3 end
+
+            local c4, v4 = ImGui.InputInt("Punch Item ID", Config.ItemID)
+            if c4 then Config.ItemID = v4 end
+
+            local c5, v5 = ImGui.InputInt("Punch Delay ms", Config.PunchDelay)
+            if c5 then Config.PunchDelay = math.max(1, v5) end
+
+            local c6, v6 = ImGui.InputInt("Player Check Delay ms", Config.CheckDelay)
+            if c6 then Config.CheckDelay = math.max(1, v6) end
+
+            ImGui.Separator()
+            if Run then
+                if ImGui.Button("STOP SCRIPT") then
+                    Run = false
+                    Log("`4Script stopped via UI.")
+                end
+            else
+                if ImGui.Button("START SCRIPT") then
+                    Run = true
+                    Log("`2Script started via UI.")
+                end
+            end
+        end
+
+        ImGui.Separator()
+
+        -- AUTO JOIN WORLD
+        if ImGui.CollapsingHeader("Auto Join World") then
+            local c, v = ImGui.Checkbox("Enable Auto Join", Config.AutoJoin)
+            if c then Config.AutoJoin = v end
+
+            local c2, v2 = ImGui.InputText("World Name", Config.JoinWorld, 64)
+            if c2 then Config.JoinWorld = v2 end
+
+            local c3, v3 = ImGui.InputInt("Join Delay ms", Config.JoinDelay)
+            if c3 then Config.JoinDelay = math.max(1, v3) end
+        end
+
+        ImGui.Separator()
+
+        -- AUTO TAKE
+        if ImGui.CollapsingHeader("Auto Take Floating Items") then
+            local c, v = ImGui.Checkbox("Enable Auto Take", Config.AutoTake)
+            if c then Config.AutoTake = v end
+
+            local c2, v2 = ImGui.Checkbox("Use ID List Only (false = take ALL)", Config.UseTakeList)
+            if c2 then Config.UseTakeList = v2 end
+
+            local c3, v3 = ImGui.Checkbox("Teleport To Items [Experimental]", Config.TeleportToItems)
+            if c3 then Config.TeleportToItems = v3 end
+
+            ImGui.Text("Take List IDs (comma separated):")
+            local listStr = table.concat(Config.TakeList, ", ")
+            local c4, v4 = ImGui.InputText("##takelist", listStr, 256)
+            if c4 then
+                local newList = {}
+                for num in v4:gmatch("%d+") do table.insert(newList, tonumber(num)) end
+                Config.TakeList = newList
+            end
+        end
+
+        ImGui.Separator()
+
+        -- WHITELIST MANAGER
+        if ImGui.CollapsingHeader("Whitelist Manager") then
+            ImGui.Text("Current whitelisted UIDs:")
+            if #Config.Whitelist == 0 then
+                ImGui.Text("  (none)")
+            else
+                for i, uid in ipairs(Config.Whitelist) do
+                    ImGui.Text("  [" .. i .. "] UID: " .. tostring(uid))
+                    ImGui.SameLine()
+                    if ImGui.Button("Remove##" .. i) then
+                        table.remove(Config.Whitelist, i)
+                        Log("`4Removed UID " .. tostring(uid) .. " from whitelist.")
+                    end
+                end
+            end
+            ImGui.Separator()
+            ImGui.Text("Add UID to whitelist:")
+            local changed, newVal = ImGui.InputText("##wl_input", whitelistInput, 32)
+            if changed then whitelistInput = newVal end
+            ImGui.SameLine()
+            if ImGui.Button("Add") then
+                local uid = tonumber(whitelistInput)
+                if uid then
+                    table.insert(Config.Whitelist, uid)
+                    Log("`2Added UID " .. tostring(uid) .. " to whitelist.")
+                    whitelistInput = ""
+                else
+                    Log("`4Invalid UID: must be a number.")
+                end
+            end
+            if modDetected then
+                ImGui.Separator()
+                ImGui.Text("!! MOD/DEV DETECTED - ALL PAUSED !!")
+                if ImGui.Button("Clear Mod Alert & Resume") then
+                    modDetected = false
+                    Paused = false
+                    Log("`2Mod alert cleared. Resuming.")
+                end
+            end
+        end
+
+        ImGui.Separator()
+
+        -- AUTO BACKPACK
+        if ImGui.CollapsingHeader("Auto Backpack Stash") then
+            local c, v = ImGui.Checkbox("Enable Auto Backpack (at 200)", Config.AutoBackpack)
+            if c then Config.AutoBackpack = v end
+
+            ImGui.Text("Item IDs to stash (comma separated):")
+            local bpStr = table.concat(Config.BackpackList, ", ")
+            local c2, v2 = ImGui.InputText("##bplist", bpStr, 256)
+            if c2 then
+                local newList = {}
+                for num in v2:gmatch("%d+") do table.insert(newList, tonumber(num)) end
+                Config.BackpackList = newList
+            end
+        end
+
+        ImGui.Separator()
+
+        -- AUTO PLACE
+        if ImGui.CollapsingHeader("Auto Place World") then
+            local c, v = ImGui.Checkbox("Enable Auto Place", Config.AutoPlace)
+            if c then
+                Config.AutoPlace = v
+                if v then placeX, placeY = nil, nil end
+            end
+
+            local c2, v2 = ImGui.InputInt("Place Item ID", Config.PlaceItemID)
+            if c2 then Config.PlaceItemID = v2 end
+
+            local c3, v3 = ImGui.InputInt("Place Delay ms", Config.PlaceDelay)
+            if c3 then Config.PlaceDelay = math.max(1, v3) end
+
+            ImGui.Text("Direction:")
+            if ImGui.RadioButton("Top to Bottom", Config.PlaceDirection == "top") then
+                Config.PlaceDirection = "top"
+            end
+            ImGui.SameLine()
+            if ImGui.RadioButton("Bottom to Top", Config.PlaceDirection == "bottom") then
+                Config.PlaceDirection = "bottom"
+            end
+
+            ImGui.Separator()
+            ImGui.Text("On Out of Items:")
+            if ImGui.RadioButton("Stop Placing", Config.PlaceResupplyMode == 0) then
+                Config.PlaceResupplyMode = 0
+            end
+            ImGui.SameLine()
+            if ImGui.RadioButton("Take from Backpack", Config.PlaceResupplyMode == 1) then
+                Config.PlaceResupplyMode = 1
+            end
+            ImGui.Separator()
+
+            if placeX ~= nil then
+                ImGui.Text("Progress: x=" .. tostring(placeX) .. " y=" .. tostring(placeY))
+            end
+        end
+
+        ImGui.Separator()
+
+        -- PUNCH WORLD
+        if ImGui.CollapsingHeader("Punch World Blocks") then
+            local c, v = ImGui.Checkbox("Enable Punch World", Config.AutoPunchWorld)
+            if c then
+                Config.AutoPunchWorld = v
+                if v then punchWX, punchWY = nil, nil end
+            end
+
+            local c2, v2 = ImGui.InputInt("Target Block ID", Config.PunchWorldTarget)
+            if c2 then Config.PunchWorldTarget = v2 end
+
+            local c3, v3 = ImGui.InputInt("Punch World Delay ms", Config.PunchWorldDelay)
+            if c3 then Config.PunchWorldDelay = math.max(1, v3) end
+
+            if punchWX ~= nil then
+                ImGui.Text("Progress: x=" .. tostring(punchWX) .. " y=" .. tostring(punchWY))
+            end
+        end
+
+        -- AUTO JOINER ENGINE
+        if ImGui.CollapsingHeader("Auto Joiner Engine") then
+            local cJR, vJR = ImGui.Checkbox("Start Auto Joiner", Config.AutoJoinRunning)
+            if cJR then Config.AutoJoinRunning = vJR end
+
+            if Config.AutoJoinRunning then
+                ImGui.Text("Status: RUNNING")
+            else
+                ImGui.Text("Status: STOPPED")
+            end
+
+            ImGui.Separator()
+            ImGui.Text("World Generators:")
+            local cL, vL = ImGui.Checkbox("2-Letter Worlds", Config.Join2LetterWorlds)
+            if cL then Config.Join2LetterWorlds = vL end
+
+            local cVi, vVi = ImGui.Checkbox("Viral Worlds", Config.JoinViralWorlds)
+            if cVi then Config.JoinViralWorlds = vVi end
+
+            local cP, vP = ImGui.Checkbox("Popular Worlds", Config.JoinPopularWorlds)
+            if cP then Config.JoinPopularWorlds = vP end
+
+            local cB, vB = ImGui.Checkbox("Buy Worlds", Config.JoinBuyWorlds)
+            if cB then Config.JoinBuyWorlds = vB end
+
+            local cBI, vBI = ImGui.Checkbox("Buy+Item Worlds", Config.JoinBuyItemWorlds)
+            if cBI then Config.JoinBuyItemWorlds = vBI end
+
+            local cLW, vLW = ImGui.Checkbox("Live WOTD (Website)", Config.JoinLiveWOTD)
+            if cLW then Config.JoinLiveWOTD = vLW end
+
+            local cHW, vHW = ImGui.Checkbox("Historic WOTD", Config.JoinHistoricWOTD)
+            if cHW then Config.JoinHistoricWOTD = vHW end
+
+            ImGui.Separator()
+            local cJD, vJD = ImGui.InputInt("Delay Between Worlds ms", Config.JoinPacketDelay)
+            if cJD then Config.JoinPacketDelay = math.max(100, vJD) end
+
+            local cT, vT = ImGui.InputInt("Timeout (seconds)", Config.JoinTimeoutSeconds)
+            if cT then Config.JoinTimeoutSeconds = math.max(1, vT) end
+
+            local cJA, vJA = ImGui.Checkbox("Auto Place Item when joined", Config.JoinPlaceAndLeave)
+            if cJA then Config.JoinPlaceAndLeave = vJA end
+
+            if Config.JoinPlaceAndLeave then
+                local cJI, vJI = ImGui.InputInt("Item to Place", Config.JoinPlaceItem)
+                if cJI then Config.JoinPlaceItem = math.max(0, vJI) end
+            end
+        end
+
+        -- PACKET DEBUG
+        if ImGui.CollapsingHeader("Packet Debugger") then
+            local cP, vP = ImGui.Checkbox("Debug SendPacket (Text)", Config.DebugSendPacket)
+            if cP then Config.DebugSendPacket = vP end
+
+            local cPR, vPR = ImGui.Checkbox("Debug SendPacketRaw", Config.DebugSendPacketRaw)
+            if cPR then Config.DebugSendPacketRaw = vPR end
+
+            local cV, vV = ImGui.Checkbox("Debug Variant (OnVariant)", Config.DebugVariant)
+            if cV then Config.DebugVariant = vV end
+
+            ImGui.Separator()
+
+            local c7, v7 = ImGui.InputText("Webhook URL", Config.DebugWebhookURL, 255)
+            if c7 then Config.DebugWebhookURL = v7 end
+
+            local c8, v8 = ImGui.InputInt("Webhook Cooldown ms", Config.DebugRateLimit)
+            if c8 then Config.DebugRateLimit = math.max(100, v8) end
+        end
+
+        ImGui.End()  -- End is INSIDE the Begin block (Bothax pattern)
+    end  -- end if Begin
+end
+
+AddHook("OnDraw", "SafePunchUI", ShowUI)
+
+-- /ui to toggle the window
+AddHook("onsendpacket", "SafePunchUIToggle", function(type, packet)
+    if type == 2 and packet:find("action|input\n|text|/ui") then
+        guiOpen = not guiOpen
+        Log(guiOpen and "`2UI opened." or "`4UI closed.")
+        return true
+    end
+    return false
+end)
+
+-- ============================================================
+-- PLAYER WATCH THREAD: Runs in background, checks for players
+-- ============================================================
+
+RunThread(function()
+    Log("Player watch thread started.")
+
+    while true do
+        if Run then
+            local world = GetWorld()
+            local local_ = GetLocal()
+
+            if world and local_ then
+                local current = GetOtherPlayers()
+
+                -- Detect NEW players that joined
+                for netid, info in pairs(current) do
+                    if not lastPlayers[netid] then
+                        local tag = IsWhitelisted(info.userid) and "`a[WHITELIST]`0 " or "`4[STRANGER]`0 "
+                        Log(tag .. "`e" .. tostring(info.name) .. "`0 (UID: `b" .. tostring(info.userid) .. "`0) joined.")
+                    end
+                end
+
+                -- Detect players that LEFT
+                for netid, info in pairs(lastPlayers) do
+                    if not current[netid] then
+                        local tag = IsWhitelisted(info.userid) and "`a[WHITELIST]`0 " or "`4[STRANGER]`0 "
+                        Log(tag .. "`e" .. tostring(info.name) .. "`0 (UID: `b" .. tostring(info.userid) .. "`0) left.")
+                    end
+                end
+
+                -- Update Paused state: pause only if a non-whitelisted player is present
+                local hasStranger = false
+                for _, info in pairs(current) do
+                    if not IsWhitelisted(info.userid) then
+                        hasStranger = true
+                        break
+                    end
+                end
+
+                if hasStranger then
+                    if not Paused then
+                        Paused = true
+                        Log("`4Stranger in world! Punch paused.")
+                    end
+                else
+                    if Paused then
+                        Paused = false
+                        Log("`2No strangers! Resuming punch.")
+                    end
+                end
+
+                lastPlayers = current
+            end
+
+            Sleep(Config.CheckDelay)
+        else
+            Sleep(500)
+        end
+    end
+end)
+
+-- ============================================================
+-- AUTO JOIN WORLD THREAD
+-- ============================================================
+RunThread(function()
+    while true do
+        if Run and Config.AutoJoin and Config.JoinWorld ~= "" then
+            local world = GetWorld()
+            -- Attempt to join if we are not already in the target world
+            if not world or world.name:upper() ~= Config.JoinWorld:upper() then
+                Log("`2Attempting to join world: `0" .. Config.JoinWorld)
+                SendPacket(3, "action|join_request\nname|" .. Config.JoinWorld .. "|\ninvitedWorld|0")
+                Sleep(Config.JoinDelay)
+            else
+                Sleep(2000)
+            end
+        else
+            Sleep(1000)
+        end
+    end
+end)
+
+-- ============================================================
+-- MAIN PUNCH LOOP
+-- ============================================================
+
+Log("Script loaded! Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
+Log("Punching with ItemID: " .. Config.ItemID)
+Log("Type `4/stop`9 to stop the script.")
+
+local punchCount = 0
+
+-- Wait for world to load first, but allow breaking out if UI toggles Run
+while true do
+    if Run and not Paused then
+        if not GetLocal() or not GetWorld() then
+            Sleep(500)
+        else
+            -- Check start position once world is loaded
+            if not startX then
+                startX = math.floor(GetLocal().pos.x / 32)
+                startY = math.floor(GetLocal().pos.y / 32)
+                Log("World detected: `e" .. GetWorld().name)
+            end
+
+            -- Determine the correct delay based on the active mode
+            local currentDelay = Config.PunchDelay
+
+            if Config.AutoPlace then
+                AutoPlaceStep()
+                currentDelay = Config.PlaceDelay
+            elseif Config.AutoPunchWorld then
+                AutoPunchWorldStep()
+                currentDelay = Config.PunchWorldDelay
+            else
+                if Config.AutoPunch then
+                    PunchTile()
+                end
+            end
+            punchCount = punchCount + 1
+            
+            if Config.AutoTake and (punchCount % 10 == 0) then
+                CollectItems()
+            end
+
+            if Config.AutoBackpack and (punchCount % 20 == 0) then
+                CheckBackpack()
+            end
+            
+            Sleep(currentDelay)
+        end
+    else
+        Sleep(100)
+    end
+end
+
+-- ============================================================
+-- AUTO JOINER THREAD
+-- ============================================================
+
+local function dedup(list)
+    local seen, result = {}, {}
+    for _, v in ipairs(list) do
+        local key = v:upper()
+        if not seen[key] then
+            seen[key] = true
+            table.insert(result, key)
+        end
+    end
+    return result
+end
+
+local function placeAbovePlayer(id)
+    local localAvatar = GetLocal()
+    if not localAvatar then return end
+    local pkt = {}
+    pkt.type  = 3
+    pkt.value = id
+    pkt.px    = math.floor(localAvatar.pos.x / 32)
+    pkt.py    = math.floor(localAvatar.pos.y / 32) - 1
+    pkt.x     = localAvatar.pos.x
+    pkt.y     = localAvatar.pos.y
+    SendPacketRaw(false, pkt)
+end
+
+RunThread(function()
+    Log("Auto Joiner Thread ready.")
+    local prevRunning = false
+    
+    while true do
+        if Config.AutoJoinRunning and not prevRunning then
+            prevRunning = true
+            local worldsToVisit = {}
+
+            if Config.JoinLiveWOTD then
+                Log("`2[WOTD] Fetching live WOTD...")
+                local res = MakeRequest("https://www.growtopiagame.com/detail", "GET")
+                if res and res.content then
+                    local match = res.content:match('"full_size"%s*:%s*"worlds[\\/]+([^"]+)%.png"')
+                    if match then table.insert(worldsToVisit, match:upper()) end
+                end
+            end
+
+            if Config.JoinHistoricWOTD then for _, w in ipairs(historicWOTDWorlds) do table.insert(worldsToVisit, w) end end
+            if Config.JoinViralWorlds then for _, w in ipairs(viralWorlds) do table.insert(worldsToVisit, w) end end
+            if Config.JoinPopularWorlds then for _, w in ipairs(popularWorlds) do table.insert(worldsToVisit, w) end end
+            if Config.JoinBuyWorlds then for _, w in ipairs(buyWorlds) do table.insert(worldsToVisit, w) end end
+
+            if Config.JoinBuyItemWorlds then
+                Log("`2Generating BUY+<itemname> worlds...")
+                local allItems = GetItemInfoList()
+                if allItems then
+                    local maxID = 0
+                    for id, _ in pairs(allItems) do if type(id) == "number" and id > maxID then maxID = id end end
+                    for id = Config.BuyItemStartID, maxID do
+                        local item = allItems[id]
+                        if item and item.name and item.name ~= "" and not item.name:match("^%d+$") then
+                            local cleanName = item.name:upper():gsub("%s+", ""):gsub("[^%a%d]", "")
+                            if #cleanName > 0 and #("BUY" .. cleanName) <= 24 then
+                                table.insert(worldsToVisit, "BUY" .. cleanName)
+                                if Config.JoinItemAcronymWorlds then
+                                    for itemKey, acronyms in pairs(itemAcronyms) do
+                                        if item.name:lower() == itemKey:lower() then
+                                            for _, acronym in ipairs(acronyms) do table.insert(worldsToVisit, "BUY" .. acronym:upper()) end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            if Config.Join2LetterWorlds then
+                local start1 = string.byte(Config.StartLetter1:lower())
+                local start2 = string.byte(Config.StartLetter2:lower())
+                for char1 = start1, 122 do
+                    local innerStart = (char1 == start1) and start2 or 97
+                    for char2 = innerStart, 122 do
+                        table.insert(worldsToVisit, string.char(char1) .. string.char(char2))
+                    end
+                end
+            end
+
+            worldsToVisit = dedup(worldsToVisit)
+            Log("`2Total worlds in Auto Join queue: `0" .. #worldsToVisit)
+
+            for i, worldName in ipairs(worldsToVisit) do
+                if not Config.AutoJoinRunning then break end
+
+                Log("`2Joining (`0" .. i .. "`2/`0" .. #worldsToVisit .. "`2): `0" .. worldName)
+                RequestJoinWorld(worldName)
+                Sleep(Config.JoinPacketDelay)
+
+                local timeout = Config.JoinTimeoutSeconds
+                while Config.AutoJoinRunning and timeout > 0 do
+                    local currentWorld = GetWorld()
+                    local localAvatar  = GetLocal()
+                    if currentWorld and string.upper(currentWorld.name) == worldName and localAvatar then
+                        break
+                    end
+                    Sleep(1000)
+                    timeout = timeout - 1
+                end
+
+                if not Config.AutoJoinRunning then break end
+
+                if timeout > 0 then
+                    Sleep(500)
+                    if Config.JoinPlaceAndLeave then
+                        Log("`9Placing item " .. Config.JoinPlaceItem .. " above player...")
+                        placeAbovePlayer(Config.JoinPlaceItem)
+                        Sleep(Config.JoinPacketDelay)
+                        SendPacket(3, "action|quit_to_exit")
+                        Sleep(Config.JoinPacketDelay)
+                    else
+                        Log("`9Joined successfully. Waiting for Punch World to finish...")
+                        -- Wait loop: stay here while Punch World clears out the world
+                        -- or wait a default delay before jumping to next
+                        Sleep(Config.JoinPacketDelay * 2) 
+                    end
+                else
+                    Log("`4Skipped (timeout): `0" .. worldName)
+                end
+                Sleep(Config.JoinPacketDelay)
+            end
+            
+            Config.AutoJoinRunning = false
+            Log("`2Auto Join queue finished/stopped.")
+        elseif not Config.AutoJoinRunning and prevRunning then
+            prevRunning = false
+        end
+        Sleep(1000)
+    end
+end)
+
+-- ============================================================
+-- CHAT COMMANDS: /stop to stop
+-- ============================================================
+
+AddHook("onsendpacket", "SafePunchControl", function(type, packet)
+    if type == 2 and packet:find("action|input\n|text|/stop") then
+        Run = false
+        Paused = false
+        Log("`4Script stopped by user command.")
+        return true
+    end
+    return false
+end)
