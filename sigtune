@@ -747,7 +747,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.2", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.3", guiOpen) then
 
         -- Status bar
         local statusTxt = Run
@@ -1210,6 +1210,18 @@ local function placeAbovePlayer(id)
     pkt.x     = localAvatar.pos.x
     pkt.y     = localAvatar.pos.y
     SendPacketRaw(false, pkt)
+end
+
+local function dedup(list)
+    local seen, result = {}, {}
+    for _, v in ipairs(list) do
+        local key = v:upper()
+        if not seen[key] then
+            seen[key] = true
+            table.insert(result, key)
+        end
+    end
+    return result
 end
 
 RunThread(function()
