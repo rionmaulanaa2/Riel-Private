@@ -14,7 +14,7 @@ local Config = {
     PunchDelay = 200,  -- Delay between punches (ms)
     CheckDelay = 1000, -- How often to check for players (ms)
 
-    AutoPunch       = true,  -- If true, automatically punches the target tile
+    AutoPunch       = false, -- If true, automatically punches the target tile
     AutoTake        = false, -- If true, will automatically collect floating items
     UseTakeList     = false, -- If true, only collects items in TakeList. If false, collects ALL floating items.
     TakeList        = { 2, 3, 18 }, -- Add Item IDs to collect here (only used if UseTakeList is true)
@@ -571,6 +571,24 @@ end
 -- AUTO PLACE LOGIC
 -- ============================================================
 local placeX, placeY = nil, nil
+local placeGrid = nil        -- cached tile grid
+local placeGridWorld = nil   -- world name when grid was built
+local placeGridW, placeGridH = 0, 0
+
+local function BuildPlaceGrid()
+    local tiles = GetTiles()
+    local world = GetWorld()
+    if not tiles or not world then return false end
+    placeGrid = {}
+    for _, t in pairs(tiles) do
+        if not placeGrid[t.x] then placeGrid[t.x] = {} end
+        placeGrid[t.x][t.y] = t.fg
+    end
+    placeGridWorld = world.name
+    placeGridW = world.width
+    placeGridH = world.height
+    return true
+end
 
 local function InitializePlace()
     local world = GetWorld()
@@ -581,6 +599,9 @@ local function InitializePlace()
         placeY = world.height - 1
     end
     placeX = 0
+    -- Force grid rebuild on start
+    placeGrid = nil
+    placeGridWorld = nil
 end
 
 local function AutoPlaceStep()
@@ -591,31 +612,28 @@ local function AutoPlaceStep()
         InitializePlace()
     end
 
-    local tiles = GetTiles()
-    if not tiles then return end
-
-    -- Optimize by creating a grid
-    local grid = {}
-    for _, t in pairs(tiles) do
-        if not grid[t.x] then grid[t.x] = {} end
-        grid[t.x][t.y] = t
+    -- Build/refresh cached grid only when entering a new world or first run
+    if placeGrid == nil or placeGridWorld ~= world.name then
+        if not BuildPlaceGrid() then return end
     end
 
     local targetX, targetY = nil, nil
 
     while true do
-        if Config.PlaceDirection == "top" and placeY >= world.height then break end
+        if Config.PlaceDirection == "top" and placeY >= placeGridH then break end
         if Config.PlaceDirection == "bottom" and placeY < 0 then break end
 
-        local tile = grid[placeX] and grid[placeX][placeY]
-        
-        -- fg == 0 means blank tile
-        if tile and tile.fg == 0 then
+        local fg = placeGrid[placeX] and placeGrid[placeX][placeY]
+
+        -- fg == 0 means blank foreground tile
+        if fg == 0 then
             targetX = placeX
             targetY = placeY
+            -- Mark as placed in cache so next call skips it immediately
+            placeGrid[placeX][placeY] = Config.PlaceItemID
             -- Advance coordinate for next call
             placeX = placeX + 1
-            if placeX >= world.width then
+            if placeX >= placeGridW then
                 placeX = 0
                 placeY = Config.PlaceDirection == "top" and (placeY + 1) or (placeY - 1)
             end
@@ -624,7 +642,7 @@ local function AutoPlaceStep()
 
         -- Advance if not blank
         placeX = placeX + 1
-        if placeX >= world.width then
+        if placeX >= placeGridW then
             placeX = 0
             placeY = Config.PlaceDirection == "top" and (placeY + 1) or (placeY - 1)
         end
@@ -648,17 +666,18 @@ local function AutoPlaceStep()
 
         -- Place remotely (no movement)
         SendPacketRaw(false, {
-            type = 3,
+            type  = 3,
             value = Config.PlaceItemID,
-            px = targetX,
-            py = targetY,
-            x = targetX * 32,
-            y = targetY * 32
+            px    = targetX,
+            py    = targetY,
+            x     = targetX * 32,
+            y     = targetY * 32
         })
     else
         Log("`2Auto Place finished filling the world! Disabled.`0")
         Config.AutoPlace = false
-        placeX = nil -- reset for next time
+        placeX = nil
+        placeGrid = nil
     end
 end
 
@@ -666,60 +685,92 @@ end
 -- AUTO PUNCH WORLD LOGIC
 -- ============================================================
 local punchWX, punchWY = nil, nil
+local punchGrid = nil
+local punchGridWorld = nil
+local punchGridW, punchGridH = 0, 0
+
+local function BuildPunchGrid()
+    local tiles = GetTiles()
+    local world = GetWorld()
+    if not tiles or not world then return false end
+    punchGrid = {}
+    for _, t in pairs(tiles) do
+        if not punchGrid[t.x] then punchGrid[t.x] = {} end
+        punchGrid[t.x][t.y] = t.fg
+    end
+    punchGridWorld = world.name
+    punchGridW = world.width
+    punchGridH = world.height
+    return true
+end
 
 local function AutoPunchWorldStep()
     local world = GetWorld()
-    local tiles = GetTiles()
-    if not world or not tiles then return end
+    if not world then return end
 
     if punchWX == nil or punchWY == nil then
         punchWX = 0
         punchWY = 0
+        punchGrid = nil
+        punchGridWorld = nil
     end
 
-    local grid = {}
-    for _, t in pairs(tiles) do
-        if not grid[t.x] then grid[t.x] = {} end
-        grid[t.x][t.y] = t
+    -- Build/refresh cached grid only when entering a new world or first run
+    if punchGrid == nil or punchGridWorld ~= world.name then
+        if not BuildPunchGrid() then return end
     end
 
     local targetX, targetY = nil, nil
 
     while true do
-        if punchWY >= world.height then break end
+        if punchWY >= punchGridH then break end
 
-        local tile = grid[punchWX] and grid[punchWX][punchWY]
-        
-        if tile and tile.fg == Config.PunchWorldTarget then
+        local fg = punchGrid[punchWX] and punchGrid[punchWX][punchWY]
+
+        if fg == Config.PunchWorldTarget then
             targetX = punchWX
             targetY = punchWY
             break
         end
 
         punchWX = punchWX + 1
-        if punchWX >= world.width then
+        if punchWX >= punchGridW then
             punchWX = 0
             punchWY = punchWY + 1
         end
     end
 
     if targetX and targetY then
-        -- Punch remotely (no movement)
+        -- Mark as punched in cache so we advance next call
+        punchGrid[targetX][targetY] = 0
+        -- Advance position past current target
+        punchWX = targetX + 1
+        if punchWX >= punchGridW then
+            punchWX = 0
+            punchWY = targetY + 1
+        end
+        -- BUG FIX: value must be the TOOL item ID (what you hold), NOT the block ID
         SendPacketRaw(false, {
-            type = 3,
-            value = Config.PunchWorldTarget,
-            px = targetX,
-            py = targetY,
-            x = targetX * 32,
-            y = targetY * 32
+            type  = 3,
+            value = Config.ItemID,   -- fist/wrench item held
+            px    = targetX,
+            py    = targetY,
+            x     = targetX * 32,
+            y     = targetY * 32
         })
     else
+        -- Do one full scan of cache to detect any skipped blocks
         local skipped = false
-        for _, t in pairs(tiles) do
-            if t.fg == Config.PunchWorldTarget then
-                skipped = true
-                break
+        for x = 0, punchGridW - 1 do
+            if punchGrid[x] then
+                for y = 0, punchGridH - 1 do
+                    if punchGrid[x][y] == Config.PunchWorldTarget then
+                        skipped = true
+                        break
+                    end
+                end
             end
+            if skipped then break end
         end
 
         if skipped then
@@ -729,6 +780,7 @@ local function AutoPunchWorldStep()
             Log("`2Auto Punch World finished! Disabled.`0")
             Config.AutoPunchWorld = false
             punchWX = nil
+            punchGrid = nil
         end
     end
 end
@@ -739,7 +791,7 @@ end
 local function CreateRandomAccount()
     local letters = "abcdefghijklmnopqrstuvwxyz"
     local name = ""
-    for i = 1, math.random(5, 7) do
+    for i = 1, 3 do
         local r = math.random(1, #letters)
         name = name .. letters:sub(r, r)
     end
@@ -779,7 +831,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.7", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.9", guiOpen) then
 
         -- Status bar
         local statusTxt = Run
@@ -787,6 +839,20 @@ local function ShowUI()
             or  "STATUS: STOPPED"
         ImGui.Text(statusTxt)
         ImGui.Text("World: " .. (world and world.name or "N/A") .. "  |  Player: " .. (local_ and local_.name or "N/A"))
+        ImGui.Separator()
+
+        -- START / STOP BUTTONS (top level, always visible)
+        if Run then
+            if ImGui.Button("[  STOP SCRIPT  ]") then
+                Run = false
+                Log("`4Script stopped via UI.")
+            end
+        else
+            if ImGui.Button("[ START SCRIPT ]") then
+                Run = true
+                Log("`2Script started via UI.")
+            end
+        end
         ImGui.Separator()
 
         -- PUNCH
@@ -808,19 +874,6 @@ local function ShowUI()
 
             local c6, v6 = ImGui.InputInt("Player Check Delay ms", Config.CheckDelay)
             if c6 then Config.CheckDelay = math.max(1, v6) end
-
-            ImGui.Separator()
-            if Run then
-                if ImGui.Button("STOP SCRIPT") then
-                    Run = false
-                    Log("`4Script stopped via UI.")
-                end
-            else
-                if ImGui.Button("START SCRIPT") then
-                    Run = true
-                    Log("`2Script started via UI.")
-                end
-            end
         end
 
         ImGui.Separator()
@@ -1198,18 +1251,6 @@ local function placeAbovePlayer(id)
     pkt.x     = localAvatar.pos.x
     pkt.y     = localAvatar.pos.y
     SendPacketRaw(false, pkt)
-end
-
-local function dedup(list)
-    local seen, result = {}, {}
-    for _, v in ipairs(list) do
-        local key = v:upper()
-        if not seen[key] then
-            seen[key] = true
-            table.insert(result, key)
-        end
-    end
-    return result
 end
 
 RunThread(function()
