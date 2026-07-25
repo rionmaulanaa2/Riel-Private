@@ -22,7 +22,7 @@ local Config = {
 
     AutoBackpack      = false, -- If true, auto-stash items into backpack when they hit the limit
     AutoBackpackLimit = 200,   -- How many items to reach before stashing
-    BackpackList      = { 5666 }, -- List of item IDs to auto stash
+    BackpackList      = { 5666, 822, 5667, 21364, 11038, 7960, 5138, 20192, 2574, 9902, 10716, 9380, 9386, 9350, 1004, 1005, 542, 4570, 4571, 2, 3, 14, 15, 358, 359 }, -- List of item IDs to auto stash
 
     AutoPlace       = false, -- If true, automatically places PlaceItemID across the whole world on blank tiles
     PlaceItemID     = 4584,  -- Item ID to place (e.g. pepper seeds)
@@ -54,6 +54,8 @@ local Config = {
     -- Auto Joiner Engine Settings
     AutoJoinRunning       = false,
     Join2LetterWorlds     = false,
+    Join3LetterWorlds     = false,
+    Join4LetterWorlds     = false,
     StartLetter1          = "a", 
     StartLetter2          = "a", 
     JoinViralWorlds       = false,
@@ -214,9 +216,9 @@ local function GetTimeStr()
     return t
 end
 
-local function SendToWebhook(content)
+local function SendToWebhook(content, ignoreConfig)
     -- Step 1: check enabled
-    if not (Config.DebugSendPacket or Config.DebugSendPacketRaw or Config.DebugVariant) then
+    if not ignoreConfig and not (Config.DebugSendPacket or Config.DebugSendPacketRaw or Config.DebugVariant) then
         return
     end
     -- Step 2: check URL
@@ -817,7 +819,7 @@ local function CreateRandomAccount()
     whLog = whLog .. "Email: " .. email .. "\n"
     whLog = whLog .. "```"
     
-    SendToWebhook(whLog)
+    SendToWebhook(whLog, true)
 end
 
 local guiOpen = true
@@ -831,7 +833,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.9", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.13", guiOpen) then
 
         -- Status bar
         local statusTxt = Run
@@ -1060,6 +1062,12 @@ local function ShowUI()
                 local cL2, vL2 = ImGui.InputText("Start Letter 2 (a-z)", Config.StartLetter2, 2)
                 if cL2 then Config.StartLetter2 = vL2 end
             end
+
+            local cL3, vL3 = ImGui.Checkbox("3-Letter Worlds", Config.Join3LetterWorlds)
+            if cL3 then Config.Join3LetterWorlds = vL3 end
+
+            local cL4, vL4 = ImGui.Checkbox("4-Letter Worlds", Config.Join4LetterWorlds)
+            if cL4 then Config.Join4LetterWorlds = vL4 end
 
             local cVi, vVi = ImGui.Checkbox("Viral Worlds", Config.JoinViralWorlds)
             if cVi then Config.JoinViralWorlds = vVi end
@@ -1317,10 +1325,55 @@ RunThread(function()
                 if start1 < 97 or start1 > 122 then start1 = 97 end
                 if start2 < 97 or start2 > 122 then start2 = 97 end
 
+                -- 1. aa to zz
                 for char1 = start1, 122 do
                     local innerStart = (char1 == start1) and start2 or 97
                     for char2 = innerStart, 122 do
                         table.insert(worldsToVisit, string.char(char1) .. string.char(char2))
+                    end
+                end
+
+                -- 2. a0..a9 then 0a..9a then b0..b9 ...
+                for char1 = 97, 122 do
+                    for num = 48, 57 do
+                        table.insert(worldsToVisit, string.char(char1) .. string.char(num))
+                    end
+                    for num = 48, 57 do
+                        table.insert(worldsToVisit, string.char(num) .. string.char(char1))
+                    end
+                end
+
+                -- 3. 00..99
+                for num1 = 48, 57 do
+                    for num2 = 48, 57 do
+                        table.insert(worldsToVisit, string.char(num1) .. string.char(num2))
+                    end
+                end
+            end
+
+            if Config.Join3LetterWorlds then
+                Log("`2[AutoJoin] Generating 3-Letter worlds (aaa-zzz)...")
+                for c1 = 97, 122 do
+                    for c2 = 97, 122 do
+                        for c3 = 97, 122 do
+                            table.insert(worldsToVisit, string.char(c1) .. string.char(c2) .. string.char(c3))
+                        end
+                    end
+                end
+            end
+
+            if Config.Join4LetterWorlds then
+                Log("`2[AutoJoin] Generating 4-Letter worlds (aaaa-zzzz)...")
+                local count = 0
+                for c1 = 97, 122 do
+                    for c2 = 97, 122 do
+                        for c3 = 97, 122 do
+                            for c4 = 97, 122 do
+                                table.insert(worldsToVisit, string.char(c1) .. string.char(c2) .. string.char(c3) .. string.char(c4))
+                                count = count + 1
+                                if count % 10000 == 0 then Sleep(10) end
+                            end
+                        end
                     end
                 end
             end
