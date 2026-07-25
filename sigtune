@@ -43,8 +43,8 @@ local Config = {
     -- Whitelisted User IDs: players with these UIDs will NOT trigger a pause.
     -- Add as many as you need. Find a player's UID in the console log when they join.
     Whitelist = {
-        -- 123456789,  -- Example UID (remove the -- to activate)
-        -- 987654321,
+        13162237,
+        1549933,
     },
 
     AutoJoin       = false, -- If true, automatically attempts to join JoinWorld
@@ -69,6 +69,27 @@ local Config = {
     JoinTimeoutSeconds    = 10,
     JoinPlaceItem         = 242,
     JoinPlaceAndLeave     = true,
+    
+    AutoClearWorld    = false,
+    AutoClearWater    = false,
+    ClearDirection    = "top",
+    ClearDelay        = 50,
+    ClearSpongeID     = 822,
+    ClearIgnoreBlocks = {
+        [6] = true,     -- White Door
+        [8] = true,     -- Bedrock
+        [202] = true,
+        [242] = true,   -- Main Door
+        [1796] = true,
+        [4992] = true,
+        [5260] = true,
+        [5638] = true,
+        [6948] = true,
+        [6950] = true,
+        [7188] = true,
+        [10266] = true,
+        [11550] = true
+    },
 }
 
 -- ==========================================================================
@@ -363,9 +384,9 @@ end)
 -- Returns true if a userid is in the whitelist or is the local player
 local function IsWhitelisted(userid)
     local local_ = GetLocal()
-    if local_ and local_.userid == userid then return true end
+    if local_ and local_.userid and tonumber(local_.userid) == tonumber(userid) then return true end
     for _, uid in ipairs(Config.Whitelist) do
-        if uid == userid then return true end
+        if tonumber(uid) == tonumber(userid) then return true end
     end
     return false
 end
@@ -448,8 +469,15 @@ local function GetOtherPlayers()
     if not list then return players end
 
     for _, p in pairs(list) do
-        if p and p.netid ~= local_.netid then
-            players[p.netid] = { name = p.name, userid = p.userid }
+        if p then
+            local isLocal = false
+            if p.netid == local_.netid then isLocal = true end
+            if p.userid and local_.userid and tonumber(p.userid) == tonumber(local_.userid) then isLocal = true end
+            if p.name and local_.name and p.name == local_.name then isLocal = true end
+
+            if not isLocal then
+                players[p.netid] = { name = p.name, userid = p.userid }
+            end
         end
     end
     return players
@@ -668,15 +696,30 @@ local function AutoPlaceStep()
             end
         end
 
-        -- Place remotely (no movement)
-        SendPacketRaw(false, {
-            type  = 3,
-            value = Config.PlaceItemID,
-            px    = targetX,
-            py    = targetY,
-            x     = targetX * 32,
-            y     = targetY * 32
-        })
+        -- Place remotely in a relentless loop until the block physically appears
+        while GetTile(targetX, targetY).fg == 0 do
+            if not Run or Paused then return end
+            if GetItemCount(Config.PlaceItemID) == 0 then break end -- Exit loop if we run out of items mid-placement
+            
+            SendPacketRaw(false, {
+                type  = 3,
+                value = Config.PlaceItemID,
+                px    = targetX,
+                py    = targetY,
+                x     = targetX * 32,
+                y     = targetY * 32
+            })
+            Sleep(Config.PlaceDelay)
+        end
+        
+        -- Update cache so we advance properly
+        placeGrid[targetX][targetY] = Config.PlaceItemID
+        
+        placeX = targetX + 1
+        if placeX >= placeGridW then
+            placeX = 0
+            placeY = Config.PlaceDirection == "top" and (targetY + 1) or (targetY - 1)
+        end
     else
         Log("`2Auto Place finished filling the world! Disabled.`0")
         Config.AutoPlace = false
@@ -745,6 +788,19 @@ local function AutoPunchWorldStep()
     end
 
     if targetX and targetY then
+        -- Match exactly the method from clearworldandwaterputlgrid.lua but without retries
+        while GetTile(targetX, targetY).fg == Config.PunchWorldTarget do
+            SendPacketRaw(false, {
+                type  = 3,
+                value = 18,
+                px    = targetX,
+                py    = targetY,
+                x     = targetX * 32,
+                y     = targetY * 32
+            })
+            Sleep(Config.PunchWorldDelay)
+        end
+
         -- Mark as punched in cache so we advance next call
         punchGrid[targetX][targetY] = 0
         -- Advance position past current target
@@ -753,15 +809,6 @@ local function AutoPunchWorldStep()
             punchWX = 0
             punchWY = targetY + 1
         end
-        -- BUG FIX: value must be the TOOL item ID (what you hold), NOT the block ID
-        SendPacketRaw(false, {
-            type  = 3,
-            value = Config.ItemID,   -- fist/wrench item held
-            px    = targetX,
-            py    = targetY,
-            x     = targetX * 32,
-            y     = targetY * 32
-        })
     else
         -- Do one full scan of cache to detect any skipped blocks
         local skipped = false
@@ -835,7 +882,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.18", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.27", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -1128,6 +1175,29 @@ buttonClicked|register]]
             ImGui.Text("Sends a hardcoded dialog return packet.")
         end
 
+        -- CLEAR WORLD
+        if ImGui.CollapsingHeader("Clear World Tools") then
+            local cCW, vCW = ImGui.Checkbox("Auto Clear World", Config.AutoClearWorld)
+            if cCW then Config.AutoClearWorld = vCW end
+            ImGui.SameLine()
+            local cCWat, vCWat = ImGui.Checkbox("Auto Clear Water", Config.AutoClearWater)
+            if cCWat then Config.AutoClearWater = vCWat end
+            
+            ImGui.Text("Direction:")
+            ImGui.SameLine()
+            if ImGui.RadioButton("Top to Bottom (Clear)", Config.ClearDirection == "top") then Config.ClearDirection = "top" end
+            ImGui.SameLine()
+            if ImGui.RadioButton("Bottom to Top (Clear)", Config.ClearDirection == "bottom") then Config.ClearDirection = "bottom" end
+            
+            local cCD, vCD = ImGui.InputInt("Clear Delay (ms)", Config.ClearDelay)
+            if cCD then Config.ClearDelay = math.max(10, vCD) end
+            
+            local cCS, vCS = ImGui.InputInt("Sponge ID", Config.ClearSpongeID)
+            if cCS then Config.ClearSpongeID = math.max(0, vCS) end
+            
+            ImGui.TextWrapped("Note: These run safely from top to bottom and respect the stranger detection pause.")
+        end
+
         -- PACKET DEBUG
         if ImGui.CollapsingHeader("Packet Debugger") then
             local cP, vP = ImGui.Checkbox("Debug SendPacket (Text)", Config.DebugSendPacket)
@@ -1167,6 +1237,7 @@ end)
 -- ============================================================
 -- PLAYER WATCH THREAD: Runs in background, checks for players
 -- ============================================================
+local PreviousConfig = {}
 
 RunThread(function()
     Log("Player watch thread started.")
@@ -1208,9 +1279,22 @@ RunThread(function()
                     if not Paused then
                         Paused = true
                         Log("`4Stranger in world! Turning off all features.")
+                        
+                        PreviousConfig.AutoPunch = Config.AutoPunch
+                        PreviousConfig.AutoPlace = Config.AutoPlace
+                        PreviousConfig.AutoPunchWorld = Config.AutoPunchWorld
+                        PreviousConfig.AutoClearWorld = Config.AutoClearWorld
+                        PreviousConfig.AutoClearWater = Config.AutoClearWater
+                        PreviousConfig.AutoTake = Config.AutoTake
+                        PreviousConfig.AutoBackpack = Config.AutoBackpack
+                        PreviousConfig.AutoJoinRunning = Config.AutoJoinRunning
+                        PreviousConfig.AutoJoin = Config.AutoJoin
+
                         Config.AutoPunch = false
                         Config.AutoPlace = false
                         Config.AutoPunchWorld = false
+                        Config.AutoClearWorld = false
+                        Config.AutoClearWater = false
                         Config.AutoTake = false
                         Config.AutoBackpack = false
                         Config.AutoJoinRunning = false
@@ -1219,7 +1303,17 @@ RunThread(function()
                 else
                     if Paused then
                         Paused = false
-                        Log("`2No strangers! Features can be re-enabled.")
+                        Log("`2No strangers! Resuming previously active features.")
+                        
+                        Config.AutoPunch = PreviousConfig.AutoPunch or false
+                        Config.AutoPlace = PreviousConfig.AutoPlace or false
+                        Config.AutoPunchWorld = PreviousConfig.AutoPunchWorld or false
+                        Config.AutoClearWorld = PreviousConfig.AutoClearWorld or false
+                        Config.AutoClearWater = PreviousConfig.AutoClearWater or false
+                        Config.AutoTake = PreviousConfig.AutoTake or false
+                        Config.AutoBackpack = PreviousConfig.AutoBackpack or false
+                        Config.AutoJoinRunning = PreviousConfig.AutoJoinRunning or false
+                        Config.AutoJoin = PreviousConfig.AutoJoin or false
                     end
                 end
 
@@ -1482,6 +1576,169 @@ AddHook("onsendpacket", "SafePunchControl", function(type, packet)
 end)
 
 -- ============================================================
+-- CLEAR WORLD & WATER LOGIC
+-- ============================================================
+local clearWX, clearWY = nil, nil
+local clearWGrid = nil
+local clearWGridW, clearWGridH = 0, 0
+local clearWWorld = nil
+
+local function BuildClearGrid()
+    local tiles = GetTiles()
+    local world = GetWorld()
+    if not tiles or not world then return false end
+    clearWGrid = {}
+    for _, t in pairs(tiles) do
+        if not clearWGrid[t.x] then clearWGrid[t.x] = {} end
+        clearWGrid[t.x][t.y] = {fg = t.fg, bg = t.bg, flags = t.flags}
+    end
+    clearWWorld = world.name
+    clearWGridW = world.width
+    clearWGridH = world.height
+    return true
+end
+
+local function InitializeClear()
+    local world = GetWorld()
+    if not world then return end
+    if Config.ClearDirection == "top" then
+        clearWY = 0
+    else
+        clearWY = world.height - 1
+    end
+    clearWX = 0
+    clearWGrid = nil
+    clearWWorld = nil
+end
+
+local function ClearWorldStep()
+    local world = GetWorld()
+    if not world then return end
+
+    if clearWX == nil or clearWY == nil then
+        InitializeClear()
+    end
+
+    if clearWGrid == nil or clearWWorld ~= world.name then
+        if not BuildClearGrid() then return end
+    end
+
+    local targetX, targetY = nil, nil
+
+    while true do
+        if Config.ClearDirection == "top" and clearWY >= clearWGridH then break end
+        if Config.ClearDirection == "bottom" and clearWY < 0 then break end
+
+        local cell = clearWGrid[clearWX] and clearWGrid[clearWX][clearWY]
+        if cell then
+            if (cell.fg ~= 0 or cell.bg ~= 0) and not Config.ClearIgnoreBlocks[cell.fg] then
+                targetX = clearWX
+                targetY = clearWY
+                break
+            end
+        end
+
+        clearWX = clearWX + 1
+        if clearWX >= clearWGridW then
+            clearWX = 0
+            clearWY = Config.ClearDirection == "top" and (clearWY + 1) or (clearWY - 1)
+        end
+    end
+
+    if targetX and targetY then
+        while (GetTile(targetX, targetY).fg ~= 0 or GetTile(targetX, targetY).bg ~= 0) and not Config.ClearIgnoreBlocks[GetTile(targetX, targetY).fg] do
+            if not Run or Paused then return end -- Abort if paused by stranger
+            SendPacketRaw(false, {
+                type  = 3,
+                value = 18,
+                px    = targetX,
+                py    = targetY,
+                x     = targetX * 32,
+                y     = targetY * 32
+            })
+            Sleep(Config.ClearDelay)
+        end
+
+        clearWGrid[targetX][targetY].fg = 0
+        clearWGrid[targetX][targetY].bg = 0
+        
+        clearWX = targetX + 1
+        if clearWX >= clearWGridW then
+            clearWX = 0
+            clearWY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)
+        end
+    else
+        Log("`2Auto Clear World finished!`0")
+        Config.AutoClearWorld = false
+        clearWX = nil
+        clearWGrid = nil
+    end
+end
+
+local function ClearWaterStep()
+    local world = GetWorld()
+    if not world then return end
+
+    if clearWX == nil or clearWY == nil then
+        InitializeClear()
+    end
+
+    if clearWGrid == nil or clearWWorld ~= world.name then
+        if not BuildClearGrid() then return end
+    end
+
+    local targetX, targetY = nil, nil
+
+    while true do
+        if Config.ClearDirection == "top" and clearWY >= clearWGridH then break end
+        if Config.ClearDirection == "bottom" and clearWY < 0 then break end
+
+        local cell = clearWGrid[clearWX] and clearWGrid[clearWX][clearWY]
+        if cell and cell.flags and cell.flags.water then
+            targetX = clearWX
+            targetY = clearWY
+            break
+        end
+
+        clearWX = clearWX + 1
+        if clearWX >= clearWGridW then
+            clearWX = 0
+            clearWY = Config.ClearDirection == "top" and (clearWY + 1) or (clearWY - 1)
+        end
+    end
+
+    if targetX and targetY then
+        while GetTile(targetX, targetY).flags and GetTile(targetX, targetY).flags.water do
+            if not Run or Paused then return end
+            SendPacketRaw(false, {
+                type  = 3,
+                value = Config.ClearSpongeID,
+                px    = targetX,
+                py    = targetY,
+                x     = targetX * 32,
+                y     = targetY * 32
+            })
+            Sleep(Config.ClearDelay)
+        end
+
+        if clearWGrid[targetX] and clearWGrid[targetX][targetY] and clearWGrid[targetX][targetY].flags then
+            clearWGrid[targetX][targetY].flags.water = false
+        end
+        
+        clearWX = targetX + 1
+        if clearWX >= clearWGridW then
+            clearWX = 0
+            clearWY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)
+        end
+    else
+        Log("`2Auto Clear Water finished!`0")
+        Config.AutoClearWater = false
+        clearWX = nil
+        clearWGrid = nil
+    end
+end
+
+-- ============================================================
 -- MAIN PUNCH LOOP
 -- ============================================================
 
@@ -1507,7 +1764,13 @@ while true do
             -- Determine the correct delay based on the active mode
             local currentDelay = Config.PunchDelay
 
-            if Config.AutoPlace then
+            if Config.AutoClearWorld then
+                ClearWorldStep()
+                currentDelay = Config.ClearDelay
+            elseif Config.AutoClearWater then
+                ClearWaterStep()
+                currentDelay = Config.ClearDelay
+            elseif Config.AutoPlace then
                 AutoPlaceStep()
                 currentDelay = Config.PlaceDelay
             elseif Config.AutoPunchWorld then
