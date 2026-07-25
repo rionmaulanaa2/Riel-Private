@@ -22,7 +22,7 @@ local Config = {
 
     AutoBackpack      = false, -- If true, auto-stash items into backpack when they hit the limit
     AutoBackpackLimit = 200,   -- How many items to reach before stashing
-    BackpackList      = { 5666, 822, 5667, 21364, 11038, 7960, 5138, 20192, 2574, 9902, 10716, 9380, 9386, 9350, 1004, 1005, 542, 4570, 4571, 2, 3, 14, 15, 358, 359 }, -- List of item IDs to auto stash
+    BackpackList      = { 5666, 822, 5667, 21364, 11038, 7960, 5138, 20192, 2574, 9902, 10716, 9380, 9386, 9350, 1004, 1005, 542, 4570, 4571, 2, 3, 14, 15, 358, 359, 4584, 4585 }, -- List of item IDs to auto stash
 
     AutoPlace       = false, -- If true, automatically places PlaceItemID across the whole world on blank tiles
     PlaceItemID     = 4584,  -- Item ID to place (e.g. pepper seeds)
@@ -56,8 +56,7 @@ local Config = {
     Join2LetterWorlds     = false,
     Join3LetterWorlds     = false,
     Join4LetterWorlds     = false,
-    StartLetter1          = "a", 
-    StartLetter2          = "a", 
+    Start2Letter          = "aa", 
     JoinViralWorlds       = false,
     JoinPopularWorlds     = false,
     JoinBuyWorlds         = false,
@@ -179,13 +178,14 @@ local itemAcronyms = {
 }
 
 -- State
-local Run          = false
+local Run          = true
 local Paused       = false
 local lastPlayers  = {}  -- Track previous player list (netid -> name)
 local startX, startY    -- Remember standing position
 
 local modDetected  = false   -- True if a mod/dev was detected invisibly
 local whitelistInput = ""   -- UI text input buffer for adding whitelist UIDs
+local manualGrowID = ""     -- UI text input buffer for manual account creation
 local waitingForBackpackItem = nil -- State for backpack resupply
 
 -- ============================================================
@@ -360,8 +360,10 @@ AddHook("onvariant", "DebugVariantLogger", function(var)
     return false
 end)
 
--- Returns true if a userid is in the whitelist
+-- Returns true if a userid is in the whitelist or is the local player
 local function IsWhitelisted(userid)
+    local local_ = GetLocal()
+    if local_ and local_.userid == userid then return true end
     for _, uid in ipairs(Config.Whitelist) do
         if uid == userid then return true end
     end
@@ -833,28 +835,12 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.13", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.18", guiOpen) then
 
         -- Status bar
-        local statusTxt = Run
-            and (Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING")
-            or  "STATUS: STOPPED"
+        local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
         ImGui.Text(statusTxt)
         ImGui.Text("World: " .. (world and world.name or "N/A") .. "  |  Player: " .. (local_ and local_.name or "N/A"))
-        ImGui.Separator()
-
-        -- START / STOP BUTTONS (top level, always visible)
-        if Run then
-            if ImGui.Button("[  STOP SCRIPT  ]") then
-                Run = false
-                Log("`4Script stopped via UI.")
-            end
-        else
-            if ImGui.Button("[ START SCRIPT ]") then
-                Run = true
-                Log("`2Script started via UI.")
-            end
-        end
         ImGui.Separator()
 
         -- PUNCH
@@ -1057,10 +1043,8 @@ local function ShowUI()
             if cL then Config.Join2LetterWorlds = vL end
             
             if Config.Join2LetterWorlds then
-                local cL1, vL1 = ImGui.InputText("Start Letter 1 (a-z)", Config.StartLetter1, 2)
-                if cL1 then Config.StartLetter1 = vL1 end
-                local cL2, vL2 = ImGui.InputText("Start Letter 2 (a-z)", Config.StartLetter2, 2)
-                if cL2 then Config.StartLetter2 = vL2 end
+                local cL1, vL1 = ImGui.InputText("Start From (e.g. aa, a0, 00)", Config.Start2Letter, 3)
+                if cL1 then Config.Start2Letter = vL1:lower() end
             end
 
             local cL3, vL3 = ImGui.Checkbox("3-Letter Worlds", Config.Join3LetterWorlds)
@@ -1109,6 +1093,39 @@ local function ShowUI()
                 CreateRandomAccount()
             end
             ImGui.Text("Generates a random account, applies it, and sends info to Webhook.")
+            
+            ImGui.Separator()
+            local changed, newVal = ImGui.InputText("Manual GrowID Name", manualGrowID, 32)
+            if changed then manualGrowID = newVal end
+            
+            if ImGui.Button("Register Manual GrowID") then
+                if manualGrowID == "" then
+                    Log("`4Please enter a name first!`0")
+                else
+                    local packet = "action|dialog_return\ndialog_name|growid_apply\nman|1\nwoman|0\n"
+                    packet = packet .. "logon|" .. manualGrowID .. "\n"
+                    packet = packet .. "password|" .. manualGrowID .. "\n"
+                    packet = packet .. "password_verify|" .. manualGrowID .. "\n"
+                    packet = packet .. "email|b@b.com\n"
+                    packet = packet .. "affcode|\n"
+                    SendPacket(2, packet)
+                    Log("`2Sent Register Packet for Name: `0" .. manualGrowID)
+                end
+            end
+            
+            ImGui.Separator()
+            if ImGui.Button("Register 8S7PrisE (Bypass?)") then
+                local regPacket = [[action|dialog_return
+dialog_name|8S7PrisE
+H7fQw80bh3GQgxR5JOUGRha0FL|UEKXY9uCyrkUXEriHvls|
+jIJljNMRrzSsRSky9jemNIrF7d|dQ6xbZSzBUps2BUd8X7B9cVqBFZPZ|
+YqstcgM90mFKUtOd|TqRrgoQLrjXJE06siyjYX05j|
+XRXEJMmmA6YSzv5qVzpJ5yW|alSR9U2uHPSn2rX5IWqaf2s0zQ|
+buttonClicked|register]]
+                SendPacket(2, regPacket)
+                Log("`2Sent Register 8S7PrisE Packet!`0")
+            end
+            ImGui.Text("Sends a hardcoded dialog return packet.")
         end
 
         -- PACKET DEBUG
@@ -1190,12 +1207,19 @@ RunThread(function()
                 if hasStranger then
                     if not Paused then
                         Paused = true
-                        Log("`4Stranger in world! Punch paused.")
+                        Log("`4Stranger in world! Turning off all features.")
+                        Config.AutoPunch = false
+                        Config.AutoPlace = false
+                        Config.AutoPunchWorld = false
+                        Config.AutoTake = false
+                        Config.AutoBackpack = false
+                        Config.AutoJoinRunning = false
+                        Config.AutoJoin = false
                     end
                 else
                     if Paused then
                         Paused = false
-                        Log("`2No strangers! Resuming punch.")
+                        Log("`2No strangers! Features can be re-enabled.")
                     end
                 end
 
@@ -1316,37 +1340,50 @@ RunThread(function()
 
             if Config.Join2LetterWorlds then
                 Log("`2[AutoJoin] Generating 2-Letter worlds...")
-                local char1_str = type(Config.StartLetter1) == "string" and Config.StartLetter1:lower() or "a"
-                local char2_str = type(Config.StartLetter2) == "string" and Config.StartLetter2:lower() or "a"
+                local fullSequence = {}
                 
-                local start1 = string.byte(char1_str) or 97
-                local start2 = string.byte(char2_str) or 97
-
-                if start1 < 97 or start1 > 122 then start1 = 97 end
-                if start2 < 97 or start2 > 122 then start2 = 97 end
-
                 -- 1. aa to zz
-                for char1 = start1, 122 do
-                    local innerStart = (char1 == start1) and start2 or 97
-                    for char2 = innerStart, 122 do
-                        table.insert(worldsToVisit, string.char(char1) .. string.char(char2))
+                for char1 = 97, 122 do
+                    for char2 = 97, 122 do
+                        table.insert(fullSequence, string.char(char1) .. string.char(char2))
                     end
                 end
 
                 -- 2. a0..a9 then 0a..9a then b0..b9 ...
                 for char1 = 97, 122 do
                     for num = 48, 57 do
-                        table.insert(worldsToVisit, string.char(char1) .. string.char(num))
+                        table.insert(fullSequence, string.char(char1) .. string.char(num))
                     end
                     for num = 48, 57 do
-                        table.insert(worldsToVisit, string.char(num) .. string.char(char1))
+                        table.insert(fullSequence, string.char(num) .. string.char(char1))
                     end
                 end
 
                 -- 3. 00..99
                 for num1 = 48, 57 do
                     for num2 = 48, 57 do
-                        table.insert(worldsToVisit, string.char(num1) .. string.char(num2))
+                        table.insert(fullSequence, string.char(num1) .. string.char(num2))
+                    end
+                end
+
+                -- Filter based on Start2Letter
+                local startStr = type(Config.Start2Letter) == "string" and Config.Start2Letter:lower() or "aa"
+                if #startStr ~= 2 then startStr = "aa" end
+                
+                local foundStart = false
+                for _, w in ipairs(fullSequence) do
+                    if not foundStart and w == startStr then
+                        foundStart = true
+                    end
+                    if foundStart then
+                        table.insert(worldsToVisit, w)
+                    end
+                end
+                
+                -- Fallback if start string wasn't valid/found
+                if not foundStart then
+                    for _, w in ipairs(fullSequence) do
+                        table.insert(worldsToVisit, w)
                     end
                 end
             end
