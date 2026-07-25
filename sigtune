@@ -698,7 +698,7 @@ local function AutoPlaceStep()
 
         -- Place remotely in a relentless loop until the block physically appears
         while GetTile(targetX, targetY).fg == 0 do
-            if not Run or Paused then return end
+            if not Run or Paused or not Config.AutoPlace then return end
             if GetItemCount(Config.PlaceItemID) == 0 then break end -- Exit loop if we run out of items mid-placement
             
             SendPacketRaw(false, {
@@ -790,6 +790,7 @@ local function AutoPunchWorldStep()
     if targetX and targetY then
         -- Match exactly the method from clearworldandwaterputlgrid.lua but without retries
         while GetTile(targetX, targetY).fg == Config.PunchWorldTarget do
+            if not Run or Paused or not Config.AutoPunchWorld then return end
             SendPacketRaw(false, {
                 type  = 3,
                 value = 18,
@@ -882,7 +883,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.27", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.28", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -1647,7 +1648,7 @@ local function ClearWorldStep()
 
     if targetX and targetY then
         while (GetTile(targetX, targetY).fg ~= 0 or GetTile(targetX, targetY).bg ~= 0) and not Config.ClearIgnoreBlocks[GetTile(targetX, targetY).fg] do
-            if not Run or Paused then return end -- Abort if paused by stranger
+            if not Run or Paused or not Config.AutoClearWorld then return end -- Abort if paused by stranger or manually disabled
             SendPacketRaw(false, {
                 type  = 3,
                 value = 18,
@@ -1709,7 +1710,7 @@ local function ClearWaterStep()
 
     if targetX and targetY then
         while GetTile(targetX, targetY).flags and GetTile(targetX, targetY).flags.water do
-            if not Run or Paused then return end
+            if not Run or Paused or not Config.AutoClearWater then return end
             SendPacketRaw(false, {
                 type  = 3,
                 value = Config.ClearSpongeID,
