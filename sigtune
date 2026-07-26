@@ -7,6 +7,7 @@
 -- ============================================================
 
 -- Configuration
+local PreviousConfig = {}
 local Config = {
     TileX      = 92,   -- Target tile X coordinate
     TileY      = 26,   -- Target tile Y coordinate
@@ -490,7 +491,39 @@ local function GetOtherPlayers()
 end
 
 -- Punch the target tile once
+local punchSavedLocX = nil
+local punchSavedLocY = nil
+
 local function PunchTile()
+    if Config.AutoPunchAntiMove then
+        local local_ = GetLocal()
+        if local_ then
+            if punchSavedLocX == nil then
+                punchSavedLocX = local_.pos.x
+                punchSavedLocY = local_.pos.y
+            else
+                local dx = math.abs(local_.pos.x - punchSavedLocX)
+                local dy = math.abs(local_.pos.y - punchSavedLocY)
+                if dx > 1 or dy > 1 then
+                    -- Send state packet to correct position
+                    SendPacketRaw(false, {
+                        type = 0,
+                        x = punchSavedLocX,
+                        y = punchSavedLocY,
+                        px = 0,
+                        py = 0
+                    })
+                    -- Also update local position if possible? Actually just sending the packet is enough to prevent moving visually to others and server.
+                end
+            end
+        end
+    else
+        punchSavedLocX = nil
+        punchSavedLocY = nil
+    end
+
+    -- If auto punch was turned off, clear location elsewhere. Wait, if we are in PunchTile, AutoPunch is true.
+
     SendPacketRaw(false, {
         type  = 3,
         value = Config.ItemID,
@@ -613,20 +646,6 @@ local placeGrid = nil        -- cached tile grid
 local placeGridWorld = nil   -- world name when grid was built
 local placeGridW, placeGridH = 0, 0
 
-local function BuildPlaceGrid()
-    local tiles = GetTiles()
-    local world = GetWorld()
-    if not tiles or not world then return false end
-    placeGrid = {}
-    for _, t in pairs(tiles) do
-        if not placeGrid[t.x] then placeGrid[t.x] = {} end
-        placeGrid[t.x][t.y] = t.fg
-    end
-    placeGridWorld = world.name
-    placeGridW = world.width
-    placeGridH = world.height
-    return true
-end
 
 local function InitializePlace()
     local world = GetWorld()
@@ -650,37 +669,29 @@ local function AutoPlaceStep()
         InitializePlace()
     end
 
-    -- Build/refresh cached grid only when entering a new world or first run
-    if placeGrid == nil or placeGridWorld ~= world.name then
-        if not BuildPlaceGrid() then return end
-    end
-
     local targetX, targetY = nil, nil
 
     while true do
-        if Config.PlaceDirection == "top" and placeY >= placeGridH then break end
+        if Config.PlaceDirection == "top" and placeY >= world.height then break end
         if Config.PlaceDirection == "bottom" and placeY < 0 then break end
 
-        local fg = placeGrid[placeX] and placeGrid[placeX][placeY]
+        -- Skip if placing on local player pos
+        local local_ = GetLocal()
+        local pX = local_ and math.floor(local_.pos.x / 32)
+        local pY = local_ and math.floor(local_.pos.y / 32)
+        local isPlayerPos = (pX == placeX and pY == placeY)
 
-        -- fg == 0 means blank foreground tile
-        if fg == 0 then
-            targetX = placeX
-            targetY = placeY
-            -- Mark as placed in cache so next call skips it immediately
-            placeGrid[placeX][placeY] = Config.PlaceItemID
-            -- Advance coordinate for next call
-            placeX = placeX + 1
-            if placeX >= placeGridW then
-                placeX = 0
-                placeY = Config.PlaceDirection == "top" and (placeY + 1) or (placeY - 1)
+        if not isPlayerPos then
+            local tile = GetTile(placeX, placeY)
+            if tile and tile.fg == 0 then
+                targetX = placeX
+                targetY = placeY
+                break
             end
-            break
         end
 
-        -- Advance if not blank
         placeX = placeX + 1
-        if placeX >= placeGridW then
+        if placeX >= world.width then
             placeX = 0
             placeY = Config.PlaceDirection == "top" and (placeY + 1) or (placeY - 1)
         end
@@ -691,22 +702,22 @@ local function AutoPlaceStep()
         if GetItemCount(Config.PlaceItemID) == 0 then
             if Config.PlaceResupplyMode == 1 then
                 Log("`eOut of items! Attempting to resupply from backpack...`0")
-                SendPacket(2, "action|input\n|text|/bp")
-                waitingForBackpackItem = Config.PlaceItemID
-                Sleep(1500) -- Sleep to let the dialog arrive and be processed
-                return
+                if TryResupplyFromBackpack() then
+                    return -- Sleep until next loop
+                else
+                    Log("`4Failed to resupply! Out of items in backpack too. Stopping.`0")
+                    Config.AutoPlace = false
+                    return
+                end
             else
-                Log("`4Out of items to place! Pausing AutoPlace.`0")
+                Log("`4[Auto Place] `0Out of items! Stopping.")
                 Config.AutoPlace = false
                 return
             end
         end
 
-        -- Place remotely in a relentless loop until the block physically appears
         while GetTile(targetX, targetY).fg == 0 do
             if not Run or Paused or not Config.AutoPlace then return end
-            if GetItemCount(Config.PlaceItemID) == 0 then break end -- Exit loop if we run out of items mid-placement
-            
             SendPacketRaw(false, {
                 type  = 3,
                 value = Config.PlaceItemID,
@@ -717,20 +728,15 @@ local function AutoPlaceStep()
             })
             Sleep(Config.PlaceDelay)
         end
-        
-        -- Update cache so we advance properly
-        placeGrid[targetX][targetY] = Config.PlaceItemID
-        
         placeX = targetX + 1
-        if placeX >= placeGridW then
+        if placeX >= world.width then
             placeX = 0
             placeY = Config.PlaceDirection == "top" and (targetY + 1) or (targetY - 1)
         end
     else
-        Log("`2Auto Place finished filling the world! Disabled.`0")
+        Log("`2[Auto Place] `0Finished placing!")
         Config.AutoPlace = false
-        placeX = nil
-        placeGrid = nil
+        placeX, placeY = nil, nil
     end
 end
 
@@ -742,20 +748,6 @@ local punchGrid = nil
 local punchGridWorld = nil
 local punchGridW, punchGridH = 0, 0
 
-local function BuildPunchGrid()
-    local tiles = GetTiles()
-    local world = GetWorld()
-    if not tiles or not world then return false end
-    punchGrid = {}
-    for _, t in pairs(tiles) do
-        if not punchGrid[t.x] then punchGrid[t.x] = {} end
-        punchGrid[t.x][t.y] = t.fg
-    end
-    punchGridWorld = world.name
-    punchGridW = world.width
-    punchGridH = world.height
-    return true
-end
 
 local function InitializePunchWorld()
     local world = GetWorld()
@@ -778,34 +770,21 @@ local function AutoPunchWorldStep()
         InitializePunchWorld()
     end
 
-    -- Build/refresh cached grid only when entering a new world or first run
-    if punchGrid == nil or punchGridWorld ~= world.name then
-        if not BuildPunchGrid() then return end
-    end
-
     local targetX, targetY = nil, nil
 
     while true do
-        if Config.PunchDirection == "top" and punchWY >= punchGridH then break end
+        if Config.PunchDirection == "top" and punchWY >= world.height then break end
         if Config.PunchDirection == "bottom" and punchWY < 0 then break end
 
-        local fg = punchGrid[punchWX] and punchGrid[punchWX][punchWY]
-
-        if fg == Config.PunchWorldTarget then
-            -- Verify with real tile instead of blindly trusting cache (blocks could have been destroyed by explosions/other punches)
-            local realTile = GetTile(punchWX, punchWY)
-            if realTile and realTile.fg == Config.PunchWorldTarget then
-                targetX = punchWX
-                targetY = punchWY
-                break
-            else
-                -- It was already destroyed! Update cache and move on.
-                punchGrid[punchWX][punchWY] = realTile and realTile.fg or 0
-            end
+        local realTile = GetTile(punchWX, punchWY)
+        if realTile and realTile.fg == Config.PunchWorldTarget then
+            targetX = punchWX
+            targetY = punchWY
+            break
         end
 
         punchWX = punchWX + 1
-        if punchWX >= punchGridW then
+        if punchWX >= world.width then
             punchWX = 0
             punchWY = Config.PunchDirection == "top" and (punchWY + 1) or (punchWY - 1)
         end
@@ -825,44 +804,16 @@ local function AutoPunchWorldStep()
             })
             Sleep(Config.PunchWorldDelay)
         end
-
-        -- Mark as punched in cache so we advance next call
-        punchGrid[targetX][targetY] = 0
-        -- Advance position past current target
+        -- UPDATE NEXT TARGET TO PREVENT RESCANNING SAME BLOCK
         punchWX = targetX + 1
-        if punchWX >= punchGridW then
+        if punchWX >= world.width then
             punchWX = 0
             punchWY = Config.PunchDirection == "top" and (targetY + 1) or (targetY - 1)
         end
     else
-        -- Do one full scan of cache to detect any skipped blocks
-        local skipped = false
-        for x = 0, punchGridW - 1 do
-            if punchGrid[x] then
-                for y = 0, punchGridH - 1 do
-                    if punchGrid[x][y] == Config.PunchWorldTarget then
-                        -- Verify with real tile before restarting scan
-                        if GetTile(x, y).fg == Config.PunchWorldTarget then
-                            skipped = true
-                            break
-                        else
-                            punchGrid[x][y] = GetTile(x, y).fg
-                        end
-                    end
-                end
-            end
-            if skipped then break end
-        end
-
-        if skipped then
-            Log("`6Found skipped blocks! Restarting world scan...`0")
-            InitializePunchWorld()
-        else
-            Log("`2Auto Punch World finished! Disabled.`0")
-            Config.AutoPunchWorld = false
-            punchWX = nil
-            punchGrid = nil
-        end
+        Log("`2[Auto Punch World] `0Finished punching!")
+        Config.AutoPunchWorld = false
+        punchWX, punchWY = nil, nil
     end
 end
 
@@ -954,7 +905,7 @@ local function ShowUI()
 
           -- AUTO SURGERY
         if ImGui.CollapsingHeader("Auto Surgery") then
-            local cS, vS = ImGui.Checkbox("Enable Auto Surgery", Config.AutoSurgery)
+            local cS, vS = ConfigCheckbox("Enable Auto Surgery", "AutoSurgery")
             if cS then Config.AutoSurgery = vS end
 
             ImGui.SameLine()
@@ -1013,8 +964,8 @@ local function ShowUI()
 
         -- PUNCH
         if ImGui.CollapsingHeader("Auto Punch") then
-            local c, v = ImGui.Checkbox("Enable Auto Punch", Config.AutoPunch)
-            if c then Config.AutoPunch = v end
+            local c, v = ConfigCheckbox("Enable Auto Punch", "AutoPunch")
+            local cAM, vAM = ConfigCheckbox("Anti Move (Stay in place)", "AutoPunchAntiMove")
 
             local c2, v2 = ImGui.InputInt("Tile X", Config.TileX)
             if c2 then Config.TileX = v2 end
@@ -1036,8 +987,7 @@ local function ShowUI()
 
         -- AUTO JOIN WORLD
         if ImGui.CollapsingHeader("Auto Join World") then
-            local c, v = ImGui.Checkbox("Enable Auto Join", Config.AutoJoin)
-            if c then Config.AutoJoin = v end
+            local c, v = ConfigCheckbox("Enable Auto Join", "AutoJoin")
 
             local c2, v2 = ImGui.InputText("World Name", Config.JoinWorld, 64)
             if c2 then Config.JoinWorld = v2 end
@@ -1050,8 +1000,7 @@ local function ShowUI()
 
         -- AUTO TAKE
         if ImGui.CollapsingHeader("Auto Take Floating Items") then
-            local c, v = ImGui.Checkbox("Enable Auto Take", Config.AutoTake)
-            if c then Config.AutoTake = v end
+            local c, v = ConfigCheckbox("Enable Auto Take", "AutoTake")
 
             local c2, v2 = ImGui.Checkbox("Use ID List Only (false = take ALL)", Config.UseTakeList)
             if c2 then Config.UseTakeList = v2 end
@@ -1116,8 +1065,7 @@ local function ShowUI()
 
         -- AUTO BACKPACK
         if ImGui.CollapsingHeader("Auto Backpack Stash") then
-            local c, v = ImGui.Checkbox("Enable Auto Backpack", Config.AutoBackpack)
-            if c then Config.AutoBackpack = v end
+            local c, v = ConfigCheckbox("Enable Auto Backpack", "AutoBackpack")
 
             local c3, v3 = ImGui.InputInt("Stash Limit Quantity", Config.AutoBackpackLimit)
             if c3 then Config.AutoBackpackLimit = math.max(1, v3) end
@@ -1136,11 +1084,8 @@ local function ShowUI()
 
         -- AUTO PLACE
         if ImGui.CollapsingHeader("Auto Place World") then
-            local c, v = ImGui.Checkbox("Enable Auto Place", Config.AutoPlace)
-            if c then
-                Config.AutoPlace = v
-                if v then placeX, placeY = nil, nil end
-            end
+            local c, v = ConfigCheckbox("Enable Auto Place", "AutoPlace")
+            if c and v then placeX, placeY = nil, nil end
 
             local c2, v2 = ImGui.InputInt("Place Item ID", Config.PlaceItemID)
             if c2 then Config.PlaceItemID = v2 end
@@ -1177,11 +1122,8 @@ local function ShowUI()
 
         -- PUNCH WORLD
         if ImGui.CollapsingHeader("Punch World Blocks") then
-            local c, v = ImGui.Checkbox("Enable Punch World", Config.AutoPunchWorld)
-            if c then
-                Config.AutoPunchWorld = v
-                if v then punchWX, punchWY = nil, nil end
-            end
+            local c, v = ConfigCheckbox("Enable Punch World", "AutoPunchWorld")
+            if c and v then punchWX, punchWY = nil, nil end
 
             ImGui.Text("Direction:")
             if ImGui.RadioButton("Top to Bottom (Punch)", Config.PunchDirection == "top") then
@@ -1205,8 +1147,7 @@ local function ShowUI()
 
         -- AUTO JOINER ENGINE
         if ImGui.CollapsingHeader("Auto Joiner Engine") then
-            local cJR, vJR = ImGui.Checkbox("Start Auto Joiner", Config.AutoJoinRunning)
-            if cJR then Config.AutoJoinRunning = vJR end
+            local cJR, vJR = ConfigCheckbox("Start Auto Joiner", "AutoJoinRunning")
 
             if Config.AutoJoinRunning then
                 ImGui.Text("Status: RUNNING")
@@ -1307,11 +1248,11 @@ buttonClicked|register]]
 
         -- CLEAR WORLD
         if ImGui.CollapsingHeader("Clear World Tools") then
-            local cCW, vCW = ImGui.Checkbox("Auto Clear World", Config.AutoClearWorld)
-            if cCW then Config.AutoClearWorld = vCW end
+            local cCW, vCW = ConfigCheckbox("Auto Clear World", "AutoClearWorld")
+            if cCW and vCW then clearWX, clearWY = nil, nil end
             ImGui.SameLine()
-            local cCWat, vCWat = ImGui.Checkbox("Auto Clear Water", Config.AutoClearWater)
-            if cCWat then Config.AutoClearWater = vCWat end
+            local cCWat, vCWat = ConfigCheckbox("Auto Clear Water", "AutoClearWater")
+            if cCWat and vCWat then clearWX, clearWY = nil, nil end
             
             ImGui.Text("Direction:")
             ImGui.SameLine()
@@ -1367,7 +1308,7 @@ end)
 -- ============================================================
 -- PLAYER WATCH THREAD: Runs in background, checks for players
 -- ============================================================
-local PreviousConfig = {}
+
 
 RunThread(function()
     Log("Player watch thread started.")
@@ -1411,6 +1352,7 @@ RunThread(function()
                         Log("`4Stranger in world! Turning off all features.")
                         
                         PreviousConfig.AutoPunch = Config.AutoPunch
+                        PreviousConfig.AutoPunchAntiMove = Config.AutoPunchAntiMove
                         PreviousConfig.AutoPlace = Config.AutoPlace
                         PreviousConfig.AutoPunchWorld = Config.AutoPunchWorld
                         PreviousConfig.AutoClearWorld = Config.AutoClearWorld
@@ -1422,6 +1364,7 @@ RunThread(function()
                         PreviousConfig.AutoJoin = Config.AutoJoin
 
                         Config.AutoPunch = false
+                        Config.AutoPunchAntiMove = false
                         Config.AutoPlace = false
                         Config.AutoPunchWorld = false
                         Config.AutoClearWorld = false
@@ -1438,6 +1381,7 @@ RunThread(function()
                         Log("`2No strangers! Resuming previously active features.")
                         
                         Config.AutoPunch = PreviousConfig.AutoPunch or false
+                        Config.AutoPunchAntiMove = PreviousConfig.AutoPunchAntiMove or false
                         Config.AutoPlace = PreviousConfig.AutoPlace or false
                         Config.AutoPunchWorld = PreviousConfig.AutoPunchWorld or false
                         Config.AutoClearWorld = PreviousConfig.AutoClearWorld or false
@@ -1995,20 +1939,16 @@ local function ClearWorldStep()
     if not world then return end
 
     if clearWX == nil or clearWY == nil then
-        InitializeClear()
-    end
-
-    if clearWGrid == nil or clearWWorld ~= world.name then
-        if not BuildClearGrid() then return end
+        InitializeClearWorld()
     end
 
     local targetX, targetY = nil, nil
 
     while true do
-        if Config.ClearDirection == "top" and clearWY >= clearWGridH then break end
+        if Config.ClearDirection == "top" and clearWY >= world.height then break end
         if Config.ClearDirection == "bottom" and clearWY < 0 then break end
 
-        local cell = clearWGrid[clearWX] and clearWGrid[clearWX][clearWY]
+        local cell = GetTile(clearWX, clearWY)
         if cell then
             if (cell.fg ~= 0 or cell.bg ~= 0) and not Config.ClearIgnoreBlocks[cell.fg] then
                 targetX = clearWX
@@ -2018,7 +1958,7 @@ local function ClearWorldStep()
         end
 
         clearWX = clearWX + 1
-        if clearWX >= clearWGridW then
+        if clearWX >= world.width then
             clearWX = 0
             clearWY = Config.ClearDirection == "top" and (clearWY + 1) or (clearWY - 1)
         end
@@ -2037,20 +1977,15 @@ local function ClearWorldStep()
             })
             Sleep(Config.ClearDelay)
         end
-
-        clearWGrid[targetX][targetY].fg = 0
-        clearWGrid[targetX][targetY].bg = 0
-        
         clearWX = targetX + 1
-        if clearWX >= clearWGridW then
+        if clearWX >= world.width then
             clearWX = 0
             clearWY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)
         end
     else
-        Log("`2Auto Clear World finished!`0")
+        Log("`2[Auto Clear World] `0Finished clearing!")
         Config.AutoClearWorld = false
-        clearWX = nil
-        clearWGrid = nil
+        clearWX, clearWY = nil, nil
     end
 end
 
@@ -2059,20 +1994,16 @@ local function ClearWaterStep()
     if not world then return end
 
     if clearWX == nil or clearWY == nil then
-        InitializeClear()
-    end
-
-    if clearWGrid == nil or clearWWorld ~= world.name then
-        if not BuildClearGrid() then return end
+        InitializeClearWorld()
     end
 
     local targetX, targetY = nil, nil
 
     while true do
-        if Config.ClearDirection == "top" and clearWY >= clearWGridH then break end
+        if Config.ClearDirection == "top" and clearWY >= world.height then break end
         if Config.ClearDirection == "bottom" and clearWY < 0 then break end
 
-        local cell = clearWGrid[clearWX] and clearWGrid[clearWX][clearWY]
+        local cell = GetTile(clearWX, clearWY)
         if cell and cell.flags and cell.flags.water then
             targetX = clearWX
             targetY = clearWY
@@ -2080,7 +2011,7 @@ local function ClearWaterStep()
         end
 
         clearWX = clearWX + 1
-        if clearWX >= clearWGridW then
+        if clearWX >= world.width then
             clearWX = 0
             clearWY = Config.ClearDirection == "top" and (clearWY + 1) or (clearWY - 1)
         end
@@ -2099,21 +2030,15 @@ local function ClearWaterStep()
             })
             Sleep(Config.ClearDelay)
         end
-
-        if clearWGrid[targetX] and clearWGrid[targetX][targetY] and clearWGrid[targetX][targetY].flags then
-            clearWGrid[targetX][targetY].flags.water = false
-        end
-        
         clearWX = targetX + 1
-        if clearWX >= clearWGridW then
+        if clearWX >= world.width then
             clearWX = 0
             clearWY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)
         end
     else
-        Log("`2Auto Clear Water finished!`0")
+        Log("`2[Auto Clear Water] `0Finished clearing water!")
         Config.AutoClearWater = false
-        clearWX = nil
-        clearWGrid = nil
+        clearWX, clearWY = nil, nil
     end
 end
 
