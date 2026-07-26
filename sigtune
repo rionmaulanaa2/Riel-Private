@@ -922,10 +922,33 @@ local function ShowUI()
 
         if ImGui.Button("Get Server Info") then
             local client = type(GetClient) == "function" and GetClient() or {}
-            local host = client.host or client.ip or client.server or "Unknown"
+            
+            local dump = {}
+            for k, v in pairs(client) do
+                if type(v) == "string" or type(v) == "number" then
+                    table.insert(dump, tostring(k) .. "=" .. tostring(v))
+                end
+            end
+            
+            local host = client.host or client.ip or client.server or client.address or "Unknown"
             local port = client.port or "Unknown"
             local ping = client.ping or "Unknown"
+            
             LogToConsole("`9[SERVER INFO] `0Host: `2" .. tostring(host) .. " `0Port: `2" .. tostring(port) .. " `0Ping: `2" .. tostring(ping) .. " ms")
+            if #dump > 0 then LogToConsole("`6[DEBUG CLIENT KEYS] `0" .. table.concat(dump, ", ")) end
+            
+            if type(GetServer) == "function" then
+                local srv = GetServer()
+                if type(srv) == "table" then
+                    local sd = {}
+                    for k, v in pairs(srv) do
+                        if type(v) == "string" or type(v) == "number" then table.insert(sd, tostring(k).."="..tostring(v)) end
+                    end
+                    if #sd > 0 then LogToConsole("`6[DEBUG SERVER KEYS] `0" .. table.concat(sd, ", ")) end
+                elseif type(srv) == "string" then
+                    LogToConsole("`6[DEBUG SERVER STRING] `0" .. srv)
+                end
+            end
         end
         ImGui.Separator()
 
