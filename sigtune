@@ -478,26 +478,36 @@ AddHook("OnVariant", "ModDevDetector", function(var)
         end
     end
     
-    if var[0] == "OnDialogRequest" and Config.AutoMagplant and type(var[1]) == "string" then
-        if var[1]:find("MAGPLANT") or var[1]:find("itemsucker_block") or var[1]:find("itemremovedfromsucker") then
-            if var[1]:find("itemsucker_block") then
-                local tx = var[1]:match("embed_data|tilex|(%d+)")
-                local ty = var[1]:match("embed_data|tiley|(%d+)")
-                local itemID = var[1]:match("add_label_with_icon|small|[^|]*|left|(%d+)|")
-                local amount = var[1]:match("The machine contains (%d+)")
-                
+    if var[0] == "OnDialogRequest" and type(var[1]) == "string" then
+        local dlg = var[1]
+        if dlg:find("MAGPLANT") or dlg:find("itemsucker_block") or dlg:find("itemremovedfromsucker") then
+            if dlg:find("itemsucker_block") then
+                local tx     = dlg:match("embed_data|tilex|(%d+)")
+                local ty     = dlg:match("embed_data|tiley|(%d+)")
+                local itemID = dlg:match("add_label_with_icon|small|[^|]*|left|(%d+)|")
+                local amount = dlg:match("The machine contains (%d+)")
+
                 if tx and ty then
                     local ix, iy = tonumber(tx), tonumber(ty)
                     for _, m in ipairs(MagplantsList or {}) do
                         if m.x == ix and m.y == iy then
                             if itemID then m.itemID = tonumber(itemID) end
-                            if amount then m.amount = tonumber(amount) end
+                            if amount then
+                                m.amount = tonumber(amount)
+                            else
+                                m.amount = 0  -- dialog opened but no items
+                            end
                             break
                         end
                     end
                 end
+                -- Signal to ScanMagplantInfo that dialog was received
+                magplantDialogReceived = true
             end
-            return true
+            -- Only block the dialog if AutoMagplant is actively retrieving
+            if Config.AutoMagplant then
+                return true
+            end
         end
     end
     
@@ -935,7 +945,9 @@ end
 
 
 MagplantsList = {}
-local currentMagplantIndex = 1
+local currentMagplantIndex  = 1
+local magplantScanInfoRunning = false   -- true while ScanMagplantInfo thread is running
+local magplantDialogReceived  = false   -- set true by OnDialogRequest when we get the dialog
 
 function ScanMagplants()
     MagplantsList = {}
@@ -947,7 +959,8 @@ function ScanMagplants()
         for y = 0, world.height - 1 do
             local fg = GetTile(x, y).fg
             if fg == 5638 or fg == 5930 then
-                table.insert(MagplantsList, {x = x, y = y, itemID = nil, amount = nil})
+                local kind = (fg == 5930) and "Legendary" or "Normal"
+                table.insert(MagplantsList, {x = x, y = y, itemID = nil, amount = nil, kind = kind})
             end
         end
     end
@@ -955,6 +968,52 @@ function ScanMagplants()
     if #MagplantsList == 0 then
         Config.AutoMagplant = false
     end
+end
+
+-- Deep-scan each magplant: wrench it, wait for dialog, read itemID + amount
+function ScanMagplantInfo()
+    if magplantScanInfoRunning then
+        Log("`4[Magplant Scan] Already scanning! Please wait.`0")
+        return
+    end
+    if #MagplantsList == 0 then
+        ScanMagplants()
+    end
+    if #MagplantsList == 0 then
+        Log("`4[Magplant Scan] No magplants found in world.`0")
+        return
+    end
+    RunThread(function()
+        magplantScanInfoRunning = true
+        Log("`2[Magplant Scan] Starting deep scan of `b" .. #MagplantsList .. "`2 magplants...`0")
+        for i, m in ipairs(MagplantsList) do
+            if not Run or Paused then break end
+            Log("`9[Magplant Scan] Wrenching magplant " .. i .. "/" .. #MagplantsList .. " at (" .. m.x .. "," .. m.y .. ")`0")
+            magplantDialogReceived = false
+            -- Send exact wrench packet: type=3, value=32 (wrench action)
+            SendPacketRaw(false, {
+                type    = 3,
+                value   = 32,
+                px      = m.x,
+                py      = m.y,
+                x       = m.x * 32,
+                y       = m.y * 32,
+                state   = 16
+            })
+            -- Wait up to 2000ms for the dialog to arrive
+            local waited = 0
+            while not magplantDialogReceived and waited < 2000 do
+                Sleep(100)
+                waited = waited + 100
+            end
+            if not magplantDialogReceived then
+                Log("`4[Magplant Scan] No dialog response from magplant at (" .. m.x .. "," .. m.y .. ") — skipping.`0")
+            end
+            Sleep(300)  -- brief pause between magplants
+        end
+        magplantScanInfoRunning = false
+        Log("`2[Magplant Scan] Deep scan complete!`0")
+    end)
 end
 
 local function AutoMagplantStep()
@@ -1109,7 +1168,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.50", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.51", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -1549,20 +1608,47 @@ local function ShowUI()
             if cAM and vAM then
                 ScanMagplants()
             end
-            
+
             local cD, vD = ImGui.InputInt("Delay (ms)", Config.MagplantDelay)
             if cD then Config.MagplantDelay = math.max(100, vD) end
-            
-            if ImGui.Button("Rescan World Manually") then
+
+            -- Buttons row
+            if ImGui.Button("Rescan World") then
                 ScanMagplants()
             end
-            
+            ImGui.SameLine()
+            if magplantScanInfoRunning then
+                ImGui.Text("`9Scanning info...`0")
+            else
+                if ImGui.Button("Scan Item Info") then
+                    ScanMagplantInfo()
+                end
+            end
+
+            ImGui.Separator()
             ImGui.Text("Found " .. #(MagplantsList or {}) .. " Magplants:")
+            ImGui.Separator()
+
             for i, m in ipairs(MagplantsList or {}) do
-                local status = (i == currentMagplantIndex) and "[ACTIVE]" or (i < currentMagplantIndex and "[DONE]" or "[WAITING]")
-                local idStr = m.itemID and tostring(m.itemID) or "?"
-                local amtStr = m.amount and tostring(m.amount) or "?"
-                ImGui.Text(status .. " [" .. m.x .. ", " .. m.y .. "] - Item: " .. idStr .. " - Qty: " .. amtStr)
+                local status
+                if i == currentMagplantIndex and Config.AutoMagplant then
+                    status = "`9[ACTIVE] `0"
+                elseif i < currentMagplantIndex then
+                    status = "`2[DONE]   `0"
+                else
+                    status = "`b[WAIT]   `0"
+                end
+
+                local kindStr = (m.kind == "Legendary") and "`w[LEG]`0" or "`e[MAG]`0"
+                local idStr   = m.itemID  and ("ID:`b" .. tostring(m.itemID) .. "`0") or "ID:`4?`0"
+                local amtStr  = m.amount  and ("Qty:`b" .. tostring(m.amount)  .. "`0") or "Qty:`4?`0"
+                local posStr  = "(" .. m.x .. "," .. m.y .. ")"
+
+                if m.amount and m.amount == 0 then
+                    amtStr = "Qty:`4EMPTY`0"
+                end
+
+                ImGui.Text(status .. kindStr .. " " .. posStr .. "  " .. idStr .. "  " .. amtStr)
             end
         end
 
