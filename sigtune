@@ -30,7 +30,2412 @@ local Config = {
 
     AutoPlace       = false, -- If true, automatically places PlaceItemID across the whole world on blank tiles
     PlaceItemID     = 4584,  -- Item ID to place (e.g. pepper seeds)
-    PlaceDirection  = "top", -- "top" to start from sky downwards, "bottom" to start from bedrock upwards\n    PlaceDelay      = 200,   -- Delay after placing an item (ms)\n    PlaceResupplyMode = 0,   -- 0 = Stop, 1 = Backpack\n\n    AutoCreateFarm   = false,\n    CreateFarmTarget = 3018,\n    CreateFarmDirection = "bottom",\n    CreateFarmDelay  = 200,\n\n    AutoPunchWorld   = false, -- If true, breaks a specific block ID across the whole world\n    PunchWorldTarget = 4584,  -- Item ID of the block to punch\n    PunchWorldHarvestMode = false, -- Teleports player to x=0 of the current row being punched\n\n    PunchDirection   = "top", -- "top" or "bottom"\n    PunchWorldDelay  = 200,   -- Delay between punches (ms)\n\n    TeleportX       = 0,     -- Target X coordinate for instant teleport\n    TeleportY       = 0,     -- Target Y coordinate for instant teleport\n\n    DebugSendPacket      = false,\n    DebugSendPacketRaw   = false,\n    DebugVariant         = false,\n    DebugWebhookURL  = "https://discord.com/api/webhooks/1529551010459029565/Nsz5X3y8ibL0jdWeDWX1jLiTPXfb_yA9FVFLuUTY6ns-ZNdBUmBKhmwQfwe5pIdW4N4n",    -- Your Discord webhook URL\n    DebugRateLimit   = 2000,  -- Min ms between webhook messages\n\n    -- Whitelisted User IDs: players with these UIDs will NOT trigger a pause.\n    -- Add as many as you need. Find a player's UID in the console log when they join.\n    Whitelist = {\n        13162237,\n        1549933,\n    },\n\n    AutoJoin       = false, -- If true, automatically attempts to join JoinWorld\n    JoinWorld      = "",    -- World name to automatically join\n    JoinDelay      = 5000,  -- Delay between join attempts in ms\n    \n    -- Auto Joiner Engine Settings\n    AutoJoinRunning       = false,\n    Join2LetterWorlds     = false,\n    Join3LetterWorlds     = false,\n    Join4LetterWorlds     = false,\n    Start2Letter          = "aa", \n    JoinViralWorlds       = false,\n    JoinPopularWorlds     = false,\n    JoinBuyWorlds         = false,\n    JoinBuyItemWorlds     = false,\n    JoinLiveWOTD          = false,\n    JoinHistoricWOTD      = false,\n    BuyItemStartID        = 0,\n    JoinItemAcronymWorlds = false,\n    JoinPacketDelay       = 1000,\n    JoinTimeoutSeconds    = 10,\n    JoinPlaceItem         = 242,\n    JoinPlaceAndLeave     = true,\n    \n    AutoClearWorld    = false,\n    AutoClearWater    = false,\n    AutoSurgery       = false,\n    AutoSurgeryBuy    = false,\n    SurgeryTotal      = 0,\n    RecordName        = "MyRecord",\n    PlaybackFile      = "MyRecord",\n    ClearDirection    = "top",\n    ClearDelay        = 50,\n    ClearSpongeID     = 822,\n    ClearIgnoreBlocks = {\n        [6] = true,     -- White Door\n        [8] = true,     -- Bedrock\n        [202] = true,\n        [242] = true,   -- Main Door\n        [1796] = true,\n        [4992] = true,\n        [5260] = true,\n        [5638] = true,\n        [6948] = true,\n        [6950] = true,\n        [7188] = true,\n        [10266] = true,\n        [11550] = true\n    },\n}\n\n-- ==========================================================================\n-- WORLD LISTS\n-- ==========================================================================\nlocal historicWOTDWorlds = {\n    "NASA11", "DUNGEONSUCKERS", "ALBUM", "DEVELOPERS", "GROWTOPIAN",\n    "ITEMS", "AIRSHIP", "KITCHEN", "THEVULCANO", "MARIOMUSIC",\n    "HOCKEYRINK", "MUSEUM", "SUMO", "YHLAND", "7DEADLYSINS",\n    "LOVERSLOUNGE", "PYRAMIDRUN", "THEFINALPARKOUR", "GTVILLAGE", "LOCKSTREET",\n    "EPICWORLD", "ARTGALLERY", "CITYOFLIGHT", "MEDIEVALFORT", "SPACESTATION",\n    "UNDERWATERBASE", "MAGICFOREST", "DRAGONLAIR", "JUNGLEPARADISE",\n    "PIXELPALACE", "HAUNTEDCASTLE", "SAKURAGARDEN", "MECHANICA",\n    "ANCIENTRUINS", "LOSTCITY", "NEONSCAPE", "STEAMPUNKLAB",\n    "WINTERWONDER", "SPRINGBLOOM", "SUMMERSOLSTICE", "AUTUMNLEAF",\n    "DESERTMAZE", "UNDERSEA", "CLOUDKINGDOM", "THUNDERSTORM",\n    "VOLCANOPEAK", "GLACIERFALL", "FORESTSPIRIT", "MOONLIGHTCOVE",\n    "SUNSETSEA", "STARGAZER", "COSMICVOID", "NEBULAHAVEN", "CRYSTALPALACE",\n    "STARLIGHTHAVEN", "FANTASYISLE", "DARKCASTLE", "ENCHANTEDFOREST",\n    "CRYSTALCAVE", "MYSTICISLAND", "CELESTIALRISE", "PRISMATICA",\n    "HORIZONRIFT", "LUNARSPIRE", "STELLARGATE", "DREAMWARDEN",\n    "SOLARISVAULT", "DAWNBREAK", "GROWTOPIAART", "MASTERPIECE",\n    "RAYMANVILLAGE", "ATELIER", "ETERNALVALLEY", "SHADOWNEXUS",\n}\n\nlocal viralWorlds = {\n    "LOVE", "INDO", "NOOB", "PRO", "RICH", "DONATE", "TRADE",\n    "SELL", "BUY", "HELP", "SCAM", "FREE", "HACK", "FARM",\n}\n\nlocal popularWorlds = {\n    "START", "SEEDS", "DIRT", "CAVE", "LAVA", "HELL", "HEAVEN",\n    "PARKOUR", "DROP", "GROWTOPIASEED", "GROWTOPIA",\n}\n\nlocal buyWorlds = {\n    "BUYCLOTHES", "BUYFT", "BUYCHAND", "BUYPINBALL", "BUYGEMS",\n    "BUYWL", "BUYDL", "BUYBGL", "BUYRAYMAN", "BUYMAGPLANT",\n    "BUYGACHA", "BUYSEED", "BUYFARM", "BUYDROP", "BUYITEMS",\n}\n\nlocal itemAcronyms = {\n    ["World Lock"]              = {"WL"},\n    ["Diamond Lock"]            = {"DL"},\n    ["Blue Gem Lock"]           = {"BGL"},\n    ["Emerald Lock"]            = {"EL"},\n    ["Amethyst Lock"]           = {"AL"},\n    ["Platinum Lock"]           = {"PL"},\n    ["Golden Lock"]             = {"GL"},\n    ["Chandelier"]              = {"CHAND"},\n    ["Fish Tank"]               = {"FT"},\n    ["Magplant 5000"]           = {"MAG", "MAGPLANT"},\n    ["Magplant 5000 Remote"]    = {"MAGREMOTE", "RMAG"},\n    ["Pinball"]                 = {"PINBALL"},\n    ["Gashapon Machine"]        = {"GACHA", "GACH"},\n    ["Growtoken"]               = {"GT"},\n    ["Rayman"]                  = {"RAY"},\n    ["Surgery"]                 = {"SURG"},\n    ["Super Broadcast"]         = {"SB"},\n    ["Super Duper Broadcast"]   = {"SDB"},\n    ["Super Fireworks"]         = {"SFW"},\n    ["Small Seed Pack"]         = {"SSP"},\n    ["Legendary Wizard"]        = {"LW"},\n    ["Legendary"]               = {"LEG"},\n    ["Wizard Pants"]            = {"WP"},\n    ["Sungate"]                 = {"SG"},\n    ["Startopia"]               = {"ST"},\n    ["Auto Farm"]               = {"AF"},\n    ["Angel Wings"]             = {"AW"},\n    ["Devil Wings"]             = {"DW"},\n    ["Golden Wings"]            = {"GW"},\n    ["Dragon Wings"]            = {"DWING"},\n    ["Harvester of Sorrow"]     = {"HOS"},\n    ["Celestial Wings"]         = {"CW"},\n    ["Fairy Wings"]             = {"FW"},\n    ["Bat Wings"]               = {"BW"},\n    ["Phoenix Wings"]           = {"PW"},\n    ["Dark Wings"]              = {"DKW"},\n    ["Crystal Wings"]           = {"CRW"},\n    ["Steampunk Wings"]         = {"SPW"},\n    ["Neon Wings"]              = {"NW"},\n    ["Mummy"]                   = {"MUM"},\n    ["Fireworks"]               = {"FW"},\n    ["Geiger Charger"]          = {"GC"},\n    ["Geiger"]                  = {"GEI"},\n    ["Spotlight"]               = {"SL"},\n    ["Surg Kit"]                = {"SURGKIT"},\n    ["Laser Grid"]              = {"LG", "LASERGRID"},\n    ["Laser"]                   = {"LASER"},\n    ["Ice Cream Machine"]       = {"ICM"},\n    ["Vending Machine"]         = {"VM"},\n    ["Transmitter"]             = {"TX"},\n    ["Farmable"]                = {"FARM"},\n    ["Golden Booster"]          = {"GB"},\n    ["Fossil"]                  = {"FOSS"},\n    ["Brain"]                   = {"BRAIN"},\n    ["Dirt"]                    = {"DIRT"},\n    ["Lava"]                    = {"LAVA"},\n    ["Rock"]                    = {"ROCK"},\n    ["Bedrock"]                 = {"BED"},\n    ["Chemical G"]              = {"CG"},\n    ["Chemical H"]              = {"CH"},\n    ["Chemical K"]              = {"CK"},\n    ["Chemical R"]              = {"CR"},\n    ["Chemical S"]              = {"CS"},\n    ["Chemical X"]              = {"CX"},\n}\n\n-- State\nlocal Run          = true\nlocal Paused       = false\nlocal lastPlayers  = {}  -- Track previous player list (netid -> name)\nlocal startX, startY    -- Remember standing position\n\nlocal modDetected  = false   -- True if a mod/dev was detected invisibly\nlocal whitelistInput = ""   -- UI text input buffer for adding whitelist UIDs\nlocal manualGrowID = ""     -- UI text input buffer for manual account creation\nlocal waitingForBackpackItem = nil -- State for backpack resupply\n\n-- ============================================================\n-- UTILITIES\n-- ============================================================\n\nlocal function Log(msg)\n    LogToConsole("`0[`2SafePunch`0] `9" .. tostring(msg))\nend\n\n-- ============================================================\n-- DISCORD WEBHOOK\n-- ============================================================\n-- MakeRequest yields internally. It CANNOT be called from a hook\n-- (C-callback boundary). Solution: push jobs to a queue and drain\n-- from a dedicated RunThread where coroutine yields are legal.\n\nlocal webhookQueue = {} -- { {url, data}, ... }\n\n-- Helper to safely get time without crashing if OS lib is missing in sandbox\nlocal function GetTimeStr()\n    local t = ""\n    pcall(function()\n        if os and os.date then\n            t = " " .. os.date("[%H:%M:%S]")\n        end\n    end)\n    return t\nend\n\nlocal function SendToWebhook(content, ignoreConfig)\n    -- Step 1: check enabled\n    if not ignoreConfig and not (Config.DebugSendPacket or Config.DebugSendPacketRaw or Config.DebugVariant) then\n        return\n    end\n    -- Step 2: check URL\n    if Config.DebugWebhookURL == "" then\n        Log("`4[WH] No webhook URL set.")\n        return\n    end\n    -- Step 3: check MakeRequest exists\n    if not MakeRequest then\n        Log("`4[WH] MakeRequest is nil — not available in this Bothax build.")\n        return\n    end\n    -- Removed cooldown block here so we don't drop fast logs!\n\n    -- Safe JSON string escaper: escapes backslash, quotes, and preserves newlines as \n for Discord\n    local function esc(s)\n        s = tostring(s)\n        s = s:gsub("\\", "\\\\")    -- backslash first\n        s = s:gsub('"',  '\\"')     -- double quotes\n        s = s:gsub("\r", "")        -- strip carriage return\n        s = s:gsub("\n", "\n")     -- encode newlines as literal \n for JSON\n        s = s:gsub("\t", " ")       -- replace tabs\n        s = s:gsub("[%z\1-\9\11\12\14-\31]", "") -- strip remaining control chars except \n\n        return s\n    end\n\n    -- Format the message inside a Discord codeblock\n    local msg = "```text\n" .. content .. "\n```"\n    if #msg > 1990 then msg = msg:sub(1, 1990) .. "\n```" end\n\n    local jsonData = '{"content":"' .. esc(msg) .. '"}'\n\n    Log("`e[WH] Queuing webhook job...`0")\n    table.insert(webhookQueue, { url = Config.DebugWebhookURL, body = jsonData })\nend\n\n-- Drain thread — MakeRequest is safe here (own coroutine, can yield freely)\nRunThread(function()\n    Log("`2[WH] Webhook drain thread started.")\n    while true do\n        if #webhookQueue > 0 then\n            local job = table.remove(webhookQueue, 1)\n            Log("`e[WH] Sending...")\n            local headers = {\n                ["Content-Type"] = "application/json",\n                ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"\n            }\n            local res = MakeRequest(job.url, "POST", headers, job.body)\n            if res then\n                -- Bothax may use .status, .statusCode or .code\n                local code = res.status or res.statusCode or res.code or 0\n                if code >= 200 and code < 300 then\n                    Log("`2[WH] OK (HTTP " .. tostring(code) .. ")")\n                elseif code == 0 then\n                    -- status 0 = Bothax HTTP client got no parseable response.\n                    -- Retry without explicit headers (some builds need this).\n                    Log("`e[WH] status 0 — retrying without headers...")\n                    local res2 = MakeRequest(job.url, "POST", job.body)\n                    local code2 = (res2 and (res2.status or res2.statusCode or res2.code)) or 0\n                    if code2 >= 200 and code2 < 300 then\n                        Log("`2[WH] OK on retry (HTTP " .. tostring(code2) .. ")")\n                    else\n                        Log("`4[WH] Retry failed (HTTP " .. tostring(code2) .. ") — verify webhook URL or internet")\n                    end\n                else\n                    Log("`4[WH] HTTP " .. tostring(code) .. " — check URL / content")\n                end\n            else\n                Log("`4[WH] MakeRequest returned nil — no network response")\n            end\n            \n            -- Sleep after sending to respect Discord's rate limits\n            Sleep(Config.DebugRateLimit)\n        else\n            Sleep(50)\n        end\n    end\nend)\n\n-- ============================================================\n-- PACKET DEBUG HOOKS\n-- ============================================================\n\nAddHook("onsendpacket", "DebugPacketLogger", function(type, data)\n    if not Config.DebugSendPacket then return false end\n\n    if type == 2 or type == 3 then\n        local out = "SendPacket" .. GetTimeStr() .. "\n"\n        out = out .. "type " .. type .. ": " .. tostring(data)\n        \n        Log("`bSendPacket`0 (type " .. type .. ") logged to WH")\n        SendToWebhook(out)\n    end\n    return false\nend)\n\n-- onsendpacketraw passes a single table argument containing the packet properties\nAddHook("onsendpacketraw", "DebugPacketRawLogger", function(packet)\n    if not Config.DebugSendPacketRaw then return false end\n\n    if type(packet) == "table" then\n        local out = "SendPacketRaw" .. GetTimeStr() .. "\n"\n        out = out .. "type: " .. tostring(packet.type or 0) .. "\n"\n        out = out .. "dropped: " .. tostring(packet.dropped or 0) .. "\n"\n        out = out .. "padding1: " .. tostring(packet.padding1 or 0) .. "\n"\n        out = out .. "padding2: " .. tostring(packet.padding2 or 0) .. "\n"\n        out = out .. "netid: " .. tostring(packet.netid or 0) .. "\n"\n        out = out .. "snetid: " .. tostring(packet.snetid or 0) .. "\n"\n        out = out .. "state: " .. tostring(packet.state or 0) .. "\n"\n        out = out .. "padding4: " .. string.format("%.3f", tonumber(packet.padding4) or 0.0) .. "\n"\n        out = out .. "value: " .. tostring(packet.value or 0) .. "\n"\n        out = out .. "x, y: " .. string.format("%.3f", tonumber(packet.x) or 0.0) .. " " .. string.format("%.3f", tonumber(packet.y) or 0.0) .. "\n"\n        out = out .. "xspeed, yspeed: " .. string.format("%.3f", tonumber(packet.xspeed) or 0.0) .. " " .. string.format("%.3f", tonumber(packet.yspeed) or 0.0) .. "\n"\n        out = out .. "padding5: " .. tostring(packet.padding5 or 0) .. "\n"\n        out = out .. "tilex, tiley: " .. tostring(packet.px or 0) .. " " .. tostring(packet.py or 0) .. "\n"\n        out = out .. "extDataSize: " .. tostring(packet.extDataSize or 0)\n\n        Log("`eSendPacketRaw`0 logged to WH")\n        SendToWebhook(out)\n    else\n        Log("`eSendPacketRaw`0: unknown format (" .. type(packet) .. ")")\n    end\n    return false\nend)\n\nAddHook("onvariant", "DebugVariantLogger", function(var)\n    if not Config.DebugVariant then return false end\n\n    if type(var) == "table" then\n        local out = "VariantList" .. GetTimeStr() .. "\n"\n        for k, v in pairs(var) do\n            out = out .. "params " .. tostring(k) .. ": " .. tostring(v) .. "\n"\n        end\n        Log("`dVariantList`0 logged to WH")\n        SendToWebhook(out)\n    end\n    -- We deliberately return false here so we don't accidentally block packets\n    -- (ModDevDetector has its own hook and returns false as well)\n    return false\nend)\n\n-- Returns true if a userid is in the whitelist or is the local player\nlocal function ConfigCheckbox(label, key)\n    local c, v = ImGui.Checkbox(label, Config[key])\n    if c then\n        Config[key] = v\n        if Paused then PreviousConfig[key] = v end\n    end\n    return c, v\nend\n\nlocal function IsWhitelisted(userid)\n    local local_ = GetLocal()\n    if local_ and local_.userid and tonumber(local_.userid) == tonumber(userid) then return true end\n    for _, uid in ipairs(Config.Whitelist) do\n        if tonumber(uid) == tonumber(userid) then return true end\n    end\n    return false\nend\n\n\n-- ============================================================\n-- GHOST PLAYER PATCH (Fixes GetPlayerList caching bug)\n-- ============================================================\n-- forceLeft: netid -> true, means this player has been confirmed gone\n-- We reset it each time WE enter a new world (OnSendPacket join_request)\nlocal forceLeft = {}\nlocal lastPlayersRef = {} -- for name resolving on leave\n\n-- Bug fix: Use correct PascalCase hook names per Bothax API docs\n-- 'OnSendPacket'  fires when WE send a packet (client -> server)\n-- 'OnProcessTankUpdate' fires when server sends us a tank update packet\n\n-- Reset forceLeft when we ourselves join a new world\nAddHook("OnSendPacket", "GhostPlayerCleanupSend", function(type, packet)\n    if type == 3 and packet:find("action|join_request") then\n        forceLeft = {}\n        lastPlayersRef = {}\n        Log("`9[GhostPatch] World change detected - clearing player cache.`0")\n    end\n    return false\nend)\n\n-- Detect when server sends OnRemove to evict a player's avatar\nAddHook("OnVariant", "GhostPlayerCleanupVariant", function(var)\n    -- OnRemove is sent by the server when a player's entity is removed\n    -- var[1] is the netid as an integer in Bothax\n    if var[0] == "OnRemove" then\n        local netid = tonumber(var[1])\n        if netid then\n            forceLeft[netid] = true\n            Log("`9[GhostPatch] Forced evict netid " .. tostring(netid) .. "`0")\n        end\n    end\n    \n    -- Also catch console message "PlayerName left, X others here"\n    if var[0] == "OnConsoleMessage" and type(var[1]) == "string" and var[1]:find("left,") then\n        local nameStr = var[1]:match("`w([^`]+) left,")\n        if nameStr then\n            for netid, info in pairs(lastPlayersRef) do\n                if info.name == nameStr then\n                    forceLeft[netid] = true\n                    Log("`9[GhostPatch] Forced evict by name: " .. nameStr .. "`0")\n                end\n            end\n        end\n    end\n    return false\nend)\n\n-- ============================================================\n-- MOD / DEVELOPER DETECTION (invisible entry)\n-- ============================================================\n-- Developers and Moderators can enter invisible (not in GetPlayerList).\n-- They trigger an OnSpawn variant where their properties are sent.\n\nAddHook("onvariant", "ModDevDetector", function(var)\n    if var[0] == "OnSpawn" then\n        local spawnData = tostring(var[1] or "")\n        -- Check for Developer/Moderator type flags or invisible states\n        local typeVal = tonumber(spawnData:match("type|(%d+)"))\n        local isMod = typeVal and ((typeVal & 4) ~= 0)\n        local isDev = typeVal and ((typeVal & 8) ~= 0)\n        \n        -- Also check for invis/mstate flags that might indicate staff\n        local isInvis = spawnData:find("invis|1") or spawnData:find("mstate|1")\n        \n        local name = spawnData:match("name|([^\n]+)") or "Unknown"\n        local userid = tonumber(spawnData:match("userID|(%d+)"))\n        \n        -- We ignore our own spawn packet (Growtopia sends local|1 for the local player)\n        if spawnData:find("\nlocal|1\n") or spawnData:find("local|1") then\n            return false\n        end\n        \n        -- Fallback local player check using userid\n        local local_ = GetLocal()\n        if local_ and local_.userid and userid == local_.userid then\n            return false\n        end\n        \n        -- Also ignore if they are in our whitelist (so you can whitelist your mod friends)\n        if userid and IsWhitelisted(userid) then\n            return false\n        end\n\n        if isMod or isDev or isInvis then\n            local role = isDev and "`4[DEVELOPER]" or (isMod and "`6[MODERATOR]" or "`b[INVISIBLE STAFF]")\n            Log("`4ALL FEATURES PAUSED! " .. role .. "`0 detected entering world: `e" .. name)\n            modDetected = true\n            Paused = true\n            Run = false\n        end\n    end\n    \n    if var[0] == "OnDialogRequest" and Config.AutoMagplant and type(var[1]) == "string" then\n        if var[1]:find("MAGPLANT") or var[1]:find("itemsucker_block") or var[1]:find("itemremovedfromsucker") then\n            if var[1]:find("itemsucker_block") then\n                local tx = var[1]:match("embed_data|tilex|(%d+)")\n                local ty = var[1]:match("embed_data|tiley|(%d+)")\n                local itemID = var[1]:match("add_label_with_icon|small|[^|]*|left|(%d+)|")\n                local amount = var[1]:match("The machine contains (%d+)")\n                \n                if tx and ty then\n                    local ix, iy = tonumber(tx), tonumber(ty)\n                    for _, m in ipairs(MagplantsList or {}) do\n                        if m.x == ix and m.y == iy then\n                            if itemID then m.itemID = tonumber(itemID) end\n                            if amount then m.amount = tonumber(amount) end\n                            break\n                        end\n                    end\n                end\n            end\n            return true\n        end\n    end\n    \n    -- Handle Backpack Resupply UI parsing\n    if var[0] == "OnDialogRequest" and type(var[1]) == "string" and var[1]:find("backpack_menu") then\n        if waitingForBackpackItem then\n            local dialog = var[1]\n            local itemIDStr = tostring(waitingForBackpackItem)\n            -- Match: add_button_with_icon|<SLOT>|<Name>|frame|<ITEM_ID>|<AMOUNT>|\n            local pattern = "add_button_with_icon|(%d+)|[^|]*|frame|" .. itemIDStr .. "|"\n            local slot = dialog:match(pattern)\n            \n            if slot then\n                SendPacket(2, "action|dialog_return\ndialog_name|backpack_menu\nbuttonClicked|" .. slot)\n                Log("`2Resupplied item `b" .. itemIDStr .. "`2 from backpack slot `b" .. slot .. "`0")\n            else\n                Log("`4Item `b" .. itemIDStr .. "`4 not found in backpack! Pausing AutoPlace.`0")\n                Config.AutoPlace = false\n            end\n            \n            waitingForBackpackItem = nil\n            return true -- Block the dialog from showing on screen\n        elseif (Config.AutoBackpack or Config.AutoMagplant) and Run and not Paused then\n            -- Block the dialog from popping up randomly when the bot is auto-stashing items\n            return true\n        end\n    end\n    \n    return false\nend)\n\n-- Get a table of current players (excluding local player), keyed by netid\nlocal function GetOtherPlayers()\n    local players = {}\n    local local_ = GetLocal()\n    if not local_ then return players end\n\n    local list = GetPlayerList()\n    if not list then return players end\n\n    for _, p in pairs(list) do\n        if p then\n            local isLocal = false\n            if p.netid == local_.netid then isLocal = true end\n            if p.userid and local_.userid and tonumber(p.userid) == tonumber(local_.userid) then isLocal = true end\n            if p.name and local_.name and p.name == local_.name then isLocal = true end\n            if not isLocal and not forceLeft[p.netid] then\n                players[p.netid] = { name = p.name, userid = p.userid }\n                lastPlayersRef[p.netid] = { name = p.name, userid = p.userid }\n            end\n\n        end\n    end\n    return players\nend\n\n-- Punch the target tile once\nlocal punchSavedLocX = nil\nlocal punchSavedLocY = nil\n\nlocal function PunchTile()\n    if Config.AutoPunchAntiMove then\n        local local_ = GetLocal()\n        if local_ then\n            if punchSavedLocX == nil then\n                punchSavedLocX = local_.pos.x\n                punchSavedLocY = local_.pos.y\n            else\n                local dx = math.abs(local_.pos.x - punchSavedLocX)\n                local dy = math.abs(local_.pos.y - punchSavedLocY)\n                if dx > 1 or dy > 1 then\n                    -- Send state packet to correct position\n                    SendPacketRaw(false, {\n                        type = 0,\n                        x = punchSavedLocX,\n                        y = punchSavedLocY,\n                        px = 0,\n                        py = 0\n                    })\n                    -- Also update local position if possible? Actually just sending the packet is enough to prevent moving visually to others and server.\n                end\n            end\n        end\n    else\n        punchSavedLocX = nil\n        punchSavedLocY = nil\n    end\n\n    -- If auto punch was turned off, clear location elsewhere. Wait, if we are in PunchTile, AutoPunch is true.\n\n    SendPacketRaw(false, {\n        type  = 3,\n        value = Config.ItemID,\n        px    = Config.TileX,\n        py    = Config.TileY,\n        x     = Config.TileX * 32,\n        y     = Config.TileY * 32,\n    })\nend\n\n-- Helper function to check inventory count of an item\nlocal function GetItemCount(id)\n    local inv = GetInventory()\n    if not inv then return 0 end\n    for _, itm in pairs(inv) do\n        if itm.id == id then\n            return itm.amount\n        end\n    end\n    return 0\nend\n\n-- Check inventory and stash to backpack if needed\nlocal function CheckBackpack()\n    if not Config.AutoBackpack then return end\n    \n    for _, id in ipairs(Config.BackpackList) do\n        if GetItemCount(id) >= Config.AutoBackpackLimit then\n            Log("Inventory full! Stashing ID `b" .. tostring(id) .. "`0 to backpack...")\n            SendPacket(2, "action|dialog_return\ndialog_name|backpack_menu\nitemid|" .. tostring(id))\n            Sleep(500) -- Delay to prevent packet spam\n        end\n    end\nend\n\n-- Helper function to check if item is in take list\nlocal function IsInTakeList(id)\n    for _, listId in ipairs(Config.TakeList) do\n        if listId == id then return true end\n    end\n    return false\nend\n\n-- Helper function to calculate distance\nlocal function GetDistance(x1, y1, x2, y2)\n    return math.sqrt((x2 - x1)^2 + (y2 - y1)^2)\nend\n\n-- Collect floating items and return to start position\nlocal function CollectItems()\n    local objs = GetObjectList()\n    if not objs then return end\n\n    local validObjs = {}\n    local localPos = GetLocal().pos\n\n    for _, obj in pairs(objs) do\n        local shouldTake = not Config.UseTakeList\n        if Config.UseTakeList and IsInTakeList(obj.id) then\n            shouldTake = true\n        end\n        if shouldTake then\n            table.insert(validObjs, obj)\n        end\n    end\n\n    -- Sort by distance to player (closest first)\n    table.sort(validObjs, function(a, b)\n        return GetDistance(localPos.x, localPos.y, a.pos.x, a.pos.y) < GetDistance(localPos.x, localPos.y, b.pos.x, b.pos.y)\n    end)\n\n    local moved = false\n    for _, obj in ipairs(validObjs) do\n        -- Abort immediately if a stranger enters while we are collecting\n        if Paused then break end\n\n        local objX = math.floor(obj.pos.x / 32)\n        local objY = math.floor(obj.pos.y / 32)\n        \n        -- Only move if it's not on our exact current tile\n        local currPos = GetLocal().pos\n        local currX = math.floor(currPos.x / 32)\n        local currY = math.floor(currPos.y / 32)\n        \n        if currX ~= objX or currY ~= objY then\n            if Config.TeleportToItems then\n                -- 0ms delay pathing (extremely fast walking, acts like teleport to server)\n                FindPath(objX, objY, 0)\n                Sleep(50)\n            else\n                FindPath(objX, objY, 100)\n                Sleep(200)\n            end\n            moved = true\n        end\n\n        -- After picking up each item, check if backpack needs stashing\n        if Config.AutoBackpack then\n            CheckBackpack()\n        end\n    end\n\n    if moved and startX and startY then\n        -- Return to original position\n        if Config.TeleportToItems then\n            FindPath(startX, startY, 0)\n            Sleep(50)\n        else\n            FindPath(startX, startY, 100)\n            Sleep(300)\n        end\n    end\nend\n\n-- ============================================================\n-- AUTO PLACE LOGIC\n-- ============================================================\nlocal placeX, placeY = nil, nil\nlocal placeGrid = nil        -- cached tile grid\nlocal placeGridWorld = nil   -- world name when grid was built\nlocal placeGridW, placeGridH = 0, 0\n\n\nlocal function InitializePlace()\n    local world = GetWorld()\n    if not world then return end\n    if Config.PlaceDirection == "top" then\n        placeY = 0\n    else\n        placeY = world.height - 1\n    end\n    placeX = 0\n    -- Force grid rebuild on start\n    placeGrid = nil\n    placeGridWorld = nil\nend\n\n\nlocal farmWX, farmWY = nil, nil\n\nlocal function InitializeCreateFarm()\n    local world = GetWorld()\n    if not world then return end\n    if Config.CreateFarmDirection == "top" then\n        farmWY = 0\n    else\n        farmWY = world.height - 1\n    end\n    farmWX = 0\nend\n\nlocal function AutoCreateFarmStep()\n    local world = GetWorld()\n    if not world then return end\n\n    if farmWX == nil or farmWY == nil then\n        InitializeCreateFarm()\n    end\n\n    local targetX, targetY = nil, nil\n\n    while true do\n        if Config.CreateFarmDirection == "top" and farmWY >= world.height then break end\n        if Config.CreateFarmDirection == "bottom" and farmWY < 0 then break end\n\n        -- Skip logic based on direction (alternating rows)\n        local isRowValid = false\n        if Config.CreateFarmDirection == "top" then\n            isRowValid = (farmWY % 2 == 1)\n        else\n            isRowValid = ((world.height - 1 - farmWY) % 2 == 1)\n        end\n\n        if isRowValid then\n            -- Skip if placing on local player pos\n            local local_ = GetLocal()\n            local pX = local_ and math.floor(local_.pos.x / 32)\n            local pY = local_ and math.floor(local_.pos.y / 32)\n            local isPlayerPos = (pX == farmWX and pY == farmWY)\n\n            if not isPlayerPos then\n                local tile = GetTile(farmWX, farmWY)\n                if tile and tile.fg == 0 then\n                    targetX = farmWX\n                    targetY = farmWY\n                    break\n                end\n            end\n        end\n\n        farmWX = farmWX + 1\n        if farmWX >= world.width then\n            farmWX = 0\n            farmWY = Config.CreateFarmDirection == "top" and (farmWY + 1) or (farmWY - 1)\n        end\n    end\n\n    if targetX and targetY then\n        -- Check inventory\n        if GetItemCount(Config.CreateFarmTarget) == 0 then\n            if Config.PlaceResupplyMode == 1 then\n                Log("`eOut of items! Attempting to resupply from backpack...`0")\n                if TryResupplyFromBackpack(Config.CreateFarmTarget) then\n                    return -- Wait for backpack UI to process\n                else\n                    Log("`4Failed to resupply! Out of items in backpack too. Stopping.`0")\n                    Config.AutoCreateFarm = false\n                    return\n                end\n            else\n                Log("`4Out of items! Stopping Auto Create Farm.`0")\n                Config.AutoCreateFarm = false\n                return\n            end\n        end\n\n        while GetTile(targetX, targetY).fg == 0 do\n            if not Run or Paused or not Config.AutoCreateFarm then return end\n            SendPacketRaw(false, {\n                type  = 3,\n                value = Config.CreateFarmTarget,\n                px    = targetX,\n                py    = targetY,\n                x     = targetX * 32,\n                y     = targetY * 32\n            })\n            Sleep(Config.CreateFarmDelay)\n        end\n\n        farmWX = targetX + 1\n        if farmWX >= world.width then\n            farmWX = 0\n            farmWY = Config.CreateFarmDirection == "top" and (targetY + 1) or (targetY - 1)\n        end\n    else\n        Log("`2[Auto Create Farm] `0Finished placing!")\n        Config.AutoCreateFarm = false\n    end\nend\n\nlocal function AutoPlaceStep()\n    local world = GetWorld()\n    if not world then return end\n\n    if placeX == nil or placeY == nil then\n        InitializePlace()\n    end\n\n    local targetX, targetY = nil, nil\n\n    while true do\n        if Config.PlaceDirection == "top" and placeY >= world.height then break end\n        if Config.PlaceDirection == "bottom" and placeY < 0 then break end\n\n        -- Skip if placing on local player pos\n        local local_ = GetLocal()\n        local pX = local_ and math.floor(local_.pos.x / 32)\n        local pY = local_ and math.floor(local_.pos.y / 32)\n        local isPlayerPos = (pX == placeX and pY == placeY)\n\n        if not isPlayerPos then\n            local tile = GetTile(placeX, placeY)\n            if tile and tile.fg == 0 then\n                targetX = placeX\n                targetY = placeY\n                break\n            end\n        end\n\n        placeX = placeX + 1\n        if placeX >= world.width then\n            placeX = 0\n            placeY = Config.PlaceDirection == "top" and (placeY + 1) or (placeY - 1)\n        end\n    end\n\n    if targetX and targetY then\n        -- Check inventory\n        if GetItemCount(Config.PlaceItemID) == 0 then\n            if Config.PlaceResupplyMode == 1 then\n                Log("`eOut of items! Attempting to resupply from backpack...`0")\n                if TryResupplyFromBackpack() then\n                    return -- Sleep until next loop\n                else\n                    Log("`4Failed to resupply! Out of items in backpack too. Stopping.`0")\n                    Config.AutoPlace = false\n                    return\n                end\n            else\n                Log("`4[Auto Place] `0Out of items! Stopping.")\n                Config.AutoPlace = false\n                return\n            end\n        end\n\n        while GetTile(targetX, targetY).fg == 0 do\n            if not Run or Paused or not Config.AutoPlace then return end\n            SendPacketRaw(false, {\n                type  = 3,\n                value = Config.PlaceItemID,\n                px    = targetX,\n                py    = targetY,\n                x     = targetX * 32,\n                y     = targetY * 32\n            })\n            Sleep(Config.PlaceDelay)\n        end\n        placeX = targetX + 1\n        if placeX >= world.width then\n            placeX = 0\n            placeY = Config.PlaceDirection == "top" and (targetY + 1) or (targetY - 1)\n        end\n    else\n        Log("`2[Auto Place] `0Finished placing!")\n        Config.AutoPlace = false\n        placeX, placeY = nil, nil\n    end\nend\n\n-- ============================================================\n-- AUTO PUNCH WORLD LOGIC\n-- ============================================================\nlocal punchWX, punchWY = nil, nil\nlocal lastHarvestY = nil\nlocal punchGrid = nil\n\nlocal punchGridWorld = nil\nlocal punchGridW, punchGridH = 0, 0\n\n\nlocal function InitializePunchWorld()\n    local world = GetWorld()\n    if not world then return end\n    if Config.PunchDirection == "top" then\n        punchWY = 0\n    else\n        punchWY = world.height - 1\n    end\n    lastHarvestY = nil\n    punchWX = 0\n\n    punchGrid = nil\n    punchGridWorld = nil\nend\n\n\nMagplantsList = {}\nlocal currentMagplantIndex = 1\n\nfunction ScanMagplants()\n    MagplantsList = {}\n    currentMagplantIndex = 1\n    local world = GetWorld()\n    if not world then return end\n    \n    for x = 0, world.width - 1 do\n        for y = 0, world.height - 1 do\n            local fg = GetTile(x, y).fg\n            if fg == 5638 or fg == 5930 then\n                table.insert(MagplantsList, {x = x, y = y, itemID = nil, amount = nil})\n            end\n        end\n    end\n    Log("`2[Auto Magplant] Scanned and found `b" .. #MagplantsList .. "`2 magplants in world.`0")\n    if #MagplantsList == 0 then\n        Config.AutoMagplant = false\n    end\nend\n\nlocal function AutoMagplantStep()\n    if not Config.AutoMagplant then return end\n    if currentMagplantIndex > #MagplantsList then\n        Log("`2[Auto Magplant] All magplants processed! Stopping.`0")\n        Config.AutoMagplant = false\n        return\n    end\n    \n    local m = MagplantsList[currentMagplantIndex]\n    \n    -- Wrench magplant to open dialog (this updates itemID and amount asynchronously via OnVariant)\n    SendPacketRaw(false, {type = 3, value = 32, px = m.x, py = m.y, x = m.x * 32, y = m.y * 32})\n    Sleep(Config.MagplantDelay)\n    \n    if not Run or Paused or not Config.AutoMagplant then return end\n    \n    -- If amount is 0 (or was updated to 0), skip to next\n    if m.amount and m.amount == 0 then\n        Log("`4[Auto Magplant] Magplant at " .. m.x .. "," .. m.y .. " is empty! Moving to next.`0")\n        currentMagplantIndex = currentMagplantIndex + 1\n        return\n    end\n    \n    -- Attempt retrieve\n    SendPacket(2, "action|dialog_return\ndialog_name|itemsucker_block\ntilex|" .. m.x .. "|\ntiley|" .. m.y .. "|\nbuttonClicked|retrieveitem\n\nchk_enablesucking|1\n")\n    Sleep(Config.MagplantDelay)\n    \n    if not Run or Paused or not Config.AutoMagplant then return end\n    \n    SendPacket(2, "action|dialog_return\ndialog_name|itemremovedfromsucker\ntilex|" .. m.x .. "|\ntiley|" .. m.y .. "|\nitemtoremove|250\n")\n    Sleep(Config.MagplantDelay)\n    \n    -- Stash to backpack if we know the item ID\n    if m.itemID then\n        SendPacket(2, "action|dialog_return\ndialog_name|backpack_menu\nitemid|" .. tostring(m.itemID))\n        Sleep(Config.MagplantDelay)\n    end\nend\n\nlocal function AutoPunchWorldStep()\n    local world = GetWorld()\n    if not world then return end\n\n    if punchWX == nil or punchWY == nil then\n        InitializePunchWorld()\n    end\n\n    local targetX, targetY = nil, nil\n\n    while true do\n        if Config.PunchDirection == "top" and punchWY >= world.height then break end\n        if Config.PunchDirection == "bottom" and punchWY < 0 then break end\n\n        local realTile = GetTile(punchWX, punchWY)\n        if realTile and realTile.fg == Config.PunchWorldTarget then\n            targetX = punchWX\n            targetY = punchWY\n            break\n        end\n\n        punchWX = punchWX + 1\n        if punchWX >= world.width then\n            punchWX = 0\n            punchWY = Config.PunchDirection == "top" and (punchWY + 1) or (punchWY - 1)\n        end\n    end\n\n    if targetX and targetY then\n        if Config.PunchWorldHarvestMode and lastHarvestY ~= targetY then\n            lastHarvestY = targetY\n            SendPacketRaw(false, {\n                type = 0,\n                x = 0,\n                y = targetY * 32,\n                px = 0,\n                py = 0\n            })\n            Log("`2[Harvest Mode] Teleported to start of row Y: " .. targetY .. "`0")\n            Sleep(200)\n        end\n        -- Match exactly the method from clearworldandwaterputlgrid.lua but without retries\n        while GetTile(targetX, targetY).fg == Config.PunchWorldTarget do\n            if not Run or Paused or not Config.AutoPunchWorld then return end\n            SendPacketRaw(false, {\n                type  = 3,\n                value = 18,\n                px    = targetX,\n                py    = targetY,\n                x     = targetX * 32,\n                y     = targetY * 32\n            })\n            Sleep(Config.PunchWorldDelay)\n        end\n        -- UPDATE NEXT TARGET TO PREVENT RESCANNING SAME BLOCK\n        punchWX = targetX + 1\n        if punchWX >= world.width then\n            punchWX = 0\n            punchWY = Config.PunchDirection == "top" and (targetY + 1) or (targetY - 1)\n        end\n    else\n        Log("`2[Auto Punch World] `0Finished punching!")\n        Config.AutoPunchWorld = false\n        punchWX, punchWY = nil, nil\n    end\nend\n\n-- ============================================================\n-- IMGUI UI\n-- ============================================================\nlocal function CreateRandomAccount()\n    local letters = "abcdefghijklmnopqrstuvwxyz"\n    local name = ""\n    for i = 1, 3 do\n        local r = math.random(1, #letters)\n        name = name .. letters:sub(r, r)\n    end\n    name = name .. tostring(math.random(10, 99))\n    \n    local password = name\n    local email = name .. "@gmail.com"\n    \n    local packet = "action|dialog_return\ndialog_name|growid_apply\nman|1\nwoman|0\n"\n    packet = packet .. "logon|" .. name .. "\n"\n    packet = packet .. "password|" .. password .. "\n"\n    packet = packet .. "password_verify|" .. password .. "\n"\n    packet = packet .. "email|" .. email .. "\n"\n    packet = packet .. "affcode|"\n    \n    SendPacket(2, packet)\n    Log("`2Auto Created Account! Name: `0" .. name)\n    \n    local whLog = "```yaml\n"\n    whLog = whLog .. "New Account Created:\n"\n    whLog = whLog .. "GrowID: " .. name .. "\n"\n    whLog = whLog .. "Password: " .. password .. "\n"\n    whLog = whLog .. "Email: " .. email .. "\n"\n    whLog = whLog .. "```"\n    \n    SendToWebhook(whLog, true)\nend\n\nlocal guiOpen = true\n\nlocal function ShowUI()\n    if not ImGui then return end\n    if not guiOpen then return end\n\n    local world  = GetWorld()\n    local local_ = GetLocal()\n\n    -- Match sb imgui.lua pattern exactly:\n    -- ImGui.End() must be INSIDE the if block\n    if guiOpen and ImGui.Begin("SafePunch v1.40", guiOpen) then\n\n        -- Status bar\n        local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"\n        ImGui.Text(statusTxt)\n        ImGui.Text("World: " .. (world and world.name or "N/A") .. "  |  Player: " .. (local_ and local_.name or "N/A"))\n        ImGui.Separator()\n\n        if ImGui.Button("Get Server Info") then\n            local client = type(GetClient) == "function" and GetClient() or {}\n            \n            local dump = {}\n            for k, v in pairs(client) do\n                if type(v) == "string" or type(v) == "number" then\n                    table.insert(dump, tostring(k) .. "=" .. tostring(v))\n                end\n            end\n            \n            local host = client.host or client.ip or client.server or client.address or "Unknown"\n            local port = client.port or "Unknown"\n            local ping = client.ping or "Unknown"\n            \n            LogToConsole("`9[SERVER INFO] `0Host: `2" .. tostring(host) .. " `0Port: `2" .. tostring(port) .. " `0Ping: `2" .. tostring(ping) .. " ms")\n            if #dump > 0 then LogToConsole("`6[DEBUG CLIENT KEYS] `0" .. table.concat(dump, ", ")) end\n            \n            if type(GetServer) == "function" then\n                local srv = GetServer()\n                if type(srv) == "table" then\n                    local sd = {}\n                    for k, v in pairs(srv) do\n                        if type(v) == "string" or type(v) == "number" then table.insert(sd, tostring(k).."="..tostring(v)) end\n                    end\n                    if #sd > 0 then LogToConsole("`6[DEBUG SERVER KEYS] `0" .. table.concat(sd, ", ")) end\n                elseif type(srv) == "string" then\n                    LogToConsole("`6[DEBUG SERVER STRING] `0" .. srv)\n                end\n            end\n        end\n        ImGui.Separator()\n\n          -- AUTO SURGERY\n        if ImGui.CollapsingHeader("Auto Surgery") then\n            local cS, vS = ConfigCheckbox("Enable Auto Surgery", "AutoSurgery")\n            if cS then Config.AutoSurgery = vS end\n\n            ImGui.SameLine()\n            local cSB, vSB = ImGui.Checkbox("Auto Buy Surg Kits", Config.AutoSurgeryBuy)\n            if cSB then Config.AutoSurgeryBuy = vSB end\n\n            ImGui.Text("Total Surgeries Done: " .. Config.SurgeryTotal)\n            ImGui.Text("`9How to use:`0 Wrench a player with a Surg-E to start!")\n        end\n\n        ImGui.Separator()\n\n        -- RECORD & PLAY\n        if ImGui.CollapsingHeader("Record & Play") then\n            local cRec, vRec = ImGui.InputText("Recording Name", Config.RecordName, 64)\n            if cRec then Config.RecordName = vRec end\n            \n            if isRecording then\n                if ImGui.Button("STOP RECORDING") then\n                    isRecording = false\n                    Log("`4Recording stopped. " .. #recordData .. " packets captured.")\n                    SaveRecording(Config.RecordName)\n                end\n                ImGui.Text("`4Recording in progress... Packets: " .. #recordData)\n            else\n                if ImGui.Button("START RECORDING") then\n                    recordData = {}\n                    lastPacketTime = 0\n                    isRecording = true\n                    Log("`2Recording started...")\n                end\n            end\n            \n            ImGui.Separator()\n            \n            local cPlay, vPlay = ImGui.InputText("Playback File", Config.PlaybackFile, 64)\n            if cPlay then Config.PlaybackFile = vPlay end\n            \n            if ImGui.Button("LOAD FILE") then\n                LoadRecording(Config.PlaybackFile)\n            end\n            \n            ImGui.SameLine()\n            if isPlaying then\n                if ImGui.Button("STOP PLAYBACK") then\n                    isPlaying = false\n                end\n            else\n                if ImGui.Button("PLAY RECORDING") then\n                    StartPlayback()\n                end\n            end\n        end\n\n        ImGui.Separator()\n\n        -- PUNCH\n        if ImGui.CollapsingHeader("Auto Punch") then\n            local c, v = ConfigCheckbox("Enable Auto Punch", "AutoPunch")\n            local cAM, vAM = ConfigCheckbox("Anti Move (Stay in place)", "AutoPunchAntiMove")\n\n            local c2, v2 = ImGui.InputInt("Tile X", Config.TileX)\n            if c2 then Config.TileX = v2 end\n\n            local c3, v3 = ImGui.InputInt("Tile Y", Config.TileY)\n            if c3 then Config.TileY = v3 end\n\n            local c4, v4 = ImGui.InputInt("Punch Item ID", Config.ItemID)\n            if c4 then Config.ItemID = v4 end\n\n            local c5, v5 = ImGui.InputInt("Punch Delay ms", Config.PunchDelay)\n            if c5 then Config.PunchDelay = math.max(1, v5) end\n\n            local c6, v6 = ImGui.InputInt("Player Check Delay ms", Config.CheckDelay)\n            if c6 then Config.CheckDelay = math.max(1, v6) end\n        end\n\n        ImGui.Separator()\n\n        -- AUTO JOIN WORLD\n        if ImGui.CollapsingHeader("Auto Join World") then\n            local c, v = ConfigCheckbox("Enable Auto Join", "AutoJoin")\n\n            local c2, v2 = ImGui.InputText("World Name", Config.JoinWorld, 64)\n            if c2 then Config.JoinWorld = v2 end\n\n            local c3, v3 = ImGui.InputInt("Join Delay ms", Config.JoinDelay)\n            if c3 then Config.JoinDelay = math.max(1, v3) end\n        end\n\n        ImGui.Separator()\n\n        -- AUTO TAKE\n        if ImGui.CollapsingHeader("Auto Take Floating Items") then\n            local c, v = ConfigCheckbox("Enable Auto Take", "AutoTake")\n\n            local c2, v2 = ImGui.Checkbox("Use ID List Only (false = take ALL)", Config.UseTakeList)\n            if c2 then Config.UseTakeList = v2 end\n\n            local c3, v3 = ImGui.Checkbox("Teleport To Items [Experimental]", Config.TeleportToItems)\n            if c3 then Config.TeleportToItems = v3 end\n\n            ImGui.Text("Take List IDs (comma separated):")\n            local listStr = table.concat(Config.TakeList, ", ")\n            local c4, v4 = ImGui.InputText("##takelist", listStr, 256)\n            if c4 then\n                local newList = {}\n                for num in v4:gmatch("%d+") do table.insert(newList, tonumber(num)) end\n                Config.TakeList = newList\n            end\n        end\n\n        ImGui.Separator()\n\n        -- WHITELIST MANAGER\n        if ImGui.CollapsingHeader("Whitelist Manager") then\n            ImGui.Text("Current whitelisted UIDs:")\n            if #Config.Whitelist == 0 then\n                ImGui.Text("  (none)")\n            else\n                for i, uid in ipairs(Config.Whitelist) do\n                    ImGui.Text("  [" .. i .. "] UID: " .. tostring(uid))\n                    ImGui.SameLine()\n                    if ImGui.Button("Remove##" .. i) then\n                        table.remove(Config.Whitelist, i)\n                        Log("`4Removed UID " .. tostring(uid) .. " from whitelist.")\n                    end\n                end\n            end\n            ImGui.Separator()\n            ImGui.Text("Add UID to whitelist:")\n            local changed, newVal = ImGui.InputText("##wl_input", whitelistInput, 32)\n            if changed then whitelistInput = newVal end\n            ImGui.SameLine()\n            if ImGui.Button("Add") then\n                local uid = tonumber(whitelistInput)\n                if uid then\n                    table.insert(Config.Whitelist, uid)\n                    Log("`2Added UID " .. tostring(uid) .. " to whitelist.")\n                    whitelistInput = ""\n                else\n                    Log("`4Invalid UID: must be a number.")\n                end\n            end\n            if modDetected then\n                ImGui.Separator()\n                ImGui.Text("!! MOD/DEV DETECTED - ALL PAUSED !!")\n                if ImGui.Button("Clear Mod Alert & Resume") then\n                    modDetected = false\n                    Paused = false\n                    Log("`2Mod alert cleared. Resuming.")\n                end\n            end\n        end\n\n        ImGui.Separator()\n\n        -- AUTO BACKPACK\n        if ImGui.CollapsingHeader("Auto Backpack Stash") then\n            local c, v = ConfigCheckbox("Enable Auto Backpack", "AutoBackpack")\n\n            local c3, v3 = ImGui.InputInt("Stash Limit Quantity", Config.AutoBackpackLimit)\n            if c3 then Config.AutoBackpackLimit = math.max(1, v3) end\n\n            ImGui.Text("Item IDs to stash (comma separated):")\n            local bpStr = table.concat(Config.BackpackList, ", ")\n            local c2, v2 = ImGui.InputText("##bplist", bpStr, 256)\n            if c2 then\n                local newList = {}\n                for num in v2:gmatch("%d+") do table.insert(newList, tonumber(num)) end\n                Config.BackpackList = newList\n            end\n        end\n\n        ImGui.Separator()\n\n        -- AUTO PLACE\n        if ImGui.CollapsingHeader("Auto Create Farm") then\n            local c, v = ConfigCheckbox("Enable Auto Create Farm", "AutoCreateFarm")\n            if c and v then farmWX, farmWY = nil, nil end\n\n            local c2, v2 = ImGui.InputInt("Block Item ID", Config.CreateFarmTarget)\n            if c2 then Config.CreateFarmTarget = v2 end\n\n            local c3, v3 = ImGui.InputInt("Place Delay ms##Farm", Config.CreateFarmDelay)\n            if c3 then Config.CreateFarmDelay = math.max(1, v3) end\n\n            ImGui.Text("Direction:")\n            if ImGui.RadioButton("Top to Bottom##Farm", Config.CreateFarmDirection == "top") then\n                Config.CreateFarmDirection = "top"\n            end\n            ImGui.SameLine()\n            if ImGui.RadioButton("Bottom to Top##Farm", Config.CreateFarmDirection == "bottom") then\n                Config.CreateFarmDirection = "bottom"\n            end\n            \n            if ImGui.RadioButton("Take from Backpack##Farm", Config.PlaceResupplyMode == 1) then\n                Config.PlaceResupplyMode = 1\n            end\n            ImGui.SameLine()\n            if ImGui.RadioButton("Stop if Empty##Farm", Config.PlaceResupplyMode == 0) then\n                Config.PlaceResupplyMode = 0\n            end\n        end\n\n        if ImGui.CollapsingHeader("Auto Place World") then\n            local c, v = ConfigCheckbox("Enable Auto Place", "AutoPlace")\n            if c and v then placeX, placeY = nil, nil end\n\n            local c2, v2 = ImGui.InputInt("Place Item ID", Config.PlaceItemID)\n            if c2 then Config.PlaceItemID = v2 end\n\n            local c3, v3 = ImGui.InputInt("Place Delay ms", Config.PlaceDelay)\n            if c3 then Config.PlaceDelay = math.max(1, v3) end\n\n            ImGui.Text("Direction:")\n            if ImGui.RadioButton("Top to Bottom", Config.PlaceDirection == "top") then\n                Config.PlaceDirection = "top"\n            end\n            ImGui.SameLine()\n            if ImGui.RadioButton("Bottom to Top", Config.PlaceDirection == "bottom") then\n                Config.PlaceDirection = "bottom"\n            end\n\n            ImGui.Separator()\n            ImGui.Text("On Out of Items:")\n            if ImGui.RadioButton("Stop Placing", Config.PlaceResupplyMode == 0) then\n                Config.PlaceResupplyMode = 0\n            end\n            ImGui.SameLine()\n            if ImGui.RadioButton("Take from Backpack", Config.PlaceResupplyMode == 1) then\n                Config.PlaceResupplyMode = 1\n            end\n            ImGui.Separator()\n\n            if placeX ~= nil then\n                ImGui.Text("Progress: x=" .. tostring(placeX) .. " y=" .. tostring(placeY))\n            end\n        end\n\n        ImGui.Separator()\n\n        -- PUNCH WORLD\n        if ImGui.CollapsingHeader("Punch World Blocks") then\n            local c, v = ConfigCheckbox("Enable Punch World", "AutoPunchWorld")\n            if c and v then punchWX, punchWY = nil, nil end\n\n            local cHM, vHM = ConfigCheckbox("Harvest Mode (Teleport to X=0 on row)", "PunchWorldHarvestMode")\n            if cHM and vHM then lastHarvestY = nil end\n\n\n            ImGui.Text("Direction:")\n            if ImGui.RadioButton("Top to Bottom (Punch)", Config.PunchDirection == "top") then\n                Config.PunchDirection = "top"\n            end\n            ImGui.SameLine()\n            if ImGui.RadioButton("Bottom to Top (Punch)", Config.PunchDirection == "bottom") then\n                Config.PunchDirection = "bottom"\n            end\n\n            local c2, v2 = ImGui.InputInt("Target Block ID", Config.PunchWorldTarget)\n            if c2 then Config.PunchWorldTarget = v2 end\n\n            local c3, v3 = ImGui.InputInt("Punch World Delay ms", Config.PunchWorldDelay)\n            if c3 then Config.PunchWorldDelay = math.max(1, v3) end\n\n            if punchWX ~= nil then\n                ImGui.Text("Progress: x=" .. tostring(punchWX) .. " y=" .. tostring(punchWY))\n            end\n        end\n\n        -- AUTO JOINER ENGINE\n        if ImGui.CollapsingHeader("Auto Joiner Engine") then\n            local cJR, vJR = ConfigCheckbox("Start Auto Joiner", "AutoJoinRunning")\n\n            if Config.AutoJoinRunning then\n                ImGui.Text("Status: RUNNING")\n            else\n                ImGui.Text("Status: STOPPED")\n            end\n\n            ImGui.Separator()\n            ImGui.Text("World Generators:")\n            local cL, vL = ImGui.Checkbox("2-Letter Worlds", Config.Join2LetterWorlds)\n            if cL then Config.Join2LetterWorlds = vL end\n            \n            if Config.Join2LetterWorlds then\n                local cL1, vL1 = ImGui.InputText("Start From (e.g. aa, a0, 00)", Config.Start2Letter, 3)\n                if cL1 then Config.Start2Letter = vL1:lower() end\n            end\n\n            local cL3, vL3 = ImGui.Checkbox("3-Letter Worlds", Config.Join3LetterWorlds)\n            if cL3 then Config.Join3LetterWorlds = vL3 end\n\n            local cL4, vL4 = ImGui.Checkbox("4-Letter Worlds", Config.Join4LetterWorlds)\n            if cL4 then Config.Join4LetterWorlds = vL4 end\n\n            local cVi, vVi = ImGui.Checkbox("Viral Worlds", Config.JoinViralWorlds)\n            if cVi then Config.JoinViralWorlds = vVi end\n\n            local cP, vP = ImGui.Checkbox("Popular Worlds", Config.JoinPopularWorlds)\n            if cP then Config.JoinPopularWorlds = vP end\n\n            local cB, vB = ImGui.Checkbox("Buy Worlds", Config.JoinBuyWorlds)\n            if cB then Config.JoinBuyWorlds = vB end\n\n            local cBI, vBI = ImGui.Checkbox("Buy+Item Worlds", Config.JoinBuyItemWorlds)\n            if cBI then Config.JoinBuyItemWorlds = vBI end\n\n            local cLW, vLW = ImGui.Checkbox("Live WOTD (Website)", Config.JoinLiveWOTD)\n            if cLW then Config.JoinLiveWOTD = vLW end\n\n            local cHW, vHW = ImGui.Checkbox("Historic WOTD", Config.JoinHistoricWOTD)\n            if cHW then Config.JoinHistoricWOTD = vHW end\n\n            ImGui.Separator()\n            local cJD, vJD = ImGui.InputInt("Delay Between Worlds ms", Config.JoinPacketDelay)\n            if cJD then Config.JoinPacketDelay = math.max(100, vJD) end\n\n            local cT, vT = ImGui.InputInt("Timeout (seconds)", Config.JoinTimeoutSeconds)\n            if cT then Config.JoinTimeoutSeconds = math.max(1, vT) end\n\n            local cJA, vJA = ImGui.Checkbox("Auto Place Item when joined", Config.JoinPlaceAndLeave)\n            if cJA then Config.JoinPlaceAndLeave = vJA end\n\n            if Config.JoinPlaceAndLeave then\n                local cJI, vJI = ImGui.InputInt("Item to Place", Config.JoinPlaceItem)\n                if cJI then Config.JoinPlaceItem = math.max(0, vJI) end\n            end\n        end\n\n        -- ACCOUNT TOOLS\n        if ImGui.CollapsingHeader("Account Tools") then\n            if ImGui.Button("Auto Create Account") then\n                CreateRandomAccount()\n            end\n            ImGui.Text("Generates a random account, applies it, and sends info to Webhook.")\n            \n            ImGui.Separator()\n            local changed, newVal = ImGui.InputText("Manual GrowID Name", manualGrowID, 32)\n            if changed then manualGrowID = newVal end\n            \n            if ImGui.Button("Register Manual GrowID") then\n                if manualGrowID == "" then\n                    Log("`4Please enter a name first!`0")\n                else\n                    local packet = "action|dialog_return\ndialog_name|growid_apply\nman|1\nwoman|0\n"\n                    packet = packet .. "logon|" .. manualGrowID .. "\n"\n                    packet = packet .. "password|" .. manualGrowID .. "\n"\n                    packet = packet .. "password_verify|" .. manualGrowID .. "\n"\n                    packet = packet .. "email|b@b.com\n"\n                    packet = packet .. "affcode|\n"\n                    SendPacket(2, packet)\n                    Log("`2Sent Register Packet for Name: `0" .. manualGrowID)\n                end\n            end\n            \n            ImGui.Separator()\n            if ImGui.Button("Register 8S7PrisE (Bypass?)") then\n                local regPacket = [[action|dialog_return\ndialog_name|8S7PrisE\nH7fQw80bh3GQgxR5JOUGRha0FL|UEKXY9uCyrkUXEriHvls|\njIJljNMRrzSsRSky9jemNIrF7d|dQ6xbZSzBUps2BUd8X7B9cVqBFZPZ|\nYqstcgM90mFKUtOd|TqRrgoQLrjXJE06siyjYX05j|\nXRXEJMmmA6YSzv5qVzpJ5yW|alSR9U2uHPSn2rX5IWqaf2s0zQ|\nbuttonClicked|register]]\n                SendPacket(2, regPacket)\n                Log("`2Sent Register 8S7PrisE Packet!`0")\n            end\n            ImGui.Text("Sends a hardcoded dialog return packet.")\n        end\n\n        -- CLEAR WORLD\n        if ImGui.CollapsingHeader("Clear World Tools") then\n            local cCW, vCW = ConfigCheckbox("Auto Clear World", "AutoClearWorld")\n            if cCW and vCW then clearWX, clearWY = nil, nil end\n            ImGui.SameLine()\n            local cCWat, vCWat = ConfigCheckbox("Auto Clear Water", "AutoClearWater")\n            if cCWat and vCWat then clearWX, clearWY = nil, nil end\n            \n            ImGui.Text("Direction:")\n            ImGui.SameLine()\n            if ImGui.RadioButton("Top to Bottom (Clear)", Config.ClearDirection == "top") then Config.ClearDirection = "top" end\n            ImGui.SameLine()\n            if ImGui.RadioButton("Bottom to Top (Clear)", Config.ClearDirection == "bottom") then Config.ClearDirection = "bottom" end\n            \n            local cCD, vCD = ImGui.InputInt("Clear Delay (ms)", Config.ClearDelay)\n            if cCD then Config.ClearDelay = math.max(10, vCD) end\n            \n            local cCS, vCS = ImGui.InputInt("Sponge ID", Config.ClearSpongeID)\n            if cCS then Config.ClearSpongeID = math.max(0, vCS) end\n            \n            ImGui.TextWrapped("Note: These run safely from top to bottom and respect the stranger detection pause.")\n        end\n\n        -- AUTO MAGPLANT\n        if ImGui.CollapsingHeader("Auto Magplant Scanner") then\n            local cAM, vAM = ConfigCheckbox("Enable Auto Magplant", "AutoMagplant")\n            if cAM and vAM then\n                ScanMagplants()\n            end\n            \n            local cD, vD = ImGui.InputInt("Delay (ms)", Config.MagplantDelay)\n            if cD then Config.MagplantDelay = math.max(100, vD) end\n            \n            if ImGui.Button("Rescan World Manually") then\n                ScanMagplants()\n            end\n            \n            ImGui.Text("Found " .. #(MagplantsList or {}) .. " Magplants:")\n            for i, m in ipairs(MagplantsList or {}) do\n                local status = (i == currentMagplantIndex) and "[ACTIVE]" or (i < currentMagplantIndex and "[DONE]" or "[WAITING]")\n                local idStr = m.itemID and tostring(m.itemID) or "?"\n                local amtStr = m.amount and tostring(m.amount) or "?"\n                ImGui.Text(status .. " [" .. m.x .. ", " .. m.y .. "] - Item: " .. idStr .. " - Qty: " .. amtStr)\n            end\n        end\n\n        -- INSTANT TELEPORT\n        if ImGui.CollapsingHeader("Instant Teleport") then\n            local cX, vX = ImGui.InputInt("Teleport X", Config.TeleportX)\n            if cX then Config.TeleportX = vX end\n\n            local cY, vY = ImGui.InputInt("Teleport Y", Config.TeleportY)\n            if cY then Config.TeleportY = vY end\n\n            if ImGui.Button("Teleport Now") then\n                SendPacketRaw(false, {\n                    type = 0,\n                    x = Config.TeleportX * 32,\n                    y = Config.TeleportY * 32,\n                    px = 0,\n                    py = 0\n                })\n                Log("`2Teleported to X: `b" .. Config.TeleportX .. " `2Y: `b" .. Config.TeleportY .. "`0")\n            end\n        end\n\n        -- PACKET DEBUG\n        if ImGui.CollapsingHeader("Packet Debugger") then\n            local cP, vP = ImGui.Checkbox("Debug SendPacket (Text)", Config.DebugSendPacket)\n            if cP then Config.DebugSendPacket = vP end\n\n            local cPR, vPR = ImGui.Checkbox("Debug SendPacketRaw", Config.DebugSendPacketRaw)\n            if cPR then Config.DebugSendPacketRaw = vPR end\n\n            local cV, vV = ImGui.Checkbox("Debug Variant (OnVariant)", Config.DebugVariant)\n            if cV then Config.DebugVariant = vV end\n\n            ImGui.Separator()\n\n            local c7, v7 = ImGui.InputText("Webhook URL", Config.DebugWebhookURL, 255)\n            if c7 then Config.DebugWebhookURL = v7 end\n\n            local c8, v8 = ImGui.InputInt("Webhook Cooldown ms", Config.DebugRateLimit)\n            if c8 then Config.DebugRateLimit = math.max(100, v8) end\n        end\n\n        ImGui.End()  -- End is INSIDE the Begin block (Bothax pattern)\n    end  -- end if Begin\nend\n\nAddHook("OnDraw", "SafePunchUI", ShowUI)\n\n-- /ui to toggle the window\nAddHook("onsendpacket", "SafePunchUIToggle", function(type, packet)\n    if type == 2 and packet:find("action|input\n|text|/ui") then\n        guiOpen = not guiOpen\n        Log(guiOpen and "`2UI opened." or "`4UI closed.")\n        return true\n    end\n    return false\nend)\n\n-- ============================================================\n-- PLAYER WATCH THREAD: Runs in background, checks for players\n-- ============================================================\n\n\nRunThread(function()\n    Log("Player watch thread started.")\n\n    while true do\n        if Run then\n            local world = GetWorld()\n            local local_ = GetLocal()\n\n            if world and local_ then\n                local current = GetOtherPlayers()\n\n                -- Detect NEW players that joined\n                for netid, info in pairs(current) do\n                    if not lastPlayers[netid] then\n                        local tag = IsWhitelisted(info.userid) and "`a[WHITELIST]`0 " or "`4[STRANGER]`0 "\n                        Log(tag .. "`e" .. tostring(info.name) .. "`0 (UID: `b" .. tostring(info.userid) .. "`0) joined.")\n                    end\n                end\n\n                -- Detect players that LEFT\n                for netid, info in pairs(lastPlayers) do\n                    if not current[netid] then\n                        local tag = IsWhitelisted(info.userid) and "`a[WHITELIST]`0 " or "`4[STRANGER]`0 "\n                        Log(tag .. "`e" .. tostring(info.name) .. "`0 (UID: `b" .. tostring(info.userid) .. "`0) left.")\n                    end\n                end\n\n                -- Update Paused state: pause only if a non-whitelisted player is present\n                local hasStranger = false\n                for _, info in pairs(current) do\n                    if not IsWhitelisted(info.userid) then\n                        hasStranger = true\n                        break\n                    end\n                end\n\n                if hasStranger then\n                    if not Paused then\n                        Paused = true\n                        Log("`4Stranger in world! Turning off all features.")\n                        \n                        PreviousConfig.AutoPunch = Config.AutoPunch\n                        PreviousConfig.AutoPunchAntiMove = Config.AutoPunchAntiMove\n                        PreviousConfig.AutoPlace = Config.AutoPlace\n                        PreviousConfig.AutoCreateFarm = Config.AutoCreateFarm\n                        PreviousConfig.AutoPunchWorld = Config.AutoPunchWorld\n                        PreviousConfig.AutoClearWorld = Config.AutoClearWorld\n                        PreviousConfig.AutoClearWater = Config.AutoClearWater\n                        PreviousConfig.AutoSurgery = Config.AutoSurgery\n                        PreviousConfig.AutoTake = Config.AutoTake\n                        PreviousConfig.AutoBackpack = Config.AutoBackpack\n                        PreviousConfig.AutoJoinRunning = Config.AutoJoinRunning\n                        PreviousConfig.AutoJoin = Config.AutoJoin\n\n                        Config.AutoPunch = false\n                        Config.AutoPunchAntiMove = false\n                        Config.AutoPlace = false\n                        Config.AutoCreateFarm = false\n                        PreviousConfig.PunchWorldHarvestMode = Config.PunchWorldHarvestMode\n                        PreviousConfig.AutoMagplant = Config.AutoMagplant\n                        Config.AutoMagplant = false\n                        Config.PunchWorldHarvestMode = false\n                        Config.AutoPunchWorld = false\n                        Config.AutoClearWorld = false\n                        Config.AutoClearWater = false\n                        Config.AutoSurgery = false\n                        Config.AutoTake = false\n                        Config.AutoBackpack = false\n                        Config.AutoJoinRunning = false\n                        Config.AutoJoin = false\n                    end\n                else\n                    if Paused then\n                        Paused = false\n                        Log("`2No strangers! Resuming previously active features.")\n                        \n                        Config.AutoPunch = PreviousConfig.AutoPunch or false\n                        Config.AutoPunchAntiMove = PreviousConfig.AutoPunchAntiMove or false\n                        Config.AutoPlace = PreviousConfig.AutoPlace or false\n                        Config.AutoCreateFarm = PreviousConfig.AutoCreateFarm or false\n                        Config.AutoMagplant = PreviousConfig.AutoMagplant or false\n                        Config.PunchWorldHarvestMode = PreviousConfig.PunchWorldHarvestMode or false\n                        Config.AutoPunchWorld = PreviousConfig.AutoPunchWorld or false\n\n                        Config.AutoClearWorld = PreviousConfig.AutoClearWorld or false\n                        Config.AutoClearWater = PreviousConfig.AutoClearWater or false\n                        Config.AutoSurgery = PreviousConfig.AutoSurgery or false\n                        Config.AutoTake = PreviousConfig.AutoTake or false\n                        Config.AutoBackpack = PreviousConfig.AutoBackpack or false\n                        Config.AutoJoinRunning = PreviousConfig.AutoJoinRunning or false\n                        Config.AutoJoin = PreviousConfig.AutoJoin or false\n\n                        -- Debug logs to confirm internal state restoration\n                        if Config.AutoCreateFarm then Log("`9-> Auto Create Farm resumed!") end\n                        if Config.AutoMagplant then\n                AutoMagplantStep()\n            end\n            \n            if Config.AutoPunchWorld then Log("`9-> Auto Punch World resumed!") end\n                        if Config.AutoClearWorld then Log("`9-> Auto Clear World resumed!") end\n                        if Config.AutoPlace then Log("`9-> Auto Place resumed!") end\n                        if Config.AutoPunch then Log("`9-> Auto Punch resumed!") end\n                    end\n                end\n\n                lastPlayers = current\n            end\n\n            Sleep(Config.CheckDelay)\n        else\n            Sleep(500)\n        end\n    end\nend)\n\n-- ============================================================\n-- AUTO JOIN WORLD THREAD\n-- ============================================================\nRunThread(function()\n    while true do\n        if Run and Config.AutoJoin and Config.JoinWorld ~= "" then\n            local world = GetWorld()\n            -- Attempt to join if we are not already in the target world\n            if not world or world.name:upper() ~= Config.JoinWorld:upper() then\n                Log("`2Attempting to join world: `0" .. Config.JoinWorld)\n                SendPacket(3, "action|join_request\nname|" .. Config.JoinWorld .. "|\ninvitedWorld|0")\n                Sleep(Config.JoinDelay)\n            else\n                Sleep(2000)\n            end\n        else\n            Sleep(1000)\n        end\n    end\nend)\n\n\n\n-- ============================================================\n-- AUTO JOINER THREAD\n-- ============================================================\n\nlocal function dedup(list)\n    local seen, result = {}, {}\n    for _, v in ipairs(list) do\n        local key = v:upper()\n        if not seen[key] then\n            seen[key] = true\n            table.insert(result, key)\n        end\n    end\n    return result\nend\n\nlocal function placeAbovePlayer(id)\n    local localAvatar = GetLocal()\n    if not localAvatar then return end\n    local pkt = {}\n    pkt.type  = 3\n    pkt.value = id\n    pkt.px    = math.floor(localAvatar.pos.x / 32)\n    pkt.py    = math.floor(localAvatar.pos.y / 32) - 1\n    pkt.x     = localAvatar.pos.x\n    pkt.y     = localAvatar.pos.y\n    SendPacketRaw(false, pkt)\nend\n\nRunThread(function()\n    Log("Auto Joiner Thread ready.")\n    local prevRunning = false\n    \n    while true do\n        if Config.AutoJoinRunning and not prevRunning then\n            prevRunning = true\n            \n            Log("`2Initializing Auto Joiner... (Quitting to exit & waiting 2s)")\n            SendPacket(3, "action|quit_to_exit")\n            Sleep(2000)\n            \n            local worldsToVisit = {}\n\n            if Config.JoinLiveWOTD then\n                Log("`2[WOTD] Fetching live WOTD...")\n                local res = MakeRequest("https://www.growtopiagame.com/detail", "GET")\n                if res and res.content then\n                    local match = res.content:match('"full_size"%s*:%s*"worlds[\\/]+([^"]+)%.png"')\n                    if match then table.insert(worldsToVisit, match:upper()) end\n                end\n            end\n\n            if Config.JoinHistoricWOTD then for _, w in ipairs(historicWOTDWorlds) do table.insert(worldsToVisit, w) end end\n            if Config.JoinViralWorlds then for _, w in ipairs(viralWorlds) do table.insert(worldsToVisit, w) end end\n            if Config.JoinPopularWorlds then for _, w in ipairs(popularWorlds) do table.insert(worldsToVisit, w) end end\n            if Config.JoinBuyWorlds then for _, w in ipairs(buyWorlds) do table.insert(worldsToVisit, w) end end\n\n            if Config.JoinBuyItemWorlds then\n                Log("`2Generating BUY+<itemname> worlds...")\n                local allItems = GetItemInfoList()\n                if allItems then\n                    local maxID = 0\n                    for id, _ in pairs(allItems) do if type(id) == "number" and id > maxID then maxID = id end end\n                    for id = Config.BuyItemStartID, maxID do\n                        local item = allItems[id]\n                        if item and item.name and item.name ~= "" and not item.name:match("^%d+$") then\n                            local cleanName = item.name:upper():gsub("%s+", ""):gsub("[^%a%d]", "")\n                            if #cleanName > 0 and #("BUY" .. cleanName) <= 24 then\n                                table.insert(worldsToVisit, "BUY" .. cleanName)\n                                if Config.JoinItemAcronymWorlds then\n                                    for itemKey, acronyms in pairs(itemAcronyms) do\n                                        if item.name:lower() == itemKey:lower() then\n                                            for _, acronym in ipairs(acronyms) do table.insert(worldsToVisit, "BUY" .. acronym:upper()) end\n                                        end\n                                    end\n                                end\n                            end\n                        end\n                    end\n                end\n            end\n\n            if Config.Join2LetterWorlds then\n                Log("`2[AutoJoin] Generating 2-Letter worlds...")\n                local fullSequence = {}\n                \n                -- 1. aa to zz\n                for char1 = 97, 122 do\n                    for char2 = 97, 122 do\n                        table.insert(fullSequence, string.char(char1) .. string.char(char2))\n                    end\n                end\n\n                -- 2. a0..a9 then 0a..9a then b0..b9 ...\n                for char1 = 97, 122 do\n                    for num = 48, 57 do\n                        table.insert(fullSequence, string.char(char1) .. string.char(num))\n                    end\n                    for num = 48, 57 do\n                        table.insert(fullSequence, string.char(num) .. string.char(char1))\n                    end\n                end\n\n                -- 3. 00..99\n                for num1 = 48, 57 do\n                    for num2 = 48, 57 do\n                        table.insert(fullSequence, string.char(num1) .. string.char(num2))\n                    end\n                end\n\n                -- Filter based on Start2Letter\n                local startStr = type(Config.Start2Letter) == "string" and Config.Start2Letter:lower() or "aa"\n                if #startStr ~= 2 then startStr = "aa" end\n                \n                local foundStart = false\n                for _, w in ipairs(fullSequence) do\n                    if not foundStart and w == startStr then\n                        foundStart = true\n                    end\n                    if foundStart then\n                        table.insert(worldsToVisit, w)\n                    end\n                end\n                \n                -- Fallback if start string wasn't valid/found\n                if not foundStart then\n                    for _, w in ipairs(fullSequence) do\n                        table.insert(worldsToVisit, w)\n                    end\n                end\n            end\n\n            if Config.Join3LetterWorlds then\n                Log("`2[AutoJoin] Generating 3-Letter worlds (aaa-zzz)...")\n                for c1 = 97, 122 do\n                    for c2 = 97, 122 do\n                        for c3 = 97, 122 do\n                            table.insert(worldsToVisit, string.char(c1) .. string.char(c2) .. string.char(c3))\n                        end\n                    end\n                end\n            end\n\n            if Config.Join4LetterWorlds then\n                Log("`2[AutoJoin] Generating 4-Letter worlds (aaaa-zzzz)...")\n                local count = 0\n                for c1 = 97, 122 do\n                    for c2 = 97, 122 do\n                        for c3 = 97, 122 do\n                            for c4 = 97, 122 do\n                                table.insert(worldsToVisit, string.char(c1) .. string.char(c2) .. string.char(c3) .. string.char(c4))\n                                count = count + 1\n                                if count % 10000 == 0 then Sleep(10) end\n                            end\n                        end\n                    end\n                end\n            end\n\n            worldsToVisit = dedup(worldsToVisit)\n            Log("`2Total worlds in Auto Join queue: `0" .. #worldsToVisit)\n\n            for i, worldName in ipairs(worldsToVisit) do\n                if not Config.AutoJoinRunning then break end\n\n                Log("`2Joining (`0" .. i .. "`2/`0" .. #worldsToVisit .. "`2): `0" .. worldName)\n                SendPacket(3, "action|join_request\nname|" .. worldName .. "\ninvitedWorld|0")\n                Sleep(Config.JoinPacketDelay)\n\n                local timeout = Config.JoinTimeoutSeconds\n                while Config.AutoJoinRunning and timeout > 0 do\n                    local currentWorld = GetWorld()\n                    local localAvatar  = GetLocal()\n                    if currentWorld and string.upper(currentWorld.name) == worldName and localAvatar then\n                        break\n                    end\n                    Sleep(1000)\n                    timeout = timeout - 1\n                end\n\n                if not Config.AutoJoinRunning then break end\n\n                if timeout > 0 then\n                    Sleep(500)\n                    if Config.JoinPlaceAndLeave then\n                        Log("`9Placing item " .. Config.JoinPlaceItem .. " above player...")\n                        placeAbovePlayer(Config.JoinPlaceItem)\n                        Sleep(Config.JoinPacketDelay)\n                        SendPacket(3, "action|quit_to_exit")\n                        Sleep(Config.JoinPacketDelay)\n                    else\n                        Log("`9Joined successfully. Waiting for Punch World to finish...")\n                        -- Wait loop: stay here while Punch World clears out the world\n                        -- or wait a default delay before jumping to next\n                        Sleep(Config.JoinPacketDelay * 2) \n                    end\n                else\n                    Log("`4Skipped (timeout): `0" .. worldName)\n                end\n                Sleep(Config.JoinPacketDelay)\n            end\n            \n            Config.AutoJoinRunning = false\n            Log("`2Auto Join queue finished/stopped.")\n        elseif not Config.AutoJoinRunning and prevRunning then\n            prevRunning = false\n        end\n        Sleep(1000)\n    end\nend)\n\n-- ============================================================\n-- CHAT COMMANDS: /stop to stop\n-- ============================================================\n\nAddHook("onsendpacket", "SafePunchControl", function(type, packet)\n    if type == 2 and packet:find("action|input\n|text|/stop") then\n        Run = false\n        Paused = false\n        Log("`4Script stopped by user command.")\n        return true\n    end\n    return false\nend)\n\n-- ============================================================\n-- AUTO SURGERY LOGIC\n-- ============================================================\nlocal surging = false\nlocal surgid = nil\nlocal surgBuying = false\nlocal surgTools = { 1270, 1240, 1256, 1258, 1260, 1262, 1264, 1266, 1268 }\n\nlocal function SurgTrash(ID)\n    SendPacket(2, "action|dialog_return\ndialog_name|trash\nitem_trash|"..ID.. "|\nitem_count|".. (GetItemCount(ID) - 80) .."\n")\nend\n\nlocal function BuySurgPack()\n    for _, to in pairs(surgTools) do\n        local co = GetItemCount(to)\n        if surgBuying and co > 240 then\n            Sleep(200)\n            SurgTrash(to)\n            Sleep(500)\n            return BuySurgPack()\n        end\n    end\n    for _, t0 in pairs(surgTools) do\n        if GetItemCount(t0) < 150 then\n            SendPacket(2, "action|buy\nitem|buy_surgkit")\n            Sleep(75)\n            return BuySurgPack()\n        end\n    end\nend\n\nlocal function SendSurg(toolName)\n    if not Config.AutoSurgery or Paused or not Run then return end\n    local tools = ""\n    if toolName == "Sponge" then tools = "command_0"\n    elseif toolName == "Scalpel" then tools = "command_1"\n    elseif toolName == "Anesthetic" then tools = "command_2"\n    elseif toolName == "Antiseptic" then tools = "command_3"\n    elseif toolName == "Antibiotics" then tools = "command_4"\n    elseif toolName == "Splint" then tools = "command_5"\n    elseif toolName == "Stitches" then tools = "command_6"\n    elseif toolName == "Fix It!" then tools = "command_7"\n    end\n    SendPacket(2, "action|dialog_return\ndialog_name|surgery\nbuttonClicked|" .. tools)\n    Log("`9[AutoSurg] `0Used `2" .. toolName)\nend\n\n-- Surg Buy Thread\nRunThread(function()\n    while true do\n        Sleep(1000)\n        if Config.AutoSurgeryBuy and (GetItemCount(1270) < 40 and not surging or surgBuying) then\n            BuySurgPack()\n            surgBuying = false\n        end\n        \n        if Config.AutoSurgery and not surging and surgid and not Paused and Run then\n            SendPacket(2, "action|dialog_return\ndialog_name|popup\nnetID|"..surgid.."|\nbuttonClicked|surgery")\n            surging = true\n        end\n    end\nend)\n\nAddHook("onsendpacket", "AutoSurgPack", function(type, packet)\n    if not Config.AutoSurgery then return false end\n    \n    if packet:find("action|input\n|text|/bp") and Config.AutoSurgeryBuy then\n        Log("Buying Surgical Pack...")\n        surgBuying = true\n        return true\n    end   \n    if packet:find("action|wrench\n|netid|(%d+)") then\n        surgid = packet:match("action|wrench\n|netid|(%d+)")\n        SendPacket(2, "action|dialog_return\ndialog_name|popup\nnetID|" .. surgid .. "|\nbuttonClicked|surgery")\n        surging = true\n        return true\n    end\n    return false\nend)\n\nAddHook("OnVariant", "AutoSurgHooks", function(var)\n    if not Config.AutoSurgery or Paused or not Run then return false end\n\n    if var[0] == "OnConsoleMessage" and var[1]:find("You are not") then\n        RunThread(function()\n            Sleep(500)\n            Log("`4Patient left/died!")\n            surging = false\n            surgid = nil\n        end)\n        return true\n    elseif var[0] == "OnDialogRequest" and var[1]:find("Anatomical") then\n        local x = var[1]:match("|x|(%d+)")\n        local y = var[1]:match("|y|(%d+)")\n        SendPacket(2, "action|dialog_return\n|dialog_name|surge_edit\nx|" .. x .. "|\ny|" .. y .. "|")\n        return true\n    elseif type(var[0]) == "string" and var[0]:find("OnDialogRequest") then\n        local v = var[1]\n        if v:find("`4You can't see what you are doing(!+)") and v:find("command_0") then SendSurg("Sponge"); return true\n        elseif v:find("`6It is becoming hard to see your work(.+)") and v:find("command_0") then SendSurg("Sponge"); return true\n        elseif v:find("Patient's fever is `3slowly rising") and v:find("command_4") then SendSurg("Antibiotics"); return true\n        elseif v:find("Patient's fever is `6climbing") and v:find("command_4") then SendSurg("Antibiotics"); return true\n        elseif v:find("Incisions: `60") and v:find("command_7") then SendSurg("Fix It!"); return true\n        elseif v:find("Incisions: `30") and v:find("command_7") then SendSurg("Fix It!"); return true\n        elseif v:find("command_7") and not v:find("command_6") and not v:find("Incisions: 0") and not v:find("command_1") then SendSurg("Fix It!"); return true\n        elseif v:find("Operation site: `4Unsanitary") and v:find("command_3") then SendSurg("Antiseptic"); return true\n        elseif v:find("Status: `4Awake!") and v:find("command_2") then SendSurg("Anesthetic"); return true\n        elseif v:find("Patient is losing blood `4very quickly!") and v:find("command_6") then SendSurg("Stitches"); return true\n        elseif v:find("Patient is losing blood `3slowly") and v:find("command_6") then SendSurg("Stitches"); return true\n        elseif v:find("Patient is `6losing blood!") and v:find("command_6") then SendSurg("Stitches"); return true\n        elseif v:find("command_7") and v:find("command_6") then SendSurg("Stitches"); return true\n        elseif v:find("command_7") and v:find("Incisions: 0") then SendSurg("Stitches"); return true\n        elseif v:find("command_7") and v:find("command_1") then SendSurg("Scalpel"); return true\n        elseif v:find("command_1") then SendSurg("Scalpel"); return true\n        end\n    end\n    \n    if var[0] == "OnTalkBubble" and tostring(var[1]) == tostring(GetLocal().netid) then\n        surging = false\n        Config.SurgeryTotal = Config.SurgeryTotal + 1\n        Log("`2Surgery complete! Total: `0" .. Config.SurgeryTotal)\n        return true\n    end\n    return false\nend)\n\n-- ============================================================\n-- RECORD & PLAY LOGIC\n-- ============================================================\nisRecording = false\nisPlaying = false\nrecordData = {}\nlastPacketTime = 0\n\nfunction SaveRecording(filename)\n    if not filename or filename == "" then filename = "default_record" end\n    local file = io.open(filename .. ".txt", "w")\n    if file then\n        for _, pkt in ipairs(recordData) do\n            file:write(pkt.delay .. "|" .. pkt.data .. "\n")\n        end\n        file:close()\n        Log("`2Saved recording to: " .. filename .. ".txt")\n    else\n        Log("`4Failed to save recording! Check folder permissions.")\n    end\nend\n\nfunction LoadRecording(filename)\n    if not filename or filename == "" then filename = "default_record" end\n    local file = io.open(filename .. ".txt", "r")\n    if file then\n        recordData = {}\n        for line in file:lines() do\n            local delayStr, dataStr = line:match("^(%d+)|(.+)$")\n            if delayStr and dataStr then\n                table.insert(recordData, {delay = tonumber(delayStr), data = dataStr})\n            end\n        end\n        file:close()\n        Log("`2Loaded recording: " .. filename .. ".txt with " .. #recordData .. " packets.")\n        return true\n    else\n        Log("`4File not found: " .. filename .. ".txt")\n        return false\n    end\nend\n\nfunction StartPlayback()\n    if #recordData == 0 then\n        Log("`4No data to play! Load a recording first.")\n        return\n    end\n    isPlaying = true\n    RunThread(function()\n        Log("`2Playback started...")\n        for _, pkt in ipairs(recordData) do\n            if not isPlaying or not Run or Paused then break end\n            if pkt.delay > 0 then\n                Sleep(pkt.delay)\n            end\n            \n            -- Parse data\n            if pkt.data:sub(1,3) == "RAW" then\n                local t, v, px, py, rx, ry = pkt.data:match("^RAW|(%d+)|(%d+)|(%-?%d+)|(%-?%d+)|(%-?%d+)|(%-?%d+)$")\n                if t then\n                    SendPacketRaw(false, {\n                        type = tonumber(t),\n                        value = tonumber(v),\n                        px = tonumber(px),\n                        py = tonumber(py),\n                        x = tonumber(rx),\n                        y = tonumber(ry)\n                    })\n                end\n            elseif pkt.data:sub(1,3) == "STR" then\n                local typStr, content = pkt.data:match("^STR|(%d+)|(.+)$")\n                if typStr and content then\n                    -- Unescape newlines\n                    content = content:gsub("\n", "\n")\n                    SendPacket(tonumber(typStr), content)\n                end\n            end\n        end\n        if isPlaying then\n            Log("`2Playback finished.")\n        else\n            Log("`4Playback stopped.")\n        end\n        isPlaying = false\n    end)\nend\n\nAddHook("onsendpacket", "RecordPacketsHook", function(type, packet)\n    if isRecording then\n        -- Ignore normal chat logs, but KEEP user commands (like /bp, /ui, etc)\n        if packet:find("action|input\n|text|") and not packet:find("action|input\n|text|/") then return false end\n        \n        local now = os.clock()\n        local delay = 0\n        if lastPacketTime > 0 then\n            delay = math.floor((now - lastPacketTime) * 1000)\n        end\n        lastPacketTime = now\n        \n        local safeStr = packet:gsub("\n", "\n")\n        table.insert(recordData, {delay = delay, data = "STR|" .. type .. "|" .. safeStr})\n    end\n    return false\nend)\n\nAddHook("onsendpacketraw", "RecordRawHook", function(packet)\n    if isRecording and packet then\n        local now = os.clock()\n        local delay = 0\n        if lastPacketTime > 0 then\n            delay = math.floor((now - lastPacketTime) * 1000)\n        end\n        lastPacketTime = now\n        \n        local rawStr = string.format("RAW|%d|%d|%d|%d|%d|%d", packet.type or 0, packet.value or 0, packet.px or 0, packet.py or 0, packet.x or 0, packet.y or 0)\n        table.insert(recordData, {delay = delay, data = rawStr})\n    end\n    return false\nend)\n\n-- ============================================================\n-- CLEAR WORLD & WATER LOGIC\n-- ============================================================\nlocal clearWX, clearWY = nil, nil\nlocal clearWGrid = nil\nlocal clearWGridW, clearWGridH = 0, 0\nlocal clearWWorld = nil\n\nlocal function BuildClearGrid()\n    local tiles = GetTiles()\n    local world = GetWorld()\n    if not tiles or not world then return false end\n    clearWGrid = {}\n    for _, t in pairs(tiles) do\n        if not clearWGrid[t.x] then clearWGrid[t.x] = {} end\n        clearWGrid[t.x][t.y] = {fg = t.fg, bg = t.bg, flags = t.flags}\n    end\n    clearWWorld = world.name\n    clearWGridW = world.width\n    clearWGridH = world.height\n    return true\nend\n\nlocal function InitializeClear()\n    local world = GetWorld()\n    if not world then return end\n    if Config.ClearDirection == "top" then\n        clearWY = 0\n    else\n        clearWY = world.height - 1\n    end\n    clearWX = 0\n    clearWGrid = nil\n    clearWWorld = nil\nend\n\nlocal function ClearWorldStep()\n    local world = GetWorld()\n    if not world then return end\n\n    if clearWX == nil or clearWY == nil then\n        InitializeClearWorld()\n    end\n\n    local targetX, targetY = nil, nil\n\n    while true do\n        if Config.ClearDirection == "top" and clearWY >= world.height then break end\n        if Config.ClearDirection == "bottom" and clearWY < 0 then break end\n\n        local cell = GetTile(clearWX, clearWY)\n        if cell then\n            if (cell.fg ~= 0 or cell.bg ~= 0) and not Config.ClearIgnoreBlocks[cell.fg] then\n                targetX = clearWX\n                targetY = clearWY\n                break\n            end\n        end\n\n        clearWX = clearWX + 1\n        if clearWX >= world.width then\n            clearWX = 0\n            clearWY = Config.ClearDirection == "top" and (clearWY + 1) or (clearWY - 1)\n        end\n    end\n\n    if targetX and targetY then\n        while (GetTile(targetX, targetY).fg ~= 0 or GetTile(targetX, targetY).bg ~= 0) and not Config.ClearIgnoreBlocks[GetTile(targetX, targetY).fg] do\n            if not Run or Paused or not Config.AutoClearWorld then return end -- Abort if paused by stranger or manually disabled\n            SendPacketRaw(false, {\n                type  = 3,\n                value = 18,\n                px    = targetX,\n                py    = targetY,\n                x     = targetX * 32,\n                y     = targetY * 32\n            })\n            Sleep(Config.ClearDelay)\n        end\n        clearWX = targetX + 1\n        if clearWX >= world.width then\n            clearWX = 0\n            clearWY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)\n        end\n    else\n        Log("`2[Auto Clear World] `0Finished clearing!")\n        Config.AutoClearWorld = false\n        clearWX, clearWY = nil, nil\n    end\nend\n\nlocal function ClearWaterStep()\n    local world = GetWorld()\n    if not world then return end\n\n    if clearWX == nil or clearWY == nil then\n        InitializeClearWorld()\n    end\n\n    local targetX, targetY = nil, nil\n\n    while true do\n        if Config.ClearDirection == "top" and clearWY >= world.height then break end\n        if Config.ClearDirection == "bottom" and clearWY < 0 then break end\n\n        local cell = GetTile(clearWX, clearWY)\n        if cell and cell.flags and cell.flags.water then\n            targetX = clearWX\n            targetY = clearWY\n            break\n        end\n\n        clearWX = clearWX + 1\n        if clearWX >= world.width then\n            clearWX = 0\n            clearWY = Config.ClearDirection == "top" and (clearWY + 1) or (clearWY - 1)\n        end\n    end\n\n    if targetX and targetY then\n        while GetTile(targetX, targetY).flags and GetTile(targetX, targetY).flags.water do\n            if not Run or Paused or not Config.AutoClearWater then return end\n            SendPacketRaw(false, {\n                type  = 3,\n                value = Config.ClearSpongeID,\n                px    = targetX,\n                py    = targetY,\n                x     = targetX * 32,\n                y     = targetY * 32\n            })\n            Sleep(Config.ClearDelay)\n        end\n        clearWX = targetX + 1\n        if clearWX >= world.width then\n            clearWX = 0\n            clearWY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)\n        end\n    else\n        Log("`2[Auto Clear Water] `0Finished clearing water!")\n        Config.AutoClearWater = false\n        clearWX, clearWY = nil, nil\n    end\nend\n\n-- ============================================================\n-- MAIN PUNCH LOOP\n-- ============================================================\n\nLog("Script loaded! Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")\nLog("Punching with ItemID: " .. Config.ItemID)\nLog("Type `4/stop`9 to stop the script.")\n\nlocal punchCount = 0\n\n-- Wait for world to load first, but allow breaking out if UI toggles Run\nwhile true do\n    if Run and not Paused then\n        if not GetLocal() or not GetWorld() then\n            Sleep(500)\n        else\n            -- Check start position once world is loaded\n            if not startX then\n                startX = math.floor(GetLocal().pos.x / 32)\n                startY = math.floor(GetLocal().pos.y / 32)\n                Log("World detected: `e" .. GetWorld().name)
+    PlaceDirection  = "top", -- "top" to start from sky downwards, "bottom" to start from bedrock upwards
+    PlaceDelay      = 200,   -- Delay after placing an item (ms)
+    PlaceResupplyMode = 0,   -- 0 = Stop, 1 = Backpack
+
+    AutoCreateFarm   = false,
+    CreateFarmTarget = 3018,
+    CreateFarmDirection = "bottom",
+    CreateFarmDelay  = 200,
+
+    AutoPunchWorld   = false, -- If true, breaks a specific block ID across the whole world
+    PunchWorldTarget = 4584,  -- Item ID of the block to punch
+    PunchWorldHarvestMode = false, -- Teleports player to x=0 of the current row being punched
+
+    PunchDirection   = "top", -- "top" or "bottom"
+    PunchWorldDelay  = 200,   -- Delay between punches (ms)
+
+    TeleportX       = 0,     -- Target X coordinate for instant teleport
+    TeleportY       = 0,     -- Target Y coordinate for instant teleport
+
+    DebugSendPacket      = false,
+    DebugSendPacketRaw   = false,
+    DebugVariant         = false,
+    DebugWebhookURL  = "https://discord.com/api/webhooks/1529551010459029565/Nsz5X3y8ibL0jdWeDWX1jLiTPXfb_yA9FVFLuUTY6ns-ZNdBUmBKhmwQfwe5pIdW4N4n",    -- Your Discord webhook URL
+    DebugRateLimit   = 2000,  -- Min ms between webhook messages
+
+    -- Whitelisted User IDs: players with these UIDs will NOT trigger a pause.
+    -- Add as many as you need. Find a player's UID in the console log when they join.
+    Whitelist = {
+        13162237,
+        1549933,
+    },
+
+    AutoJoin       = false, -- If true, automatically attempts to join JoinWorld
+    JoinWorld      = "",    -- World name to automatically join
+    JoinDelay      = 5000,  -- Delay between join attempts in ms
+    
+    -- Auto Joiner Engine Settings
+    AutoJoinRunning       = false,
+    Join2LetterWorlds     = false,
+    Join3LetterWorlds     = false,
+    Join4LetterWorlds     = false,
+    Start2Letter          = "aa", 
+    JoinViralWorlds       = false,
+    JoinPopularWorlds     = false,
+    JoinBuyWorlds         = false,
+    JoinBuyItemWorlds     = false,
+    JoinLiveWOTD          = false,
+    JoinHistoricWOTD      = false,
+    BuyItemStartID        = 0,
+    JoinItemAcronymWorlds = false,
+    JoinPacketDelay       = 1000,
+    JoinTimeoutSeconds    = 10,
+    JoinPlaceItem         = 242,
+    JoinPlaceAndLeave     = true,
+    
+    AutoClearWorld    = false,
+    AutoClearWater    = false,
+    AutoSurgery       = false,
+    AutoSurgeryBuy    = false,
+    SurgeryTotal      = 0,
+    RecordName        = "MyRecord",
+    PlaybackFile      = "MyRecord",
+    ClearDirection    = "top",
+    ClearDelay        = 50,
+    ClearSpongeID     = 822,
+    ClearIgnoreBlocks = {
+        [6] = true,     -- White Door
+        [8] = true,     -- Bedrock
+        [202] = true,
+        [242] = true,   -- Main Door
+        [1796] = true,
+        [4992] = true,
+        [5260] = true,
+        [5638] = true,
+        [6948] = true,
+        [6950] = true,
+        [7188] = true,
+        [10266] = true,
+        [11550] = true
+    },
+}
+
+-- ==========================================================================
+-- WORLD LISTS
+-- ==========================================================================
+local historicWOTDWorlds = {
+    "NASA11", "DUNGEONSUCKERS", "ALBUM", "DEVELOPERS", "GROWTOPIAN",
+    "ITEMS", "AIRSHIP", "KITCHEN", "THEVULCANO", "MARIOMUSIC",
+    "HOCKEYRINK", "MUSEUM", "SUMO", "YHLAND", "7DEADLYSINS",
+    "LOVERSLOUNGE", "PYRAMIDRUN", "THEFINALPARKOUR", "GTVILLAGE", "LOCKSTREET",
+    "EPICWORLD", "ARTGALLERY", "CITYOFLIGHT", "MEDIEVALFORT", "SPACESTATION",
+    "UNDERWATERBASE", "MAGICFOREST", "DRAGONLAIR", "JUNGLEPARADISE",
+    "PIXELPALACE", "HAUNTEDCASTLE", "SAKURAGARDEN", "MECHANICA",
+    "ANCIENTRUINS", "LOSTCITY", "NEONSCAPE", "STEAMPUNKLAB",
+    "WINTERWONDER", "SPRINGBLOOM", "SUMMERSOLSTICE", "AUTUMNLEAF",
+    "DESERTMAZE", "UNDERSEA", "CLOUDKINGDOM", "THUNDERSTORM",
+    "VOLCANOPEAK", "GLACIERFALL", "FORESTSPIRIT", "MOONLIGHTCOVE",
+    "SUNSETSEA", "STARGAZER", "COSMICVOID", "NEBULAHAVEN", "CRYSTALPALACE",
+    "STARLIGHTHAVEN", "FANTASYISLE", "DARKCASTLE", "ENCHANTEDFOREST",
+    "CRYSTALCAVE", "MYSTICISLAND", "CELESTIALRISE", "PRISMATICA",
+    "HORIZONRIFT", "LUNARSPIRE", "STELLARGATE", "DREAMWARDEN",
+    "SOLARISVAULT", "DAWNBREAK", "GROWTOPIAART", "MASTERPIECE",
+    "RAYMANVILLAGE", "ATELIER", "ETERNALVALLEY", "SHADOWNEXUS",
+}
+
+local viralWorlds = {
+    "LOVE", "INDO", "NOOB", "PRO", "RICH", "DONATE", "TRADE",
+    "SELL", "BUY", "HELP", "SCAM", "FREE", "HACK", "FARM",
+}
+
+local popularWorlds = {
+    "START", "SEEDS", "DIRT", "CAVE", "LAVA", "HELL", "HEAVEN",
+    "PARKOUR", "DROP", "GROWTOPIASEED", "GROWTOPIA",
+}
+
+local buyWorlds = {
+    "BUYCLOTHES", "BUYFT", "BUYCHAND", "BUYPINBALL", "BUYGEMS",
+    "BUYWL", "BUYDL", "BUYBGL", "BUYRAYMAN", "BUYMAGPLANT",
+    "BUYGACHA", "BUYSEED", "BUYFARM", "BUYDROP", "BUYITEMS",
+}
+
+local itemAcronyms = {
+    ["World Lock"]              = {"WL"},
+    ["Diamond Lock"]            = {"DL"},
+    ["Blue Gem Lock"]           = {"BGL"},
+    ["Emerald Lock"]            = {"EL"},
+    ["Amethyst Lock"]           = {"AL"},
+    ["Platinum Lock"]           = {"PL"},
+    ["Golden Lock"]             = {"GL"},
+    ["Chandelier"]              = {"CHAND"},
+    ["Fish Tank"]               = {"FT"},
+    ["Magplant 5000"]           = {"MAG", "MAGPLANT"},
+    ["Magplant 5000 Remote"]    = {"MAGREMOTE", "RMAG"},
+    ["Pinball"]                 = {"PINBALL"},
+    ["Gashapon Machine"]        = {"GACHA", "GACH"},
+    ["Growtoken"]               = {"GT"},
+    ["Rayman"]                  = {"RAY"},
+    ["Surgery"]                 = {"SURG"},
+    ["Super Broadcast"]         = {"SB"},
+    ["Super Duper Broadcast"]   = {"SDB"},
+    ["Super Fireworks"]         = {"SFW"},
+    ["Small Seed Pack"]         = {"SSP"},
+    ["Legendary Wizard"]        = {"LW"},
+    ["Legendary"]               = {"LEG"},
+    ["Wizard Pants"]            = {"WP"},
+    ["Sungate"]                 = {"SG"},
+    ["Startopia"]               = {"ST"},
+    ["Auto Farm"]               = {"AF"},
+    ["Angel Wings"]             = {"AW"},
+    ["Devil Wings"]             = {"DW"},
+    ["Golden Wings"]            = {"GW"},
+    ["Dragon Wings"]            = {"DWING"},
+    ["Harvester of Sorrow"]     = {"HOS"},
+    ["Celestial Wings"]         = {"CW"},
+    ["Fairy Wings"]             = {"FW"},
+    ["Bat Wings"]               = {"BW"},
+    ["Phoenix Wings"]           = {"PW"},
+    ["Dark Wings"]              = {"DKW"},
+    ["Crystal Wings"]           = {"CRW"},
+    ["Steampunk Wings"]         = {"SPW"},
+    ["Neon Wings"]              = {"NW"},
+    ["Mummy"]                   = {"MUM"},
+    ["Fireworks"]               = {"FW"},
+    ["Geiger Charger"]          = {"GC"},
+    ["Geiger"]                  = {"GEI"},
+    ["Spotlight"]               = {"SL"},
+    ["Surg Kit"]                = {"SURGKIT"},
+    ["Laser Grid"]              = {"LG", "LASERGRID"},
+    ["Laser"]                   = {"LASER"},
+    ["Ice Cream Machine"]       = {"ICM"},
+    ["Vending Machine"]         = {"VM"},
+    ["Transmitter"]             = {"TX"},
+    ["Farmable"]                = {"FARM"},
+    ["Golden Booster"]          = {"GB"},
+    ["Fossil"]                  = {"FOSS"},
+    ["Brain"]                   = {"BRAIN"},
+    ["Dirt"]                    = {"DIRT"},
+    ["Lava"]                    = {"LAVA"},
+    ["Rock"]                    = {"ROCK"},
+    ["Bedrock"]                 = {"BED"},
+    ["Chemical G"]              = {"CG"},
+    ["Chemical H"]              = {"CH"},
+    ["Chemical K"]              = {"CK"},
+    ["Chemical R"]              = {"CR"},
+    ["Chemical S"]              = {"CS"},
+    ["Chemical X"]              = {"CX"},
+}
+
+-- State
+local Run          = true
+local Paused       = false
+local lastPlayers  = {}  -- Track previous player list (netid -> name)
+local startX, startY    -- Remember standing position
+
+local modDetected  = false   -- True if a mod/dev was detected invisibly
+local whitelistInput = ""   -- UI text input buffer for adding whitelist UIDs
+local manualGrowID = ""     -- UI text input buffer for manual account creation
+local waitingForBackpackItem = nil -- State for backpack resupply
+
+-- ============================================================
+-- UTILITIES
+-- ============================================================
+
+local function Log(msg)
+    LogToConsole("`0[`2SafePunch`0] `9" .. tostring(msg))
+end
+
+-- ============================================================
+-- DISCORD WEBHOOK
+-- ============================================================
+-- MakeRequest yields internally. It CANNOT be called from a hook
+-- (C-callback boundary). Solution: push jobs to a queue and drain
+-- from a dedicated RunThread where coroutine yields are legal.
+
+local webhookQueue = {} -- { {url, data}, ... }
+
+-- Helper to safely get time without crashing if OS lib is missing in sandbox
+local function GetTimeStr()
+    local t = ""
+    pcall(function()
+        if os and os.date then
+            t = " " .. os.date("[%H:%M:%S]")
+        end
+    end)
+    return t
+end
+
+local function SendToWebhook(content, ignoreConfig)
+    -- Step 1: check enabled
+    if not ignoreConfig and not (Config.DebugSendPacket or Config.DebugSendPacketRaw or Config.DebugVariant) then
+        return
+    end
+    -- Step 2: check URL
+    if Config.DebugWebhookURL == "" then
+        Log("`4[WH] No webhook URL set.")
+        return
+    end
+    -- Step 3: check MakeRequest exists
+    if not MakeRequest then
+        Log("`4[WH] MakeRequest is nil — not available in this Bothax build.")
+        return
+    end
+    -- Removed cooldown block here so we don't drop fast logs!
+
+    -- Safe JSON string escaper: escapes backslash, quotes, and preserves newlines as \n for Discord
+    local function esc(s)
+        s = tostring(s)
+        s = s:gsub("\\", "\\\\")    -- backslash first
+        s = s:gsub('"',  '\\"')     -- double quotes
+        s = s:gsub("\r", "")        -- strip carriage return
+        s = s:gsub("\n", "\n")     -- encode newlines as literal \n for JSON
+        s = s:gsub("\t", " ")       -- replace tabs
+        s = s:gsub("[%z\1-\9\11\12\14-\31]", "") -- strip remaining control chars except \n
+        return s
+    end
+
+    -- Format the message inside a Discord codeblock
+    local msg = "```text\n" .. content .. "\n```"
+    if #msg > 1990 then msg = msg:sub(1, 1990) .. "\n```" end
+
+    local jsonData = '{"content":"' .. esc(msg) .. '"}'
+
+    Log("`e[WH] Queuing webhook job...`0")
+    table.insert(webhookQueue, { url = Config.DebugWebhookURL, body = jsonData })
+end
+
+-- Drain thread — MakeRequest is safe here (own coroutine, can yield freely)
+RunThread(function()
+    Log("`2[WH] Webhook drain thread started.")
+    while true do
+        if #webhookQueue > 0 then
+            local job = table.remove(webhookQueue, 1)
+            Log("`e[WH] Sending...")
+            local headers = {
+                ["Content-Type"] = "application/json",
+                ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            local res = MakeRequest(job.url, "POST", headers, job.body)
+            if res then
+                -- Bothax may use .status, .statusCode or .code
+                local code = res.status or res.statusCode or res.code or 0
+                if code >= 200 and code < 300 then
+                    Log("`2[WH] OK (HTTP " .. tostring(code) .. ")")
+                elseif code == 0 then
+                    -- status 0 = Bothax HTTP client got no parseable response.
+                    -- Retry without explicit headers (some builds need this).
+                    Log("`e[WH] status 0 — retrying without headers...")
+                    local res2 = MakeRequest(job.url, "POST", job.body)
+                    local code2 = (res2 and (res2.status or res2.statusCode or res2.code)) or 0
+                    if code2 >= 200 and code2 < 300 then
+                        Log("`2[WH] OK on retry (HTTP " .. tostring(code2) .. ")")
+                    else
+                        Log("`4[WH] Retry failed (HTTP " .. tostring(code2) .. ") — verify webhook URL or internet")
+                    end
+                else
+                    Log("`4[WH] HTTP " .. tostring(code) .. " — check URL / content")
+                end
+            else
+                Log("`4[WH] MakeRequest returned nil — no network response")
+            end
+            
+            -- Sleep after sending to respect Discord's rate limits
+            Sleep(Config.DebugRateLimit)
+        else
+            Sleep(50)
+        end
+    end
+end)
+
+-- ============================================================
+-- PACKET DEBUG HOOKS
+-- ============================================================
+
+AddHook("onsendpacket", "DebugPacketLogger", function(type, data)
+    if not Config.DebugSendPacket then return false end
+
+    if type == 2 or type == 3 then
+        local out = "SendPacket" .. GetTimeStr() .. "\n"
+        out = out .. "type " .. type .. ": " .. tostring(data)
+        
+        Log("`bSendPacket`0 (type " .. type .. ") logged to WH")
+        SendToWebhook(out)
+    end
+    return false
+end)
+
+-- onsendpacketraw passes a single table argument containing the packet properties
+AddHook("onsendpacketraw", "DebugPacketRawLogger", function(packet)
+    if not Config.DebugSendPacketRaw then return false end
+
+    if type(packet) == "table" then
+        local out = "SendPacketRaw" .. GetTimeStr() .. "\n"
+        out = out .. "type: " .. tostring(packet.type or 0) .. "\n"
+        out = out .. "dropped: " .. tostring(packet.dropped or 0) .. "\n"
+        out = out .. "padding1: " .. tostring(packet.padding1 or 0) .. "\n"
+        out = out .. "padding2: " .. tostring(packet.padding2 or 0) .. "\n"
+        out = out .. "netid: " .. tostring(packet.netid or 0) .. "\n"
+        out = out .. "snetid: " .. tostring(packet.snetid or 0) .. "\n"
+        out = out .. "state: " .. tostring(packet.state or 0) .. "\n"
+        out = out .. "padding4: " .. string.format("%.3f", tonumber(packet.padding4) or 0.0) .. "\n"
+        out = out .. "value: " .. tostring(packet.value or 0) .. "\n"
+        out = out .. "x, y: " .. string.format("%.3f", tonumber(packet.x) or 0.0) .. " " .. string.format("%.3f", tonumber(packet.y) or 0.0) .. "\n"
+        out = out .. "xspeed, yspeed: " .. string.format("%.3f", tonumber(packet.xspeed) or 0.0) .. " " .. string.format("%.3f", tonumber(packet.yspeed) or 0.0) .. "\n"
+        out = out .. "padding5: " .. tostring(packet.padding5 or 0) .. "\n"
+        out = out .. "tilex, tiley: " .. tostring(packet.px or 0) .. " " .. tostring(packet.py or 0) .. "\n"
+        out = out .. "extDataSize: " .. tostring(packet.extDataSize or 0)
+
+        Log("`eSendPacketRaw`0 logged to WH")
+        SendToWebhook(out)
+    else
+        Log("`eSendPacketRaw`0: unknown format (" .. type(packet) .. ")")
+    end
+    return false
+end)
+
+AddHook("onvariant", "DebugVariantLogger", function(var)
+    if not Config.DebugVariant then return false end
+
+    if type(var) == "table" then
+        local out = "VariantList" .. GetTimeStr() .. "\n"
+        for k, v in pairs(var) do
+            out = out .. "params " .. tostring(k) .. ": " .. tostring(v) .. "\n"
+        end
+        Log("`dVariantList`0 logged to WH")
+        SendToWebhook(out)
+    end
+    -- We deliberately return false here so we don't accidentally block packets
+    -- (ModDevDetector has its own hook and returns false as well)
+    return false
+end)
+
+-- Returns true if a userid is in the whitelist or is the local player
+local function ConfigCheckbox(label, key)
+    local c, v = ImGui.Checkbox(label, Config[key])
+    if c then
+        Config[key] = v
+        if Paused then PreviousConfig[key] = v end
+    end
+    return c, v
+end
+
+local function IsWhitelisted(userid)
+    local local_ = GetLocal()
+    if local_ and local_.userid and tonumber(local_.userid) == tonumber(userid) then return true end
+    for _, uid in ipairs(Config.Whitelist) do
+        if tonumber(uid) == tonumber(userid) then return true end
+    end
+    return false
+end
+
+
+-- ============================================================
+-- GHOST PLAYER PATCH (Fixes GetPlayerList caching bug)
+-- ============================================================
+-- forceLeft: netid -> true, means this player has been confirmed gone
+-- We reset it each time WE enter a new world (OnSendPacket join_request)
+local forceLeft = {}
+local lastPlayersRef = {} -- for name resolving on leave
+
+-- Bug fix: Use correct PascalCase hook names per Bothax API docs
+-- 'OnSendPacket'  fires when WE send a packet (client -> server)
+-- 'OnProcessTankUpdate' fires when server sends us a tank update packet
+
+-- Reset forceLeft when we ourselves join a new world
+AddHook("OnSendPacket", "GhostPlayerCleanupSend", function(type, packet)
+    if type == 3 and packet:find("action|join_request") then
+        forceLeft = {}
+        lastPlayersRef = {}
+        Log("`9[GhostPatch] World change detected - clearing player cache.`0")
+    end
+    return false
+end)
+
+-- Detect when server sends OnRemove to evict a player's avatar
+AddHook("OnVariant", "GhostPlayerCleanupVariant", function(var)
+    -- OnRemove is sent by the server when a player's entity is removed
+    -- var[1] is the netid as an integer in Bothax
+    if var[0] == "OnRemove" then
+        local netid = tonumber(var[1])
+        if netid then
+            forceLeft[netid] = true
+            Log("`9[GhostPatch] Forced evict netid " .. tostring(netid) .. "`0")
+        end
+    end
+    
+    -- Also catch console message "PlayerName left, X others here"
+    if var[0] == "OnConsoleMessage" and type(var[1]) == "string" and var[1]:find("left,") then
+        local nameStr = var[1]:match("`w([^`]+) left,")
+        if nameStr then
+            for netid, info in pairs(lastPlayersRef) do
+                if info.name == nameStr then
+                    forceLeft[netid] = true
+                    Log("`9[GhostPatch] Forced evict by name: " .. nameStr .. "`0")
+                end
+            end
+        end
+    end
+    return false
+end)
+
+-- ============================================================
+-- MOD / DEVELOPER DETECTION (invisible entry)
+-- ============================================================
+-- Developers and Moderators can enter invisible (not in GetPlayerList).
+-- They trigger an OnSpawn variant where their properties are sent.
+
+AddHook("onvariant", "ModDevDetector", function(var)
+    if var[0] == "OnSpawn" then
+        local spawnData = tostring(var[1] or "")
+        -- Check for Developer/Moderator type flags or invisible states
+        local typeVal = tonumber(spawnData:match("type|(%d+)"))
+        local isMod = typeVal and ((typeVal & 4) ~= 0)
+        local isDev = typeVal and ((typeVal & 8) ~= 0)
+        
+        -- Also check for invis/mstate flags that might indicate staff
+        local isInvis = spawnData:find("invis|1") or spawnData:find("mstate|1")
+        
+        local name = spawnData:match("name|([^\n]+)") or "Unknown"
+        local userid = tonumber(spawnData:match("userID|(%d+)"))
+        
+        -- We ignore our own spawn packet (Growtopia sends local|1 for the local player)
+        if spawnData:find("\nlocal|1\n") or spawnData:find("local|1") then
+            return false
+        end
+        
+        -- Fallback local player check using userid
+        local local_ = GetLocal()
+        if local_ and local_.userid and userid == local_.userid then
+            return false
+        end
+        
+        -- Also ignore if they are in our whitelist (so you can whitelist your mod friends)
+        if userid and IsWhitelisted(userid) then
+            return false
+        end
+
+        if isMod or isDev or isInvis then
+            local role = isDev and "`4[DEVELOPER]" or (isMod and "`6[MODERATOR]" or "`b[INVISIBLE STAFF]")
+            Log("`4ALL FEATURES PAUSED! " .. role .. "`0 detected entering world: `e" .. name)
+            modDetected = true
+            Paused = true
+            Run = false
+        end
+    end
+    
+    if var[0] == "OnDialogRequest" and Config.AutoMagplant and type(var[1]) == "string" then
+        if var[1]:find("MAGPLANT") or var[1]:find("itemsucker_block") or var[1]:find("itemremovedfromsucker") then
+            if var[1]:find("itemsucker_block") then
+                local tx = var[1]:match("embed_data|tilex|(%d+)")
+                local ty = var[1]:match("embed_data|tiley|(%d+)")
+                local itemID = var[1]:match("add_label_with_icon|small|[^|]*|left|(%d+)|")
+                local amount = var[1]:match("The machine contains (%d+)")
+                
+                if tx and ty then
+                    local ix, iy = tonumber(tx), tonumber(ty)
+                    for _, m in ipairs(MagplantsList or {}) do
+                        if m.x == ix and m.y == iy then
+                            if itemID then m.itemID = tonumber(itemID) end
+                            if amount then m.amount = tonumber(amount) end
+                            break
+                        end
+                    end
+                end
+            end
+            return true
+        end
+    end
+    
+    -- Handle Backpack Resupply UI parsing
+    if var[0] == "OnDialogRequest" and type(var[1]) == "string" and var[1]:find("backpack_menu") then
+        if waitingForBackpackItem then
+            local dialog = var[1]
+            local itemIDStr = tostring(waitingForBackpackItem)
+            -- Match: add_button_with_icon|<SLOT>|<Name>|frame|<ITEM_ID>|<AMOUNT>|
+            local pattern = "add_button_with_icon|(%d+)|[^|]*|frame|" .. itemIDStr .. "|"
+            local slot = dialog:match(pattern)
+            
+            if slot then
+                SendPacket(2, "action|dialog_return\ndialog_name|backpack_menu\nbuttonClicked|" .. slot)
+                Log("`2Resupplied item `b" .. itemIDStr .. "`2 from backpack slot `b" .. slot .. "`0")
+            else
+                Log("`4Item `b" .. itemIDStr .. "`4 not found in backpack! Pausing AutoPlace.`0")
+                Config.AutoPlace = false
+            end
+            
+            waitingForBackpackItem = nil
+            return true -- Block the dialog from showing on screen
+        elseif (Config.AutoBackpack or Config.AutoMagplant) and Run and not Paused then
+            -- Block the dialog from popping up randomly when the bot is auto-stashing items
+            return true
+        end
+    end
+    
+    return false
+end)
+
+-- Get a table of current players (excluding local player), keyed by netid
+local function GetOtherPlayers()
+    local players = {}
+    local local_ = GetLocal()
+    if not local_ then return players end
+
+    local list = GetPlayerList()
+    if not list then return players end
+
+    for _, p in pairs(list) do
+        if p then
+            local isLocal = false
+            if p.netid == local_.netid then isLocal = true end
+            if p.userid and local_.userid and tonumber(p.userid) == tonumber(local_.userid) then isLocal = true end
+            if p.name and local_.name and p.name == local_.name then isLocal = true end
+            if not isLocal and not forceLeft[p.netid] then
+                players[p.netid] = { name = p.name, userid = p.userid }
+                lastPlayersRef[p.netid] = { name = p.name, userid = p.userid }
+            end
+
+        end
+    end
+    return players
+end
+
+-- Punch the target tile once
+local punchSavedLocX = nil
+local punchSavedLocY = nil
+
+local function PunchTile()
+    if Config.AutoPunchAntiMove then
+        local local_ = GetLocal()
+        if local_ then
+            if punchSavedLocX == nil then
+                punchSavedLocX = local_.pos.x
+                punchSavedLocY = local_.pos.y
+            else
+                local dx = math.abs(local_.pos.x - punchSavedLocX)
+                local dy = math.abs(local_.pos.y - punchSavedLocY)
+                if dx > 1 or dy > 1 then
+                    -- Send state packet to correct position
+                    SendPacketRaw(false, {
+                        type = 0,
+                        x = punchSavedLocX,
+                        y = punchSavedLocY,
+                        px = 0,
+                        py = 0
+                    })
+                    -- Also update local position if possible? Actually just sending the packet is enough to prevent moving visually to others and server.
+                end
+            end
+        end
+    else
+        punchSavedLocX = nil
+        punchSavedLocY = nil
+    end
+
+    -- If auto punch was turned off, clear location elsewhere. Wait, if we are in PunchTile, AutoPunch is true.
+
+    SendPacketRaw(false, {
+        type  = 3,
+        value = Config.ItemID,
+        px    = Config.TileX,
+        py    = Config.TileY,
+        x     = Config.TileX * 32,
+        y     = Config.TileY * 32,
+    })
+end
+
+-- Helper function to check inventory count of an item
+local function GetItemCount(id)
+    local inv = GetInventory()
+    if not inv then return 0 end
+    for _, itm in pairs(inv) do
+        if itm.id == id then
+            return itm.amount
+        end
+    end
+    return 0
+end
+
+-- Check inventory and stash to backpack if needed
+local function CheckBackpack()
+    if not Config.AutoBackpack then return end
+    
+    for _, id in ipairs(Config.BackpackList) do
+        if GetItemCount(id) >= Config.AutoBackpackLimit then
+            Log("Inventory full! Stashing ID `b" .. tostring(id) .. "`0 to backpack...")
+            SendPacket(2, "action|dialog_return\ndialog_name|backpack_menu\nitemid|" .. tostring(id))
+            Sleep(500) -- Delay to prevent packet spam
+        end
+    end
+end
+
+-- Helper function to check if item is in take list
+local function IsInTakeList(id)
+    for _, listId in ipairs(Config.TakeList) do
+        if listId == id then return true end
+    end
+    return false
+end
+
+-- Helper function to calculate distance
+local function GetDistance(x1, y1, x2, y2)
+    return math.sqrt((x2 - x1)^2 + (y2 - y1)^2)
+end
+
+-- Collect floating items and return to start position
+local function CollectItems()
+    local objs = GetObjectList()
+    if not objs then return end
+
+    local validObjs = {}
+    local localPos = GetLocal().pos
+
+    for _, obj in pairs(objs) do
+        local shouldTake = not Config.UseTakeList
+        if Config.UseTakeList and IsInTakeList(obj.id) then
+            shouldTake = true
+        end
+        if shouldTake then
+            table.insert(validObjs, obj)
+        end
+    end
+
+    -- Sort by distance to player (closest first)
+    table.sort(validObjs, function(a, b)
+        return GetDistance(localPos.x, localPos.y, a.pos.x, a.pos.y) < GetDistance(localPos.x, localPos.y, b.pos.x, b.pos.y)
+    end)
+
+    local moved = false
+    for _, obj in ipairs(validObjs) do
+        -- Abort immediately if a stranger enters while we are collecting
+        if Paused then break end
+
+        local objX = math.floor(obj.pos.x / 32)
+        local objY = math.floor(obj.pos.y / 32)
+        
+        -- Only move if it's not on our exact current tile
+        local currPos = GetLocal().pos
+        local currX = math.floor(currPos.x / 32)
+        local currY = math.floor(currPos.y / 32)
+        
+        if currX ~= objX or currY ~= objY then
+            if Config.TeleportToItems then
+                -- 0ms delay pathing (extremely fast walking, acts like teleport to server)
+                FindPath(objX, objY, 0)
+                Sleep(50)
+            else
+                FindPath(objX, objY, 100)
+                Sleep(200)
+            end
+            moved = true
+        end
+
+        -- After picking up each item, check if backpack needs stashing
+        if Config.AutoBackpack then
+            CheckBackpack()
+        end
+    end
+
+    if moved and startX and startY then
+        -- Return to original position
+        if Config.TeleportToItems then
+            FindPath(startX, startY, 0)
+            Sleep(50)
+        else
+            FindPath(startX, startY, 100)
+            Sleep(300)
+        end
+    end
+end
+
+-- ============================================================
+-- AUTO PLACE LOGIC
+-- ============================================================
+local placeX, placeY = nil, nil
+local placeGrid = nil        -- cached tile grid
+local placeGridWorld = nil   -- world name when grid was built
+local placeGridW, placeGridH = 0, 0
+
+
+local function InitializePlace()
+    local world = GetWorld()
+    if not world then return end
+    if Config.PlaceDirection == "top" then
+        placeY = 0
+    else
+        placeY = world.height - 1
+    end
+    placeX = 0
+    -- Force grid rebuild on start
+    placeGrid = nil
+    placeGridWorld = nil
+end
+
+
+local farmWX, farmWY = nil, nil
+
+local function InitializeCreateFarm()
+    local world = GetWorld()
+    if not world then return end
+    if Config.CreateFarmDirection == "top" then
+        farmWY = 0
+    else
+        farmWY = world.height - 1
+    end
+    farmWX = 0
+end
+
+local function AutoCreateFarmStep()
+    local world = GetWorld()
+    if not world then return end
+
+    if farmWX == nil or farmWY == nil then
+        InitializeCreateFarm()
+    end
+
+    local targetX, targetY = nil, nil
+
+    while true do
+        if Config.CreateFarmDirection == "top" and farmWY >= world.height then break end
+        if Config.CreateFarmDirection == "bottom" and farmWY < 0 then break end
+
+        -- Skip logic based on direction (alternating rows)
+        local isRowValid = false
+        if Config.CreateFarmDirection == "top" then
+            isRowValid = (farmWY % 2 == 1)
+        else
+            isRowValid = ((world.height - 1 - farmWY) % 2 == 1)
+        end
+
+        if isRowValid then
+            -- Skip if placing on local player pos
+            local local_ = GetLocal()
+            local pX = local_ and math.floor(local_.pos.x / 32)
+            local pY = local_ and math.floor(local_.pos.y / 32)
+            local isPlayerPos = (pX == farmWX and pY == farmWY)
+
+            if not isPlayerPos then
+                local tile = GetTile(farmWX, farmWY)
+                if tile and tile.fg == 0 then
+                    targetX = farmWX
+                    targetY = farmWY
+                    break
+                end
+            end
+        end
+
+        farmWX = farmWX + 1
+        if farmWX >= world.width then
+            farmWX = 0
+            farmWY = Config.CreateFarmDirection == "top" and (farmWY + 1) or (farmWY - 1)
+        end
+    end
+
+    if targetX and targetY then
+        -- Check inventory
+        if GetItemCount(Config.CreateFarmTarget) == 0 then
+            if Config.PlaceResupplyMode == 1 then
+                Log("`eOut of items! Attempting to resupply from backpack...`0")
+                if TryResupplyFromBackpack(Config.CreateFarmTarget) then
+                    return -- Wait for backpack UI to process
+                else
+                    Log("`4Failed to resupply! Out of items in backpack too. Stopping.`0")
+                    Config.AutoCreateFarm = false
+                    return
+                end
+            else
+                Log("`4Out of items! Stopping Auto Create Farm.`0")
+                Config.AutoCreateFarm = false
+                return
+            end
+        end
+
+        while GetTile(targetX, targetY).fg == 0 do
+            if not Run or Paused or not Config.AutoCreateFarm then return end
+            SendPacketRaw(false, {
+                type  = 3,
+                value = Config.CreateFarmTarget,
+                px    = targetX,
+                py    = targetY,
+                x     = targetX * 32,
+                y     = targetY * 32
+            })
+            Sleep(Config.CreateFarmDelay)
+        end
+
+        farmWX = targetX + 1
+        if farmWX >= world.width then
+            farmWX = 0
+            farmWY = Config.CreateFarmDirection == "top" and (targetY + 1) or (targetY - 1)
+        end
+    else
+        Log("`2[Auto Create Farm] `0Finished placing!")
+        Config.AutoCreateFarm = false
+    end
+end
+
+local function AutoPlaceStep()
+    local world = GetWorld()
+    if not world then return end
+
+    if placeX == nil or placeY == nil then
+        InitializePlace()
+    end
+
+    local targetX, targetY = nil, nil
+
+    while true do
+        if Config.PlaceDirection == "top" and placeY >= world.height then break end
+        if Config.PlaceDirection == "bottom" and placeY < 0 then break end
+
+        -- Skip if placing on local player pos
+        local local_ = GetLocal()
+        local pX = local_ and math.floor(local_.pos.x / 32)
+        local pY = local_ and math.floor(local_.pos.y / 32)
+        local isPlayerPos = (pX == placeX and pY == placeY)
+
+        if not isPlayerPos then
+            local tile = GetTile(placeX, placeY)
+            if tile and tile.fg == 0 then
+                targetX = placeX
+                targetY = placeY
+                break
+            end
+        end
+
+        placeX = placeX + 1
+        if placeX >= world.width then
+            placeX = 0
+            placeY = Config.PlaceDirection == "top" and (placeY + 1) or (placeY - 1)
+        end
+    end
+
+    if targetX and targetY then
+        -- Check inventory
+        if GetItemCount(Config.PlaceItemID) == 0 then
+            if Config.PlaceResupplyMode == 1 then
+                Log("`eOut of items! Attempting to resupply from backpack...`0")
+                if TryResupplyFromBackpack() then
+                    return -- Sleep until next loop
+                else
+                    Log("`4Failed to resupply! Out of items in backpack too. Stopping.`0")
+                    Config.AutoPlace = false
+                    return
+                end
+            else
+                Log("`4[Auto Place] `0Out of items! Stopping.")
+                Config.AutoPlace = false
+                return
+            end
+        end
+
+        while GetTile(targetX, targetY).fg == 0 do
+            if not Run or Paused or not Config.AutoPlace then return end
+            SendPacketRaw(false, {
+                type  = 3,
+                value = Config.PlaceItemID,
+                px    = targetX,
+                py    = targetY,
+                x     = targetX * 32,
+                y     = targetY * 32
+            })
+            Sleep(Config.PlaceDelay)
+        end
+        placeX = targetX + 1
+        if placeX >= world.width then
+            placeX = 0
+            placeY = Config.PlaceDirection == "top" and (targetY + 1) or (targetY - 1)
+        end
+    else
+        Log("`2[Auto Place] `0Finished placing!")
+        Config.AutoPlace = false
+        placeX, placeY = nil, nil
+    end
+end
+
+-- ============================================================
+-- AUTO PUNCH WORLD LOGIC
+-- ============================================================
+local punchWX, punchWY = nil, nil
+local lastHarvestY = nil
+local punchGrid = nil
+
+local punchGridWorld = nil
+local punchGridW, punchGridH = 0, 0
+
+
+local function InitializePunchWorld()
+    local world = GetWorld()
+    if not world then return end
+    if Config.PunchDirection == "top" then
+        punchWY = 0
+    else
+        punchWY = world.height - 1
+    end
+    lastHarvestY = nil
+    punchWX = 0
+
+    punchGrid = nil
+    punchGridWorld = nil
+end
+
+
+MagplantsList = {}
+local currentMagplantIndex = 1
+
+function ScanMagplants()
+    MagplantsList = {}
+    currentMagplantIndex = 1
+    local world = GetWorld()
+    if not world then return end
+    
+    for x = 0, world.width - 1 do
+        for y = 0, world.height - 1 do
+            local fg = GetTile(x, y).fg
+            if fg == 5638 or fg == 5930 then
+                table.insert(MagplantsList, {x = x, y = y, itemID = nil, amount = nil})
+            end
+        end
+    end
+    Log("`2[Auto Magplant] Scanned and found `b" .. #MagplantsList .. "`2 magplants in world.`0")
+    if #MagplantsList == 0 then
+        Config.AutoMagplant = false
+    end
+end
+
+local function AutoMagplantStep()
+    if not Config.AutoMagplant then return end
+    if currentMagplantIndex > #MagplantsList then
+        Log("`2[Auto Magplant] All magplants processed! Stopping.`0")
+        Config.AutoMagplant = false
+        return
+    end
+    
+    local m = MagplantsList[currentMagplantIndex]
+    
+    -- Wrench magplant to open dialog (this updates itemID and amount asynchronously via OnVariant)
+    SendPacketRaw(false, {type = 3, value = 32, px = m.x, py = m.y, x = m.x * 32, y = m.y * 32})
+    Sleep(Config.MagplantDelay)
+    
+    if not Run or Paused or not Config.AutoMagplant then return end
+    
+    -- If amount is 0 (or was updated to 0), skip to next
+    if m.amount and m.amount == 0 then
+        Log("`4[Auto Magplant] Magplant at " .. m.x .. "," .. m.y .. " is empty! Moving to next.`0")
+        currentMagplantIndex = currentMagplantIndex + 1
+        return
+    end
+    
+    -- Attempt retrieve
+    SendPacket(2, "action|dialog_return\ndialog_name|itemsucker_block\ntilex|" .. m.x .. "|\ntiley|" .. m.y .. "|\nbuttonClicked|retrieveitem\n\nchk_enablesucking|1\n")
+    Sleep(Config.MagplantDelay)
+    
+    if not Run or Paused or not Config.AutoMagplant then return end
+    
+    SendPacket(2, "action|dialog_return\ndialog_name|itemremovedfromsucker\ntilex|" .. m.x .. "|\ntiley|" .. m.y .. "|\nitemtoremove|250\n")
+    Sleep(Config.MagplantDelay)
+    
+    -- Stash to backpack if we know the item ID
+    if m.itemID then
+        SendPacket(2, "action|dialog_return\ndialog_name|backpack_menu\nitemid|" .. tostring(m.itemID))
+        Sleep(Config.MagplantDelay)
+    end
+end
+
+local function AutoPunchWorldStep()
+    local world = GetWorld()
+    if not world then return end
+
+    if punchWX == nil or punchWY == nil then
+        InitializePunchWorld()
+    end
+
+    local targetX, targetY = nil, nil
+
+    while true do
+        if Config.PunchDirection == "top" and punchWY >= world.height then break end
+        if Config.PunchDirection == "bottom" and punchWY < 0 then break end
+
+        local realTile = GetTile(punchWX, punchWY)
+        if realTile and realTile.fg == Config.PunchWorldTarget then
+            targetX = punchWX
+            targetY = punchWY
+            break
+        end
+
+        punchWX = punchWX + 1
+        if punchWX >= world.width then
+            punchWX = 0
+            punchWY = Config.PunchDirection == "top" and (punchWY + 1) or (punchWY - 1)
+        end
+    end
+
+    if targetX and targetY then
+        if Config.PunchWorldHarvestMode and lastHarvestY ~= targetY then
+            lastHarvestY = targetY
+            SendPacketRaw(false, {
+                type = 0,
+                x = 0,
+                y = targetY * 32,
+                px = 0,
+                py = 0
+            })
+            Log("`2[Harvest Mode] Teleported to start of row Y: " .. targetY .. "`0")
+            Sleep(200)
+        end
+        -- Match exactly the method from clearworldandwaterputlgrid.lua but without retries
+        while GetTile(targetX, targetY).fg == Config.PunchWorldTarget do
+            if not Run or Paused or not Config.AutoPunchWorld then return end
+            SendPacketRaw(false, {
+                type  = 3,
+                value = 18,
+                px    = targetX,
+                py    = targetY,
+                x     = targetX * 32,
+                y     = targetY * 32
+            })
+            Sleep(Config.PunchWorldDelay)
+        end
+        -- UPDATE NEXT TARGET TO PREVENT RESCANNING SAME BLOCK
+        punchWX = targetX + 1
+        if punchWX >= world.width then
+            punchWX = 0
+            punchWY = Config.PunchDirection == "top" and (targetY + 1) or (targetY - 1)
+        end
+    else
+        Log("`2[Auto Punch World] `0Finished punching!")
+        Config.AutoPunchWorld = false
+        punchWX, punchWY = nil, nil
+    end
+end
+
+-- ============================================================
+-- IMGUI UI
+-- ============================================================
+local function CreateRandomAccount()
+    local letters = "abcdefghijklmnopqrstuvwxyz"
+    local name = ""
+    for i = 1, 3 do
+        local r = math.random(1, #letters)
+        name = name .. letters:sub(r, r)
+    end
+    name = name .. tostring(math.random(10, 99))
+    
+    local password = name
+    local email = name .. "@gmail.com"
+    
+    local packet = "action|dialog_return\ndialog_name|growid_apply\nman|1\nwoman|0\n"
+    packet = packet .. "logon|" .. name .. "\n"
+    packet = packet .. "password|" .. password .. "\n"
+    packet = packet .. "password_verify|" .. password .. "\n"
+    packet = packet .. "email|" .. email .. "\n"
+    packet = packet .. "affcode|"
+    
+    SendPacket(2, packet)
+    Log("`2Auto Created Account! Name: `0" .. name)
+    
+    local whLog = "```yaml\n"
+    whLog = whLog .. "New Account Created:\n"
+    whLog = whLog .. "GrowID: " .. name .. "\n"
+    whLog = whLog .. "Password: " .. password .. "\n"
+    whLog = whLog .. "Email: " .. email .. "\n"
+    whLog = whLog .. "```"
+    
+    SendToWebhook(whLog, true)
+end
+
+local guiOpen = true
+
+local function ShowUI()
+    if not ImGui then return end
+    if not guiOpen then return end
+
+    local world  = GetWorld()
+    local local_ = GetLocal()
+
+    -- Match sb imgui.lua pattern exactly:
+    -- ImGui.End() must be INSIDE the if block
+    if guiOpen and ImGui.Begin("SafePunch v1.40", guiOpen) then
+
+        -- Status bar
+        local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
+        ImGui.Text(statusTxt)
+        ImGui.Text("World: " .. (world and world.name or "N/A") .. "  |  Player: " .. (local_ and local_.name or "N/A"))
+        ImGui.Separator()
+
+        if ImGui.Button("Get Server Info") then
+            local client = type(GetClient) == "function" and GetClient() or {}
+            
+            local dump = {}
+            for k, v in pairs(client) do
+                if type(v) == "string" or type(v) == "number" then
+                    table.insert(dump, tostring(k) .. "=" .. tostring(v))
+                end
+            end
+            
+            local host = client.host or client.ip or client.server or client.address or "Unknown"
+            local port = client.port or "Unknown"
+            local ping = client.ping or "Unknown"
+            
+            LogToConsole("`9[SERVER INFO] `0Host: `2" .. tostring(host) .. " `0Port: `2" .. tostring(port) .. " `0Ping: `2" .. tostring(ping) .. " ms")
+            if #dump > 0 then LogToConsole("`6[DEBUG CLIENT KEYS] `0" .. table.concat(dump, ", ")) end
+            
+            if type(GetServer) == "function" then
+                local srv = GetServer()
+                if type(srv) == "table" then
+                    local sd = {}
+                    for k, v in pairs(srv) do
+                        if type(v) == "string" or type(v) == "number" then table.insert(sd, tostring(k).."="..tostring(v)) end
+                    end
+                    if #sd > 0 then LogToConsole("`6[DEBUG SERVER KEYS] `0" .. table.concat(sd, ", ")) end
+                elseif type(srv) == "string" then
+                    LogToConsole("`6[DEBUG SERVER STRING] `0" .. srv)
+                end
+            end
+        end
+        ImGui.Separator()
+
+          -- AUTO SURGERY
+        if ImGui.CollapsingHeader("Auto Surgery") then
+            local cS, vS = ConfigCheckbox("Enable Auto Surgery", "AutoSurgery")
+            if cS then Config.AutoSurgery = vS end
+
+            ImGui.SameLine()
+            local cSB, vSB = ImGui.Checkbox("Auto Buy Surg Kits", Config.AutoSurgeryBuy)
+            if cSB then Config.AutoSurgeryBuy = vSB end
+
+            ImGui.Text("Total Surgeries Done: " .. Config.SurgeryTotal)
+            ImGui.Text("`9How to use:`0 Wrench a player with a Surg-E to start!")
+        end
+
+        ImGui.Separator()
+
+        -- RECORD & PLAY
+        if ImGui.CollapsingHeader("Record & Play") then
+            local cRec, vRec = ImGui.InputText("Recording Name", Config.RecordName, 64)
+            if cRec then Config.RecordName = vRec end
+            
+            if isRecording then
+                if ImGui.Button("STOP RECORDING") then
+                    isRecording = false
+                    Log("`4Recording stopped. " .. #recordData .. " packets captured.")
+                    SaveRecording(Config.RecordName)
+                end
+                ImGui.Text("`4Recording in progress... Packets: " .. #recordData)
+            else
+                if ImGui.Button("START RECORDING") then
+                    recordData = {}
+                    lastPacketTime = 0
+                    isRecording = true
+                    Log("`2Recording started...")
+                end
+            end
+            
+            ImGui.Separator()
+            
+            local cPlay, vPlay = ImGui.InputText("Playback File", Config.PlaybackFile, 64)
+            if cPlay then Config.PlaybackFile = vPlay end
+            
+            if ImGui.Button("LOAD FILE") then
+                LoadRecording(Config.PlaybackFile)
+            end
+            
+            ImGui.SameLine()
+            if isPlaying then
+                if ImGui.Button("STOP PLAYBACK") then
+                    isPlaying = false
+                end
+            else
+                if ImGui.Button("PLAY RECORDING") then
+                    StartPlayback()
+                end
+            end
+        end
+
+        ImGui.Separator()
+
+        -- PUNCH
+        if ImGui.CollapsingHeader("Auto Punch") then
+            local c, v = ConfigCheckbox("Enable Auto Punch", "AutoPunch")
+            local cAM, vAM = ConfigCheckbox("Anti Move (Stay in place)", "AutoPunchAntiMove")
+
+            local c2, v2 = ImGui.InputInt("Tile X", Config.TileX)
+            if c2 then Config.TileX = v2 end
+
+            local c3, v3 = ImGui.InputInt("Tile Y", Config.TileY)
+            if c3 then Config.TileY = v3 end
+
+            local c4, v4 = ImGui.InputInt("Punch Item ID", Config.ItemID)
+            if c4 then Config.ItemID = v4 end
+
+            local c5, v5 = ImGui.InputInt("Punch Delay ms", Config.PunchDelay)
+            if c5 then Config.PunchDelay = math.max(1, v5) end
+
+            local c6, v6 = ImGui.InputInt("Player Check Delay ms", Config.CheckDelay)
+            if c6 then Config.CheckDelay = math.max(1, v6) end
+        end
+
+        ImGui.Separator()
+
+        -- AUTO JOIN WORLD
+        if ImGui.CollapsingHeader("Auto Join World") then
+            local c, v = ConfigCheckbox("Enable Auto Join", "AutoJoin")
+
+            local c2, v2 = ImGui.InputText("World Name", Config.JoinWorld, 64)
+            if c2 then Config.JoinWorld = v2 end
+
+            local c3, v3 = ImGui.InputInt("Join Delay ms", Config.JoinDelay)
+            if c3 then Config.JoinDelay = math.max(1, v3) end
+        end
+
+        ImGui.Separator()
+
+        -- AUTO TAKE
+        if ImGui.CollapsingHeader("Auto Take Floating Items") then
+            local c, v = ConfigCheckbox("Enable Auto Take", "AutoTake")
+
+            local c2, v2 = ImGui.Checkbox("Use ID List Only (false = take ALL)", Config.UseTakeList)
+            if c2 then Config.UseTakeList = v2 end
+
+            local c3, v3 = ImGui.Checkbox("Teleport To Items [Experimental]", Config.TeleportToItems)
+            if c3 then Config.TeleportToItems = v3 end
+
+            ImGui.Text("Take List IDs (comma separated):")
+            local listStr = table.concat(Config.TakeList, ", ")
+            local c4, v4 = ImGui.InputText("##takelist", listStr, 256)
+            if c4 then
+                local newList = {}
+                for num in v4:gmatch("%d+") do table.insert(newList, tonumber(num)) end
+                Config.TakeList = newList
+            end
+        end
+
+        ImGui.Separator()
+
+        -- WHITELIST MANAGER
+        if ImGui.CollapsingHeader("Whitelist Manager") then
+            ImGui.Text("Current whitelisted UIDs:")
+            if #Config.Whitelist == 0 then
+                ImGui.Text("  (none)")
+            else
+                for i, uid in ipairs(Config.Whitelist) do
+                    ImGui.Text("  [" .. i .. "] UID: " .. tostring(uid))
+                    ImGui.SameLine()
+                    if ImGui.Button("Remove##" .. i) then
+                        table.remove(Config.Whitelist, i)
+                        Log("`4Removed UID " .. tostring(uid) .. " from whitelist.")
+                    end
+                end
+            end
+            ImGui.Separator()
+            ImGui.Text("Add UID to whitelist:")
+            local changed, newVal = ImGui.InputText("##wl_input", whitelistInput, 32)
+            if changed then whitelistInput = newVal end
+            ImGui.SameLine()
+            if ImGui.Button("Add") then
+                local uid = tonumber(whitelistInput)
+                if uid then
+                    table.insert(Config.Whitelist, uid)
+                    Log("`2Added UID " .. tostring(uid) .. " to whitelist.")
+                    whitelistInput = ""
+                else
+                    Log("`4Invalid UID: must be a number.")
+                end
+            end
+            if modDetected then
+                ImGui.Separator()
+                ImGui.Text("!! MOD/DEV DETECTED - ALL PAUSED !!")
+                if ImGui.Button("Clear Mod Alert & Resume") then
+                    modDetected = false
+                    Paused = false
+                    Log("`2Mod alert cleared. Resuming.")
+                end
+            end
+        end
+
+        ImGui.Separator()
+
+        -- AUTO BACKPACK
+        if ImGui.CollapsingHeader("Auto Backpack Stash") then
+            local c, v = ConfigCheckbox("Enable Auto Backpack", "AutoBackpack")
+
+            local c3, v3 = ImGui.InputInt("Stash Limit Quantity", Config.AutoBackpackLimit)
+            if c3 then Config.AutoBackpackLimit = math.max(1, v3) end
+
+            ImGui.Text("Item IDs to stash (comma separated):")
+            local bpStr = table.concat(Config.BackpackList, ", ")
+            local c2, v2 = ImGui.InputText("##bplist", bpStr, 256)
+            if c2 then
+                local newList = {}
+                for num in v2:gmatch("%d+") do table.insert(newList, tonumber(num)) end
+                Config.BackpackList = newList
+            end
+        end
+
+        ImGui.Separator()
+
+        -- AUTO PLACE
+        if ImGui.CollapsingHeader("Auto Create Farm") then
+            local c, v = ConfigCheckbox("Enable Auto Create Farm", "AutoCreateFarm")
+            if c and v then farmWX, farmWY = nil, nil end
+
+            local c2, v2 = ImGui.InputInt("Block Item ID", Config.CreateFarmTarget)
+            if c2 then Config.CreateFarmTarget = v2 end
+
+            local c3, v3 = ImGui.InputInt("Place Delay ms##Farm", Config.CreateFarmDelay)
+            if c3 then Config.CreateFarmDelay = math.max(1, v3) end
+
+            ImGui.Text("Direction:")
+            if ImGui.RadioButton("Top to Bottom##Farm", Config.CreateFarmDirection == "top") then
+                Config.CreateFarmDirection = "top"
+            end
+            ImGui.SameLine()
+            if ImGui.RadioButton("Bottom to Top##Farm", Config.CreateFarmDirection == "bottom") then
+                Config.CreateFarmDirection = "bottom"
+            end
+            
+            if ImGui.RadioButton("Take from Backpack##Farm", Config.PlaceResupplyMode == 1) then
+                Config.PlaceResupplyMode = 1
+            end
+            ImGui.SameLine()
+            if ImGui.RadioButton("Stop if Empty##Farm", Config.PlaceResupplyMode == 0) then
+                Config.PlaceResupplyMode = 0
+            end
+        end
+
+        if ImGui.CollapsingHeader("Auto Place World") then
+            local c, v = ConfigCheckbox("Enable Auto Place", "AutoPlace")
+            if c and v then placeX, placeY = nil, nil end
+
+            local c2, v2 = ImGui.InputInt("Place Item ID", Config.PlaceItemID)
+            if c2 then Config.PlaceItemID = v2 end
+
+            local c3, v3 = ImGui.InputInt("Place Delay ms", Config.PlaceDelay)
+            if c3 then Config.PlaceDelay = math.max(1, v3) end
+
+            ImGui.Text("Direction:")
+            if ImGui.RadioButton("Top to Bottom", Config.PlaceDirection == "top") then
+                Config.PlaceDirection = "top"
+            end
+            ImGui.SameLine()
+            if ImGui.RadioButton("Bottom to Top", Config.PlaceDirection == "bottom") then
+                Config.PlaceDirection = "bottom"
+            end
+
+            ImGui.Separator()
+            ImGui.Text("On Out of Items:")
+            if ImGui.RadioButton("Stop Placing", Config.PlaceResupplyMode == 0) then
+                Config.PlaceResupplyMode = 0
+            end
+            ImGui.SameLine()
+            if ImGui.RadioButton("Take from Backpack", Config.PlaceResupplyMode == 1) then
+                Config.PlaceResupplyMode = 1
+            end
+            ImGui.Separator()
+
+            if placeX ~= nil then
+                ImGui.Text("Progress: x=" .. tostring(placeX) .. " y=" .. tostring(placeY))
+            end
+        end
+
+        ImGui.Separator()
+
+        -- PUNCH WORLD
+        if ImGui.CollapsingHeader("Punch World Blocks") then
+            local c, v = ConfigCheckbox("Enable Punch World", "AutoPunchWorld")
+            if c and v then punchWX, punchWY = nil, nil end
+
+            local cHM, vHM = ConfigCheckbox("Harvest Mode (Teleport to X=0 on row)", "PunchWorldHarvestMode")
+            if cHM and vHM then lastHarvestY = nil end
+
+
+            ImGui.Text("Direction:")
+            if ImGui.RadioButton("Top to Bottom (Punch)", Config.PunchDirection == "top") then
+                Config.PunchDirection = "top"
+            end
+            ImGui.SameLine()
+            if ImGui.RadioButton("Bottom to Top (Punch)", Config.PunchDirection == "bottom") then
+                Config.PunchDirection = "bottom"
+            end
+
+            local c2, v2 = ImGui.InputInt("Target Block ID", Config.PunchWorldTarget)
+            if c2 then Config.PunchWorldTarget = v2 end
+
+            local c3, v3 = ImGui.InputInt("Punch World Delay ms", Config.PunchWorldDelay)
+            if c3 then Config.PunchWorldDelay = math.max(1, v3) end
+
+            if punchWX ~= nil then
+                ImGui.Text("Progress: x=" .. tostring(punchWX) .. " y=" .. tostring(punchWY))
+            end
+        end
+
+        -- AUTO JOINER ENGINE
+        if ImGui.CollapsingHeader("Auto Joiner Engine") then
+            local cJR, vJR = ConfigCheckbox("Start Auto Joiner", "AutoJoinRunning")
+
+            if Config.AutoJoinRunning then
+                ImGui.Text("Status: RUNNING")
+            else
+                ImGui.Text("Status: STOPPED")
+            end
+
+            ImGui.Separator()
+            ImGui.Text("World Generators:")
+            local cL, vL = ImGui.Checkbox("2-Letter Worlds", Config.Join2LetterWorlds)
+            if cL then Config.Join2LetterWorlds = vL end
+            
+            if Config.Join2LetterWorlds then
+                local cL1, vL1 = ImGui.InputText("Start From (e.g. aa, a0, 00)", Config.Start2Letter, 3)
+                if cL1 then Config.Start2Letter = vL1:lower() end
+            end
+
+            local cL3, vL3 = ImGui.Checkbox("3-Letter Worlds", Config.Join3LetterWorlds)
+            if cL3 then Config.Join3LetterWorlds = vL3 end
+
+            local cL4, vL4 = ImGui.Checkbox("4-Letter Worlds", Config.Join4LetterWorlds)
+            if cL4 then Config.Join4LetterWorlds = vL4 end
+
+            local cVi, vVi = ImGui.Checkbox("Viral Worlds", Config.JoinViralWorlds)
+            if cVi then Config.JoinViralWorlds = vVi end
+
+            local cP, vP = ImGui.Checkbox("Popular Worlds", Config.JoinPopularWorlds)
+            if cP then Config.JoinPopularWorlds = vP end
+
+            local cB, vB = ImGui.Checkbox("Buy Worlds", Config.JoinBuyWorlds)
+            if cB then Config.JoinBuyWorlds = vB end
+
+            local cBI, vBI = ImGui.Checkbox("Buy+Item Worlds", Config.JoinBuyItemWorlds)
+            if cBI then Config.JoinBuyItemWorlds = vBI end
+
+            local cLW, vLW = ImGui.Checkbox("Live WOTD (Website)", Config.JoinLiveWOTD)
+            if cLW then Config.JoinLiveWOTD = vLW end
+
+            local cHW, vHW = ImGui.Checkbox("Historic WOTD", Config.JoinHistoricWOTD)
+            if cHW then Config.JoinHistoricWOTD = vHW end
+
+            ImGui.Separator()
+            local cJD, vJD = ImGui.InputInt("Delay Between Worlds ms", Config.JoinPacketDelay)
+            if cJD then Config.JoinPacketDelay = math.max(100, vJD) end
+
+            local cT, vT = ImGui.InputInt("Timeout (seconds)", Config.JoinTimeoutSeconds)
+            if cT then Config.JoinTimeoutSeconds = math.max(1, vT) end
+
+            local cJA, vJA = ImGui.Checkbox("Auto Place Item when joined", Config.JoinPlaceAndLeave)
+            if cJA then Config.JoinPlaceAndLeave = vJA end
+
+            if Config.JoinPlaceAndLeave then
+                local cJI, vJI = ImGui.InputInt("Item to Place", Config.JoinPlaceItem)
+                if cJI then Config.JoinPlaceItem = math.max(0, vJI) end
+            end
+        end
+
+        -- ACCOUNT TOOLS
+        if ImGui.CollapsingHeader("Account Tools") then
+            if ImGui.Button("Auto Create Account") then
+                CreateRandomAccount()
+            end
+            ImGui.Text("Generates a random account, applies it, and sends info to Webhook.")
+            
+            ImGui.Separator()
+            local changed, newVal = ImGui.InputText("Manual GrowID Name", manualGrowID, 32)
+            if changed then manualGrowID = newVal end
+            
+            if ImGui.Button("Register Manual GrowID") then
+                if manualGrowID == "" then
+                    Log("`4Please enter a name first!`0")
+                else
+                    local packet = "action|dialog_return\ndialog_name|growid_apply\nman|1\nwoman|0\n"
+                    packet = packet .. "logon|" .. manualGrowID .. "\n"
+                    packet = packet .. "password|" .. manualGrowID .. "\n"
+                    packet = packet .. "password_verify|" .. manualGrowID .. "\n"
+                    packet = packet .. "email|b@b.com\n"
+                    packet = packet .. "affcode|\n"
+                    SendPacket(2, packet)
+                    Log("`2Sent Register Packet for Name: `0" .. manualGrowID)
+                end
+            end
+            
+            ImGui.Separator()
+            if ImGui.Button("Register 8S7PrisE (Bypass?)") then
+                local regPacket = [[action|dialog_return\ndialog_name|8S7PrisE\nH7fQw80bh3GQgxR5JOUGRha0FL|UEKXY9uCyrkUXEriHvls|\njIJljNMRrzSsRSky9jemNIrF7d|dQ6xbZSzBUps2BUd8X7B9cVqBFZPZ|\nYqstcgM90mFKUtOd|TqRrgoQLrjXJE06siyjYX05j|\nXRXEJMmmA6YSzv5qVzpJ5yW|alSR9U2uHPSn2rX5IWqaf2s0zQ|\nbuttonClicked|register]]
+                SendPacket(2, regPacket)
+                Log("`2Sent Register 8S7PrisE Packet!`0")
+            end
+            ImGui.Text("Sends a hardcoded dialog return packet.")
+        end
+
+        -- CLEAR WORLD
+        if ImGui.CollapsingHeader("Clear World Tools") then
+            local cCW, vCW = ConfigCheckbox("Auto Clear World", "AutoClearWorld")
+            if cCW and vCW then clearWX, clearWY = nil, nil end
+            ImGui.SameLine()
+            local cCWat, vCWat = ConfigCheckbox("Auto Clear Water", "AutoClearWater")
+            if cCWat and vCWat then clearWX, clearWY = nil, nil end
+            
+            ImGui.Text("Direction:")
+            ImGui.SameLine()
+            if ImGui.RadioButton("Top to Bottom (Clear)", Config.ClearDirection == "top") then Config.ClearDirection = "top" end
+            ImGui.SameLine()
+            if ImGui.RadioButton("Bottom to Top (Clear)", Config.ClearDirection == "bottom") then Config.ClearDirection = "bottom" end
+            
+            local cCD, vCD = ImGui.InputInt("Clear Delay (ms)", Config.ClearDelay)
+            if cCD then Config.ClearDelay = math.max(10, vCD) end
+            
+            local cCS, vCS = ImGui.InputInt("Sponge ID", Config.ClearSpongeID)
+            if cCS then Config.ClearSpongeID = math.max(0, vCS) end
+            
+            ImGui.TextWrapped("Note: These run safely from top to bottom and respect the stranger detection pause.")
+        end
+
+        -- AUTO MAGPLANT
+        if ImGui.CollapsingHeader("Auto Magplant Scanner") then
+            local cAM, vAM = ConfigCheckbox("Enable Auto Magplant", "AutoMagplant")
+            if cAM and vAM then
+                ScanMagplants()
+            end
+            
+            local cD, vD = ImGui.InputInt("Delay (ms)", Config.MagplantDelay)
+            if cD then Config.MagplantDelay = math.max(100, vD) end
+            
+            if ImGui.Button("Rescan World Manually") then
+                ScanMagplants()
+            end
+            
+            ImGui.Text("Found " .. #(MagplantsList or {}) .. " Magplants:")
+            for i, m in ipairs(MagplantsList or {}) do
+                local status = (i == currentMagplantIndex) and "[ACTIVE]" or (i < currentMagplantIndex and "[DONE]" or "[WAITING]")
+                local idStr = m.itemID and tostring(m.itemID) or "?"
+                local amtStr = m.amount and tostring(m.amount) or "?"
+                ImGui.Text(status .. " [" .. m.x .. ", " .. m.y .. "] - Item: " .. idStr .. " - Qty: " .. amtStr)
+            end
+        end
+
+        -- INSTANT TELEPORT
+        if ImGui.CollapsingHeader("Instant Teleport") then
+            local cX, vX = ImGui.InputInt("Teleport X", Config.TeleportX)
+            if cX then Config.TeleportX = vX end
+
+            local cY, vY = ImGui.InputInt("Teleport Y", Config.TeleportY)
+            if cY then Config.TeleportY = vY end
+
+            if ImGui.Button("Teleport Now") then
+                SendPacketRaw(false, {
+                    type = 0,
+                    x = Config.TeleportX * 32,
+                    y = Config.TeleportY * 32,
+                    px = 0,
+                    py = 0
+                })
+                Log("`2Teleported to X: `b" .. Config.TeleportX .. " `2Y: `b" .. Config.TeleportY .. "`0")
+            end
+        end
+
+        -- PACKET DEBUG
+        if ImGui.CollapsingHeader("Packet Debugger") then
+            local cP, vP = ImGui.Checkbox("Debug SendPacket (Text)", Config.DebugSendPacket)
+            if cP then Config.DebugSendPacket = vP end
+
+            local cPR, vPR = ImGui.Checkbox("Debug SendPacketRaw", Config.DebugSendPacketRaw)
+            if cPR then Config.DebugSendPacketRaw = vPR end
+
+            local cV, vV = ImGui.Checkbox("Debug Variant (OnVariant)", Config.DebugVariant)
+            if cV then Config.DebugVariant = vV end
+
+            ImGui.Separator()
+
+            local c7, v7 = ImGui.InputText("Webhook URL", Config.DebugWebhookURL, 255)
+            if c7 then Config.DebugWebhookURL = v7 end
+
+            local c8, v8 = ImGui.InputInt("Webhook Cooldown ms", Config.DebugRateLimit)
+            if c8 then Config.DebugRateLimit = math.max(100, v8) end
+        end
+
+        ImGui.End()  -- End is INSIDE the Begin block (Bothax pattern)
+    end  -- end if Begin
+end
+
+AddHook("OnDraw", "SafePunchUI", ShowUI)
+
+-- /ui to toggle the window
+AddHook("onsendpacket", "SafePunchUIToggle", function(type, packet)
+    if type == 2 and packet:find("action|input\n|text|/ui") then
+        guiOpen = not guiOpen
+        Log(guiOpen and "`2UI opened." or "`4UI closed.")
+        return true
+    end
+    return false
+end)
+
+-- ============================================================
+-- PLAYER WATCH THREAD: Runs in background, checks for players
+-- ============================================================
+
+
+RunThread(function()
+    Log("Player watch thread started.")
+
+    while true do
+        if Run then
+            local world = GetWorld()
+            local local_ = GetLocal()
+
+            if world and local_ then
+                local current = GetOtherPlayers()
+
+                -- Detect NEW players that joined
+                for netid, info in pairs(current) do
+                    if not lastPlayers[netid] then
+                        local tag = IsWhitelisted(info.userid) and "`a[WHITELIST]`0 " or "`4[STRANGER]`0 "
+                        Log(tag .. "`e" .. tostring(info.name) .. "`0 (UID: `b" .. tostring(info.userid) .. "`0) joined.")
+                    end
+                end
+
+                -- Detect players that LEFT
+                for netid, info in pairs(lastPlayers) do
+                    if not current[netid] then
+                        local tag = IsWhitelisted(info.userid) and "`a[WHITELIST]`0 " or "`4[STRANGER]`0 "
+                        Log(tag .. "`e" .. tostring(info.name) .. "`0 (UID: `b" .. tostring(info.userid) .. "`0) left.")
+                    end
+                end
+
+                -- Update Paused state: pause only if a non-whitelisted player is present
+                local hasStranger = false
+                for _, info in pairs(current) do
+                    if not IsWhitelisted(info.userid) then
+                        hasStranger = true
+                        break
+                    end
+                end
+
+                if hasStranger then
+                    if not Paused then
+                        Paused = true
+                        Log("`4Stranger in world! Turning off all features.")
+                        
+                        PreviousConfig.AutoPunch = Config.AutoPunch
+                        PreviousConfig.AutoPunchAntiMove = Config.AutoPunchAntiMove
+                        PreviousConfig.AutoPlace = Config.AutoPlace
+                        PreviousConfig.AutoCreateFarm = Config.AutoCreateFarm
+                        PreviousConfig.AutoPunchWorld = Config.AutoPunchWorld
+                        PreviousConfig.AutoClearWorld = Config.AutoClearWorld
+                        PreviousConfig.AutoClearWater = Config.AutoClearWater
+                        PreviousConfig.AutoSurgery = Config.AutoSurgery
+                        PreviousConfig.AutoTake = Config.AutoTake
+                        PreviousConfig.AutoBackpack = Config.AutoBackpack
+                        PreviousConfig.AutoJoinRunning = Config.AutoJoinRunning
+                        PreviousConfig.AutoJoin = Config.AutoJoin
+
+                        Config.AutoPunch = false
+                        Config.AutoPunchAntiMove = false
+                        Config.AutoPlace = false
+                        Config.AutoCreateFarm = false
+                        PreviousConfig.PunchWorldHarvestMode = Config.PunchWorldHarvestMode
+                        PreviousConfig.AutoMagplant = Config.AutoMagplant
+                        Config.AutoMagplant = false
+                        Config.PunchWorldHarvestMode = false
+                        Config.AutoPunchWorld = false
+                        Config.AutoClearWorld = false
+                        Config.AutoClearWater = false
+                        Config.AutoSurgery = false
+                        Config.AutoTake = false
+                        Config.AutoBackpack = false
+                        Config.AutoJoinRunning = false
+                        Config.AutoJoin = false
+                    end
+                else
+                    if Paused then
+                        Paused = false
+                        Log("`2No strangers! Resuming previously active features.")
+                        
+                        Config.AutoPunch = PreviousConfig.AutoPunch or false
+                        Config.AutoPunchAntiMove = PreviousConfig.AutoPunchAntiMove or false
+                        Config.AutoPlace = PreviousConfig.AutoPlace or false
+                        Config.AutoCreateFarm = PreviousConfig.AutoCreateFarm or false
+                        Config.AutoMagplant = PreviousConfig.AutoMagplant or false
+                        Config.PunchWorldHarvestMode = PreviousConfig.PunchWorldHarvestMode or false
+                        Config.AutoPunchWorld = PreviousConfig.AutoPunchWorld or false
+
+                        Config.AutoClearWorld = PreviousConfig.AutoClearWorld or false
+                        Config.AutoClearWater = PreviousConfig.AutoClearWater or false
+                        Config.AutoSurgery = PreviousConfig.AutoSurgery or false
+                        Config.AutoTake = PreviousConfig.AutoTake or false
+                        Config.AutoBackpack = PreviousConfig.AutoBackpack or false
+                        Config.AutoJoinRunning = PreviousConfig.AutoJoinRunning or false
+                        Config.AutoJoin = PreviousConfig.AutoJoin or false
+
+                        -- Debug logs to confirm internal state restoration
+                        if Config.AutoCreateFarm then Log("`9-> Auto Create Farm resumed!") end
+                        if Config.AutoMagplant then
+                AutoMagplantStep()
+            end
+            
+            if Config.AutoPunchWorld then Log("`9-> Auto Punch World resumed!") end
+                        if Config.AutoClearWorld then Log("`9-> Auto Clear World resumed!") end
+                        if Config.AutoPlace then Log("`9-> Auto Place resumed!") end
+                        if Config.AutoPunch then Log("`9-> Auto Punch resumed!") end
+                    end
+                end
+
+                lastPlayers = current
+            end
+
+            Sleep(Config.CheckDelay)
+        else
+            Sleep(500)
+        end
+    end
+end)
+
+-- ============================================================
+-- AUTO JOIN WORLD THREAD
+-- ============================================================
+RunThread(function()
+    while true do
+        if Run and Config.AutoJoin and Config.JoinWorld ~= "" then
+            local world = GetWorld()
+            -- Attempt to join if we are not already in the target world
+            if not world or world.name:upper() ~= Config.JoinWorld:upper() then
+                Log("`2Attempting to join world: `0" .. Config.JoinWorld)
+                SendPacket(3, "action|join_request\nname|" .. Config.JoinWorld .. "|\ninvitedWorld|0")
+                Sleep(Config.JoinDelay)
+            else
+                Sleep(2000)
+            end
+        else
+            Sleep(1000)
+        end
+    end
+end)
+
+
+
+-- ============================================================
+-- AUTO JOINER THREAD
+-- ============================================================
+
+local function dedup(list)
+    local seen, result = {}, {}
+    for _, v in ipairs(list) do
+        local key = v:upper()
+        if not seen[key] then
+            seen[key] = true
+            table.insert(result, key)
+        end
+    end
+    return result
+end
+
+local function placeAbovePlayer(id)
+    local localAvatar = GetLocal()
+    if not localAvatar then return end
+    local pkt = {}
+    pkt.type  = 3
+    pkt.value = id
+    pkt.px    = math.floor(localAvatar.pos.x / 32)
+    pkt.py    = math.floor(localAvatar.pos.y / 32) - 1
+    pkt.x     = localAvatar.pos.x
+    pkt.y     = localAvatar.pos.y
+    SendPacketRaw(false, pkt)
+end
+
+RunThread(function()
+    Log("Auto Joiner Thread ready.")
+    local prevRunning = false
+    
+    while true do
+        if Config.AutoJoinRunning and not prevRunning then
+            prevRunning = true
+            
+            Log("`2Initializing Auto Joiner... (Quitting to exit & waiting 2s)")
+            SendPacket(3, "action|quit_to_exit")
+            Sleep(2000)
+            
+            local worldsToVisit = {}
+
+            if Config.JoinLiveWOTD then
+                Log("`2[WOTD] Fetching live WOTD...")
+                local res = MakeRequest("https://www.growtopiagame.com/detail", "GET")
+                if res and res.content then
+                    local match = res.content:match('"full_size"%s*:%s*"worlds[\\/]+([^"]+)%.png"')
+                    if match then table.insert(worldsToVisit, match:upper()) end
+                end
+            end
+
+            if Config.JoinHistoricWOTD then for _, w in ipairs(historicWOTDWorlds) do table.insert(worldsToVisit, w) end end
+            if Config.JoinViralWorlds then for _, w in ipairs(viralWorlds) do table.insert(worldsToVisit, w) end end
+            if Config.JoinPopularWorlds then for _, w in ipairs(popularWorlds) do table.insert(worldsToVisit, w) end end
+            if Config.JoinBuyWorlds then for _, w in ipairs(buyWorlds) do table.insert(worldsToVisit, w) end end
+
+            if Config.JoinBuyItemWorlds then
+                Log("`2Generating BUY+<itemname> worlds...")
+                local allItems = GetItemInfoList()
+                if allItems then
+                    local maxID = 0
+                    for id, _ in pairs(allItems) do if type(id) == "number" and id > maxID then maxID = id end end
+                    for id = Config.BuyItemStartID, maxID do
+                        local item = allItems[id]
+                        if item and item.name and item.name ~= "" and not item.name:match("^%d+$") then
+                            local cleanName = item.name:upper():gsub("%s+", ""):gsub("[^%a%d]", "")
+                            if #cleanName > 0 and #("BUY" .. cleanName) <= 24 then
+                                table.insert(worldsToVisit, "BUY" .. cleanName)
+                                if Config.JoinItemAcronymWorlds then
+                                    for itemKey, acronyms in pairs(itemAcronyms) do
+                                        if item.name:lower() == itemKey:lower() then
+                                            for _, acronym in ipairs(acronyms) do table.insert(worldsToVisit, "BUY" .. acronym:upper()) end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            if Config.Join2LetterWorlds then
+                Log("`2[AutoJoin] Generating 2-Letter worlds...")
+                local fullSequence = {}
+                
+                -- 1. aa to zz
+                for char1 = 97, 122 do
+                    for char2 = 97, 122 do
+                        table.insert(fullSequence, string.char(char1) .. string.char(char2))
+                    end
+                end
+
+                -- 2. a0..a9 then 0a..9a then b0..b9 ...
+                for char1 = 97, 122 do
+                    for num = 48, 57 do
+                        table.insert(fullSequence, string.char(char1) .. string.char(num))
+                    end
+                    for num = 48, 57 do
+                        table.insert(fullSequence, string.char(num) .. string.char(char1))
+                    end
+                end
+
+                -- 3. 00..99
+                for num1 = 48, 57 do
+                    for num2 = 48, 57 do
+                        table.insert(fullSequence, string.char(num1) .. string.char(num2))
+                    end
+                end
+
+                -- Filter based on Start2Letter
+                local startStr = type(Config.Start2Letter) == "string" and Config.Start2Letter:lower() or "aa"
+                if #startStr ~= 2 then startStr = "aa" end
+                
+                local foundStart = false
+                for _, w in ipairs(fullSequence) do
+                    if not foundStart and w == startStr then
+                        foundStart = true
+                    end
+                    if foundStart then
+                        table.insert(worldsToVisit, w)
+                    end
+                end
+                
+                -- Fallback if start string wasn't valid/found
+                if not foundStart then
+                    for _, w in ipairs(fullSequence) do
+                        table.insert(worldsToVisit, w)
+                    end
+                end
+            end
+
+            if Config.Join3LetterWorlds then
+                Log("`2[AutoJoin] Generating 3-Letter worlds (aaa-zzz)...")
+                for c1 = 97, 122 do
+                    for c2 = 97, 122 do
+                        for c3 = 97, 122 do
+                            table.insert(worldsToVisit, string.char(c1) .. string.char(c2) .. string.char(c3))
+                        end
+                    end
+                end
+            end
+
+            if Config.Join4LetterWorlds then
+                Log("`2[AutoJoin] Generating 4-Letter worlds (aaaa-zzzz)...")
+                local count = 0
+                for c1 = 97, 122 do
+                    for c2 = 97, 122 do
+                        for c3 = 97, 122 do
+                            for c4 = 97, 122 do
+                                table.insert(worldsToVisit, string.char(c1) .. string.char(c2) .. string.char(c3) .. string.char(c4))
+                                count = count + 1
+                                if count % 10000 == 0 then Sleep(10) end
+                            end
+                        end
+                    end
+                end
+            end
+
+            worldsToVisit = dedup(worldsToVisit)
+            Log("`2Total worlds in Auto Join queue: `0" .. #worldsToVisit)
+
+            for i, worldName in ipairs(worldsToVisit) do
+                if not Config.AutoJoinRunning then break end
+
+                Log("`2Joining (`0" .. i .. "`2/`0" .. #worldsToVisit .. "`2): `0" .. worldName)
+                SendPacket(3, "action|join_request\nname|" .. worldName .. "\ninvitedWorld|0")
+                Sleep(Config.JoinPacketDelay)
+
+                local timeout = Config.JoinTimeoutSeconds
+                while Config.AutoJoinRunning and timeout > 0 do
+                    local currentWorld = GetWorld()
+                    local localAvatar  = GetLocal()
+                    if currentWorld and string.upper(currentWorld.name) == worldName and localAvatar then
+                        break
+                    end
+                    Sleep(1000)
+                    timeout = timeout - 1
+                end
+
+                if not Config.AutoJoinRunning then break end
+
+                if timeout > 0 then
+                    Sleep(500)
+                    if Config.JoinPlaceAndLeave then
+                        Log("`9Placing item " .. Config.JoinPlaceItem .. " above player...")
+                        placeAbovePlayer(Config.JoinPlaceItem)
+                        Sleep(Config.JoinPacketDelay)
+                        SendPacket(3, "action|quit_to_exit")
+                        Sleep(Config.JoinPacketDelay)
+                    else
+                        Log("`9Joined successfully. Waiting for Punch World to finish...")
+                        -- Wait loop: stay here while Punch World clears out the world
+                        -- or wait a default delay before jumping to next
+                        Sleep(Config.JoinPacketDelay * 2) 
+                    end
+                else
+                    Log("`4Skipped (timeout): `0" .. worldName)
+                end
+                Sleep(Config.JoinPacketDelay)
+            end
+            
+            Config.AutoJoinRunning = false
+            Log("`2Auto Join queue finished/stopped.")
+        elseif not Config.AutoJoinRunning and prevRunning then
+            prevRunning = false
+        end
+        Sleep(1000)
+    end
+end)
+
+-- ============================================================
+-- CHAT COMMANDS: /stop to stop
+-- ============================================================
+
+AddHook("onsendpacket", "SafePunchControl", function(type, packet)
+    if type == 2 and packet:find("action|input\n|text|/stop") then
+        Run = false
+        Paused = false
+        Log("`4Script stopped by user command.")
+        return true
+    end
+    return false
+end)
+
+-- ============================================================
+-- AUTO SURGERY LOGIC
+-- ============================================================
+local surging = false
+local surgid = nil
+local surgBuying = false
+local surgTools = { 1270, 1240, 1256, 1258, 1260, 1262, 1264, 1266, 1268 }
+
+local function SurgTrash(ID)
+    SendPacket(2, "action|dialog_return\ndialog_name|trash\nitem_trash|"..ID.. "|\nitem_count|".. (GetItemCount(ID) - 80) .."\n")
+end
+
+local function BuySurgPack()
+    for _, to in pairs(surgTools) do
+        local co = GetItemCount(to)
+        if surgBuying and co > 240 then
+            Sleep(200)
+            SurgTrash(to)
+            Sleep(500)
+            return BuySurgPack()
+        end
+    end
+    for _, t0 in pairs(surgTools) do
+        if GetItemCount(t0) < 150 then
+            SendPacket(2, "action|buy\nitem|buy_surgkit")
+            Sleep(75)
+            return BuySurgPack()
+        end
+    end
+end
+
+local function SendSurg(toolName)
+    if not Config.AutoSurgery or Paused or not Run then return end
+    local tools = ""
+    if toolName == "Sponge" then tools = "command_0"
+    elseif toolName == "Scalpel" then tools = "command_1"
+    elseif toolName == "Anesthetic" then tools = "command_2"
+    elseif toolName == "Antiseptic" then tools = "command_3"
+    elseif toolName == "Antibiotics" then tools = "command_4"
+    elseif toolName == "Splint" then tools = "command_5"
+    elseif toolName == "Stitches" then tools = "command_6"
+    elseif toolName == "Fix It!" then tools = "command_7"
+    end
+    SendPacket(2, "action|dialog_return\ndialog_name|surgery\nbuttonClicked|" .. tools)
+    Log("`9[AutoSurg] `0Used `2" .. toolName)
+end
+
+-- Surg Buy Thread
+RunThread(function()
+    while true do
+        Sleep(1000)
+        if Config.AutoSurgeryBuy and (GetItemCount(1270) < 40 and not surging or surgBuying) then
+            BuySurgPack()
+            surgBuying = false
+        end
+        
+        if Config.AutoSurgery and not surging and surgid and not Paused and Run then
+            SendPacket(2, "action|dialog_return\ndialog_name|popup\nnetID|"..surgid.."|\nbuttonClicked|surgery")
+            surging = true
+        end
+    end
+end)
+
+AddHook("onsendpacket", "AutoSurgPack", function(type, packet)
+    if not Config.AutoSurgery then return false end
+    
+    if packet:find("action|input\n|text|/bp") and Config.AutoSurgeryBuy then
+        Log("Buying Surgical Pack...")
+        surgBuying = true
+        return true
+    end   
+    if packet:find("action|wrench\n|netid|(%d+)") then
+        surgid = packet:match("action|wrench\n|netid|(%d+)")
+        SendPacket(2, "action|dialog_return\ndialog_name|popup\nnetID|" .. surgid .. "|\nbuttonClicked|surgery")
+        surging = true
+        return true
+    end
+    return false
+end)
+
+AddHook("OnVariant", "AutoSurgHooks", function(var)
+    if not Config.AutoSurgery or Paused or not Run then return false end
+
+    if var[0] == "OnConsoleMessage" and var[1]:find("You are not") then
+        RunThread(function()
+            Sleep(500)
+            Log("`4Patient left/died!")
+            surging = false
+            surgid = nil
+        end)
+        return true
+    elseif var[0] == "OnDialogRequest" and var[1]:find("Anatomical") then
+        local x = var[1]:match("|x|(%d+)")
+        local y = var[1]:match("|y|(%d+)")
+        SendPacket(2, "action|dialog_return\n|dialog_name|surge_edit\nx|" .. x .. "|\ny|" .. y .. "|")
+        return true
+    elseif type(var[0]) == "string" and var[0]:find("OnDialogRequest") then
+        local v = var[1]
+        if v:find("`4You can't see what you are doing(!+)") and v:find("command_0") then SendSurg("Sponge"); return true
+        elseif v:find("`6It is becoming hard to see your work(.+)") and v:find("command_0") then SendSurg("Sponge"); return true
+        elseif v:find("Patient's fever is `3slowly rising") and v:find("command_4") then SendSurg("Antibiotics"); return true
+        elseif v:find("Patient's fever is `6climbing") and v:find("command_4") then SendSurg("Antibiotics"); return true
+        elseif v:find("Incisions: `60") and v:find("command_7") then SendSurg("Fix It!"); return true
+        elseif v:find("Incisions: `30") and v:find("command_7") then SendSurg("Fix It!"); return true
+        elseif v:find("command_7") and not v:find("command_6") and not v:find("Incisions: 0") and not v:find("command_1") then SendSurg("Fix It!"); return true
+        elseif v:find("Operation site: `4Unsanitary") and v:find("command_3") then SendSurg("Antiseptic"); return true
+        elseif v:find("Status: `4Awake!") and v:find("command_2") then SendSurg("Anesthetic"); return true
+        elseif v:find("Patient is losing blood `4very quickly!") and v:find("command_6") then SendSurg("Stitches"); return true
+        elseif v:find("Patient is losing blood `3slowly") and v:find("command_6") then SendSurg("Stitches"); return true
+        elseif v:find("Patient is `6losing blood!") and v:find("command_6") then SendSurg("Stitches"); return true
+        elseif v:find("command_7") and v:find("command_6") then SendSurg("Stitches"); return true
+        elseif v:find("command_7") and v:find("Incisions: 0") then SendSurg("Stitches"); return true
+        elseif v:find("command_7") and v:find("command_1") then SendSurg("Scalpel"); return true
+        elseif v:find("command_1") then SendSurg("Scalpel"); return true
+        end
+    end
+    
+    if var[0] == "OnTalkBubble" and tostring(var[1]) == tostring(GetLocal().netid) then
+        surging = false
+        Config.SurgeryTotal = Config.SurgeryTotal + 1
+        Log("`2Surgery complete! Total: `0" .. Config.SurgeryTotal)
+        return true
+    end
+    return false
+end)
+
+-- ============================================================
+-- RECORD & PLAY LOGIC
+-- ============================================================
+isRecording = false
+isPlaying = false
+recordData = {}
+lastPacketTime = 0
+
+function SaveRecording(filename)
+    if not filename or filename == "" then filename = "default_record" end
+    local file = io.open(filename .. ".txt", "w")
+    if file then
+        for _, pkt in ipairs(recordData) do
+            file:write(pkt.delay .. "|" .. pkt.data .. "\n")
+        end
+        file:close()
+        Log("`2Saved recording to: " .. filename .. ".txt")
+    else
+        Log("`4Failed to save recording! Check folder permissions.")
+    end
+end
+
+function LoadRecording(filename)
+    if not filename or filename == "" then filename = "default_record" end
+    local file = io.open(filename .. ".txt", "r")
+    if file then
+        recordData = {}
+        for line in file:lines() do
+            local delayStr, dataStr = line:match("^(%d+)|(.+)$")
+            if delayStr and dataStr then
+                table.insert(recordData, {delay = tonumber(delayStr), data = dataStr})
+            end
+        end
+        file:close()
+        Log("`2Loaded recording: " .. filename .. ".txt with " .. #recordData .. " packets.")
+        return true
+    else
+        Log("`4File not found: " .. filename .. ".txt")
+        return false
+    end
+end
+
+function StartPlayback()
+    if #recordData == 0 then
+        Log("`4No data to play! Load a recording first.")
+        return
+    end
+    isPlaying = true
+    RunThread(function()
+        Log("`2Playback started...")
+        for _, pkt in ipairs(recordData) do
+            if not isPlaying or not Run or Paused then break end
+            if pkt.delay > 0 then
+                Sleep(pkt.delay)
+            end
+            
+            -- Parse data
+            if pkt.data:sub(1,3) == "RAW" then
+                local t, v, px, py, rx, ry = pkt.data:match("^RAW|(%d+)|(%d+)|(%-?%d+)|(%-?%d+)|(%-?%d+)|(%-?%d+)$")
+                if t then
+                    SendPacketRaw(false, {
+                        type = tonumber(t),
+                        value = tonumber(v),
+                        px = tonumber(px),
+                        py = tonumber(py),
+                        x = tonumber(rx),
+                        y = tonumber(ry)
+                    })
+                end
+            elseif pkt.data:sub(1,3) == "STR" then
+                local typStr, content = pkt.data:match("^STR|(%d+)|(.+)$")
+                if typStr and content then
+                    -- Unescape newlines
+                    content = content:gsub("\n", "\n")
+                    SendPacket(tonumber(typStr), content)
+                end
+            end
+        end
+        if isPlaying then
+            Log("`2Playback finished.")
+        else
+            Log("`4Playback stopped.")
+        end
+        isPlaying = false
+    end)
+end
+
+AddHook("onsendpacket", "RecordPacketsHook", function(type, packet)
+    if isRecording then
+        -- Ignore normal chat logs, but KEEP user commands (like /bp, /ui, etc)
+        if packet:find("action|input\n|text|") and not packet:find("action|input\n|text|/") then return false end
+        
+        local now = os.clock()
+        local delay = 0
+        if lastPacketTime > 0 then
+            delay = math.floor((now - lastPacketTime) * 1000)
+        end
+        lastPacketTime = now
+        
+        local safeStr = packet:gsub("\n", "\n")
+        table.insert(recordData, {delay = delay, data = "STR|" .. type .. "|" .. safeStr})
+    end
+    return false
+end)
+
+AddHook("onsendpacketraw", "RecordRawHook", function(packet)
+    if isRecording and packet then
+        local now = os.clock()
+        local delay = 0
+        if lastPacketTime > 0 then
+            delay = math.floor((now - lastPacketTime) * 1000)
+        end
+        lastPacketTime = now
+        
+        local rawStr = string.format("RAW|%d|%d|%d|%d|%d|%d", packet.type or 0, packet.value or 0, packet.px or 0, packet.py or 0, packet.x or 0, packet.y or 0)
+        table.insert(recordData, {delay = delay, data = rawStr})
+    end
+    return false
+end)
+
+-- ============================================================
+-- CLEAR WORLD & WATER LOGIC
+-- ============================================================
+local clearWX, clearWY = nil, nil
+local clearWGrid = nil
+local clearWGridW, clearWGridH = 0, 0
+local clearWWorld = nil
+
+local function BuildClearGrid()
+    local tiles = GetTiles()
+    local world = GetWorld()
+    if not tiles or not world then return false end
+    clearWGrid = {}
+    for _, t in pairs(tiles) do
+        if not clearWGrid[t.x] then clearWGrid[t.x] = {} end
+        clearWGrid[t.x][t.y] = {fg = t.fg, bg = t.bg, flags = t.flags}
+    end
+    clearWWorld = world.name
+    clearWGridW = world.width
+    clearWGridH = world.height
+    return true
+end
+
+local function InitializeClear()
+    local world = GetWorld()
+    if not world then return end
+    if Config.ClearDirection == "top" then
+        clearWY = 0
+    else
+        clearWY = world.height - 1
+    end
+    clearWX = 0
+    clearWGrid = nil
+    clearWWorld = nil
+end
+
+local function ClearWorldStep()
+    local world = GetWorld()
+    if not world then return end
+
+    if clearWX == nil or clearWY == nil then
+        InitializeClearWorld()
+    end
+
+    local targetX, targetY = nil, nil
+
+    while true do
+        if Config.ClearDirection == "top" and clearWY >= world.height then break end
+        if Config.ClearDirection == "bottom" and clearWY < 0 then break end
+
+        local cell = GetTile(clearWX, clearWY)
+        if cell then
+            if (cell.fg ~= 0 or cell.bg ~= 0) and not Config.ClearIgnoreBlocks[cell.fg] then
+                targetX = clearWX
+                targetY = clearWY
+                break
+            end
+        end
+
+        clearWX = clearWX + 1
+        if clearWX >= world.width then
+            clearWX = 0
+            clearWY = Config.ClearDirection == "top" and (clearWY + 1) or (clearWY - 1)
+        end
+    end
+
+    if targetX and targetY then
+        while (GetTile(targetX, targetY).fg ~= 0 or GetTile(targetX, targetY).bg ~= 0) and not Config.ClearIgnoreBlocks[GetTile(targetX, targetY).fg] do
+            if not Run or Paused or not Config.AutoClearWorld then return end -- Abort if paused by stranger or manually disabled
+            SendPacketRaw(false, {
+                type  = 3,
+                value = 18,
+                px    = targetX,
+                py    = targetY,
+                x     = targetX * 32,
+                y     = targetY * 32
+            })
+            Sleep(Config.ClearDelay)
+        end
+        clearWX = targetX + 1
+        if clearWX >= world.width then
+            clearWX = 0
+            clearWY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)
+        end
+    else
+        Log("`2[Auto Clear World] `0Finished clearing!")
+        Config.AutoClearWorld = false
+        clearWX, clearWY = nil, nil
+    end
+end
+
+local function ClearWaterStep()
+    local world = GetWorld()
+    if not world then return end
+
+    if clearWX == nil or clearWY == nil then
+        InitializeClearWorld()
+    end
+
+    local targetX, targetY = nil, nil
+
+    while true do
+        if Config.ClearDirection == "top" and clearWY >= world.height then break end
+        if Config.ClearDirection == "bottom" and clearWY < 0 then break end
+
+        local cell = GetTile(clearWX, clearWY)
+        if cell and cell.flags and cell.flags.water then
+            targetX = clearWX
+            targetY = clearWY
+            break
+        end
+
+        clearWX = clearWX + 1
+        if clearWX >= world.width then
+            clearWX = 0
+            clearWY = Config.ClearDirection == "top" and (clearWY + 1) or (clearWY - 1)
+        end
+    end
+
+    if targetX and targetY then
+        while GetTile(targetX, targetY).flags and GetTile(targetX, targetY).flags.water do
+            if not Run or Paused or not Config.AutoClearWater then return end
+            SendPacketRaw(false, {
+                type  = 3,
+                value = Config.ClearSpongeID,
+                px    = targetX,
+                py    = targetY,
+                x     = targetX * 32,
+                y     = targetY * 32
+            })
+            Sleep(Config.ClearDelay)
+        end
+        clearWX = targetX + 1
+        if clearWX >= world.width then
+            clearWX = 0
+            clearWY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)
+        end
+    else
+        Log("`2[Auto Clear Water] `0Finished clearing water!")
+        Config.AutoClearWater = false
+        clearWX, clearWY = nil, nil
+    end
+end
+
+-- ============================================================
+-- MAIN PUNCH LOOP
+-- ============================================================
+
+Log("Script loaded! Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
+Log("Punching with ItemID: " .. Config.ItemID)
+Log("Type `4/stop`9 to stop the script.")
+
+local punchCount = 0
+
+-- Wait for world to load first, but allow breaking out if UI toggles Run
+while true do
+    if Run and not Paused then
+        if not GetLocal() or not GetWorld() then
+            Sleep(500)
+        else
+            -- Check start position once world is loaded
+            if not startX then
+                startX = math.floor(GetLocal().pos.x / 32)
+                startY = math.floor(GetLocal().pos.y / 32)
+                Log("World detected: `e" .. GetWorld().name)
             end
 
             -- Determine the correct delay based on the active mode
