@@ -1018,31 +1018,17 @@ local function AutoMagplantStep()
     end
     
     -- Attempt retrieve
-    SendPacket(2, "action|dialog_return
-dialog_name|itemsucker_block
-tilex|" .. m.x .. "|
-tiley|" .. m.y .. "|
-buttonClicked|retrieveitem
-
-chk_enablesucking|1
-")
+    SendPacket(2, "action|dialog_return\\ndialog_name|itemsucker_block\\ntilex|" .. m.x .. "|\\ntiley|" .. m.y .. "|\\nbuttonClicked|retrieveitem\\n\\nchk_enablesucking|1\\n")
     Sleep(Config.MagplantDelay)
     
     if not Run or Paused or not Config.AutoMagplant then return end
     
-    SendPacket(2, "action|dialog_return
-dialog_name|itemremovedfromsucker
-tilex|" .. m.x .. "|
-tiley|" .. m.y .. "|
-itemtoremove|250
-")
+    SendPacket(2, "action|dialog_return\\ndialog_name|itemremovedfromsucker\\ntilex|" .. m.x .. "|\\ntiley|" .. m.y .. "|\\nitemtoremove|250\\n")
     Sleep(Config.MagplantDelay)
     
     -- Stash to backpack if we know the item ID
     if m.itemID then
-        SendPacket(2, "action|dialog_return
-dialog_name|backpack_menu
-itemid|" .. tostring(m.itemID))
+        SendPacket(2, "action|dialog_return\\ndialog_name|backpack_menu\\nitemid|" .. tostring(m.itemID))
         Sleep(Config.MagplantDelay)
     end
 end
