@@ -1169,7 +1169,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.55", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.56", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -2381,9 +2381,12 @@ AddHook("OnVariant", "AutoSurgHooks", function(var)
     if var[0] == "OnDialogRequest" and type(var[1]) == "string" and var[1]:find("end_dialog|surgery") then
         local dlg = var[1]
 
-        -- Log the status for debugging
-        local status = ParseStatus(dlg)
-        Log("`b[AutoSurg] `0Dialog received. Status: " .. status:gsub("\n", " | "):sub(1, 120))
+        -- Log a short status summary (inline, no ParseStatus needed)
+        local statusLines = {}
+        for ln in dlg:gmatch("add_smalltext|([^|]+)|") do
+            table.insert(statusLines, ln)
+        end
+        Log("`b[AutoSurg] `0Dialog: " .. table.concat(statusLines, " | "):sub(1, 120))
 
         -- Decision engine
         local toolID, toolName = DecideSurgeryTool(dlg)
@@ -2391,14 +2394,14 @@ AddHook("OnVariant", "AutoSurgHooks", function(var)
         if toolID then
             SendSurg(toolID, toolName)
         else
-            -- No tool matched — log all available tools for debugging
+            -- No tool matched — log available tools for debugging
             local tools = ParseAvailableTools(dlg)
             local tlist = {}
             for id, _ in pairs(tools) do
                 table.insert(tlist, tostring(id) .. "(" .. (SURG_TOOL_IDS[id] or "?") .. ")")
             end
             Log("`4[AutoSurg] No tool decision! Available: " .. table.concat(tlist, ", "))
-            Log("`4[AutoSurg] Status dump: " .. status:sub(1, 200))
+            Log("`4[AutoSurg] Dialog dump: " .. dlg:sub(1, 200))
         end
         return true
     end
