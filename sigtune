@@ -1169,7 +1169,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.56", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.57", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -1587,7 +1587,7 @@ local function ShowUI()
             if cCW and vCW then clearWX, clearWY = nil, nil end
             ImGui.SameLine()
             local cCWat, vCWat = ConfigCheckbox("Auto Clear Water", "AutoClearWater")
-            if cCWat and vCWat then clearWX, clearWY = nil, nil end
+            if cCWat and vCWat then waterCX, waterCY = nil, nil end
             local cCWT, vCWT = ConfigCheckbox("Teleport to X=0 on each row (Clear World)", "ClearWorldTeleportRow")
             if cCWT then Config.ClearWorldTeleportRow = vCWT end
             
@@ -2669,37 +2669,57 @@ local function ClearWorldStep()
     end
 end
 
+-- Separate cursor for Clear Water (independent from ClearWorld cursor)
+local waterCX, waterCY = nil, nil
+
+local function InitializeClearWater()
+    local world = GetWorld()
+    if not world then return end
+    if Config.ClearDirection == "top" then
+        waterCY = 0
+    else
+        waterCY = world.height - 1
+    end
+    waterCX = 0
+    Log("`9[Clear Water] `0Initialized. Scanning for water tiles with Sponge ID: " .. tostring(Config.ClearSpongeID))
+end
+
 local function ClearWaterStep()
     local world = GetWorld()
     if not world then return end
 
-    if clearWX == nil or clearWY == nil then
-        InitializeClear()
+    if waterCX == nil or waterCY == nil then
+        InitializeClearWater()
     end
 
     local targetX, targetY = nil, nil
 
+    -- Scan for next water tile
     while true do
-        if Config.ClearDirection == "top" and clearWY >= world.height then break end
-        if Config.ClearDirection == "bottom" and clearWY < 0 then break end
+        if Config.ClearDirection == "top"    and waterCY >= world.height then break end
+        if Config.ClearDirection == "bottom" and waterCY < 0             then break end
 
-        local cell = GetTile(clearWX, clearWY)
-        if cell and cell.flags and cell.flags.water then
-            targetX = clearWX
-            targetY = clearWY
+        local cell = GetTile(waterCX, waterCY)
+        if cell and cell.flags and cell.flags.water == true then
+            targetX = waterCX
+            targetY = waterCY
             break
         end
 
-        clearWX = clearWX + 1
-        if clearWX >= world.width then
-            clearWX = 0
-            clearWY = Config.ClearDirection == "top" and (clearWY + 1) or (clearWY - 1)
+        waterCX = waterCX + 1
+        if waterCX >= world.width then
+            waterCX = 0
+            waterCY = Config.ClearDirection == "top" and (waterCY + 1) or (waterCY - 1)
         end
     end
 
     if targetX and targetY then
-        while GetTile(targetX, targetY).flags and GetTile(targetX, targetY).flags.water do
+        -- Spray sponge until water is gone (max 20 hits per tile)
+        local hits = 0
+        repeat
             if not Run or Paused or not Config.AutoClearWater then return end
+            local t = GetTile(targetX, targetY)
+            if not t or not t.flags or t.flags.water ~= true then break end
             SendPacketRaw(false, {
                 type  = 3,
                 value = Config.ClearSpongeID,
@@ -2709,18 +2729,22 @@ local function ClearWaterStep()
                 y     = targetY * 32
             })
             Sleep(Config.ClearDelay)
-        end
-        clearWX = targetX + 1
-        if clearWX >= world.width then
-            clearWX = 0
-            clearWY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)
+            hits = hits + 1
+        until hits >= 20
+
+        -- Advance cursor past this tile
+        waterCX = targetX + 1
+        if waterCX >= world.width then
+            waterCX = 0
+            waterCY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)
         end
     else
-        Log("`2[Auto Clear Water] `0Finished clearing water!")
+        Log("`2[Auto Clear Water] `0Finished clearing all water tiles!")
         Config.AutoClearWater = false
-        clearWX, clearWY = nil, nil
+        waterCX, waterCY = nil, nil
     end
 end
+
 
 -- ============================================================
 -- MAIN PUNCH LOOP
