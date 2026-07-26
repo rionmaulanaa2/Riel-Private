@@ -275,10 +275,10 @@ local function SendToWebhook(content, ignoreConfig)
         s = tostring(s)
         s = s:gsub("\\", "\\\\")
         s = s:gsub('"', '\\"')
-        s = s:gsub("\\r", "")
-        s = s:gsub("\\n", "\\\\n")
-        s = s:gsub("\\t", " ")
-        s = s:gsub("[%z\\1-\\9\\11\\12\\14-\\31]", "")
+        s = s:gsub("\r", "")
+        s = s:gsub("\n", "\\n")
+        s = s:gsub("\t", " ")
+        s = s:gsub("[%z\1-\9\11\12\14-\31]", "")
         return s
     end
 
@@ -290,10 +290,13 @@ local function SendToWebhook(content, ignoreConfig)
     local msg = esc(content)
     if #msg > 1990 then msg = msg:sub(1, 1990) end
 
-    local data = '{"embeds":[{"title":"Packet Debugger","description":"```\\n' .. msg .. '\\n```","color":16776960,"footer":{"text":"Player: ' .. esc(playerName) .. ' | World: ' .. esc(worldName) .. '"}}]}'
+    local data = '{"embeds":[{"title":"Packet Debugger","description":"```\n' .. msg .. '\n```","color":16776960,"footer":{"text":"Player: ' .. esc(playerName) .. ' | World: ' .. esc(worldName) .. '"}}]}'
     
     RunThread(function()
-        MakeRequest(Config.DebugWebhookURL, "POST", { ["Content-Type"] = "application/json" }, data)
+        local s, e = pcall(function()
+            MakeRequest(Config.DebugWebhookURL, "POST", { ["Content-Type"] = "application/json" }, data)
+        end)
+        if not s then Log("`4[WH] MakeRequest ERROR: " .. tostring(e)) end
     end)
 end
 
@@ -1104,7 +1107,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.43", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.44", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
