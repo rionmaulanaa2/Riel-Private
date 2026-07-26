@@ -292,7 +292,9 @@ local function SendToWebhook(content, ignoreConfig)
 
     local data = '{"embeds":[{"title":"Packet Debugger","description":"```\\n' .. msg .. '\\n```","color":16776960,"footer":{"text":"Player: ' .. esc(playerName) .. ' | World: ' .. esc(worldName) .. '"}}]}'
     
-    MakeRequest(Config.DebugWebhookURL, "POST", { ["Content-Type"] = "application/json" }, data)
+    RunThread(function()
+        MakeRequest(Config.DebugWebhookURL, "POST", { ["Content-Type"] = "application/json" }, data)
+    end)
 end
 
 -- ============================================================
@@ -1102,7 +1104,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.42", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.43", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
