@@ -260,12 +260,8 @@ local function SendToWebhook(title, description, color, ignoreConfig)
     if not ignoreConfig and not (Config.DebugSendPacket or Config.DebugSendPacketRaw or Config.DebugVariant) then
         return
     end
-    if Config.DebugWebhookURL == "" then
-        return
-    end
-    if not MakeRequest then
-        return
-    end
+    if Config.DebugWebhookURL == "" then return end
+    if not MakeRequest then return end
 
     local now = os.clock() * 1000
     if not ignoreConfig and _G.lastWebhookTime and (now - _G.lastWebhookTime) < (Config.DebugRateLimit or 2000) then return end
@@ -278,26 +274,27 @@ local function SendToWebhook(title, description, color, ignoreConfig)
         s = s:gsub("\r", "")
         s = s:gsub("\n", "\\n")
         s = s:gsub("\t", " ")
-        s = s:gsub("[%z\1-\9\11\12\14-\31]", "")
         return s
     end
 
-    local world = GetWorld and GetWorld() or nil
-    local local_ = GetLocal and GetLocal() or nil
-    local worldName = world and world.name or "Unknown"
+    local world   = GetWorld and GetWorld() or nil
+    local local_  = GetLocal and GetLocal() or nil
+    local worldName  = world  and world.name  or "Unknown"
     local playerName = local_ and local_.name or "Unknown"
 
-    title = title or "Packet Debugger"
-    description = description or ""
-    color = color or 16776960
+    title       = esc(title or "Packet Debugger")
+    description = esc(description or "")
+    color       = tonumber(color) or 16776960
 
-    local msg = esc(description)
-    if #msg > 1990 then msg = msg:sub(1, 1990) end
+    if #description > 1900 then description = description:sub(1, 1900) end
+    local body = '{"embeds":[{"title":"' .. title ..
+                 '","description":"' .. description ..
+                 '","color":' .. tostring(color) ..
+                 ',"footer":{"text":"Player: ' .. esc(playerName) ..
+                 ' | World: ' .. esc(worldName) .. '"}}]}'
 
-    local data = '{"embeds":[{"title":"' .. esc(title) .. '","description":"```\n' .. msg .. '\n```","color":' .. tostring(color) .. ',"footer":{"text":"Player: ' .. esc(playerName) .. ' | World: ' .. esc(worldName) .. '"}}]}'
-    
     RunThread(function()
-        MakeRequest(Config.DebugWebhookURL, "POST", { ["Content-Type"] = "application/json" }, data)
+        MakeRequest(Config.DebugWebhookURL, "POST", {["Content-Type"]="application/json"}, body)
     end)
 end
 
@@ -1108,7 +1105,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.45", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.46", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -2274,7 +2271,7 @@ local function ClearWorldStep()
     if not world then return end
 
     if clearWX == nil or clearWY == nil then
-        InitializeClearWorld()
+        InitializeClear()
     end
 
     local targetX, targetY = nil, nil
@@ -2329,7 +2326,7 @@ local function ClearWaterStep()
     if not world then return end
 
     if clearWX == nil or clearWY == nil then
-        InitializeClearWorld()
+        InitializeClear()
     end
 
     local targetX, targetY = nil, nil
