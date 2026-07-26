@@ -412,6 +412,49 @@ local function IsWhitelisted(userid)
     return false
 end
 
+
+-- ============================================================
+-- GHOST PLAYER PATCH (Fixes GetPlayerList caching bug)
+-- ============================================================
+local forceLeft = {}
+local lastPlayersRef = {} -- for name resolving on leave
+
+AddHook("onpacket", "GhostPlayerCleanupPacket", function(type, packet)
+    if type == 3 and packet:find("action|join_request") then
+        forceLeft = {}
+        lastPlayersRef = {}
+    end
+    if type == 3 and packet:find("action|leave") then
+        local netid = tonumber(packet:match("netID|(%d+)"))
+        if netid then forceLeft[netid] = true end
+    end
+    return false
+end)
+
+AddHook("onvariant", "GhostPlayerCleanupVariant", function(var)
+    if var[0] == "OnRemove" then
+        local str = tostring(var[1] or "")
+        local netid = tonumber(str:match("netID|(%d+)")) or tonumber(str:match("netid|(%d+)"))
+        if not netid then
+            -- Sometimes OnRemove passes the netid directly as var[1] if it's an int, or string
+            netid = tonumber(var[1])
+        end
+        if netid then forceLeft[netid] = true end
+    end
+    
+    if var[0] == "OnConsoleMessage" and type(var[1]) == "string" and var[1]:find("left,") then
+        local nameStr = var[1]:match("`w([^`]+) left,")
+        if nameStr then
+            for netid, info in pairs(lastPlayersRef) do
+                if info.name:find(nameStr) or nameStr:find(info.name) then
+                    forceLeft[netid] = true
+                end
+            end
+        end
+    end
+    return false
+end)
+
 -- ============================================================
 -- MOD / DEVELOPER DETECTION (invisible entry)
 -- ============================================================
@@ -495,10 +538,11 @@ local function GetOtherPlayers()
             if p.netid == local_.netid then isLocal = true end
             if p.userid and local_.userid and tonumber(p.userid) == tonumber(local_.userid) then isLocal = true end
             if p.name and local_.name and p.name == local_.name then isLocal = true end
-
-            if not isLocal then
+            if not isLocal and not forceLeft[p.netid] then
                 players[p.netid] = { name = p.name, userid = p.userid }
+                lastPlayersRef[p.netid] = { name = p.name, userid = p.userid }
             end
+
         end
     end
     return players
@@ -980,7 +1024,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.32", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.33", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
