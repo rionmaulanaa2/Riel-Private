@@ -1109,7 +1109,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.49", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.50", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -1631,8 +1631,11 @@ RunThread(function()
     Log("Player watch thread started.")
 
     while true do
-        if Run then
-            local world = GetWorld()
+        -- CRITICAL FIX: Check stranger list when EITHER running OR paused.
+        -- Previously used 'if Run then' which skipped evaluation when Run=false,
+        -- meaning Paused could never be cleared if a mod detection set Run=false.
+        if Run or Paused then
+            local world  = GetWorld()
             local local_ = GetLocal()
 
             if world and local_ then
@@ -1654,7 +1657,7 @@ RunThread(function()
                     end
                 end
 
-                -- Update Paused state: pause only if a non-whitelisted player is present
+                -- Check if any non-whitelisted player is still present
                 local hasStranger = false
                 for _, info in pairs(current) do
                     if not IsWhitelisted(info.userid) then
@@ -1664,74 +1667,86 @@ RunThread(function()
                 end
 
                 if hasStranger then
+                    -- A stranger is present: pause if not already paused
                     if not Paused then
                         Paused = true
-                        Log("`4Stranger in world! Turning off all features.")
-                        
-                        PreviousConfig.AutoPunch = Config.AutoPunch
-                        PreviousConfig.AutoPunchAntiMove = Config.AutoPunchAntiMove
-                        PreviousConfig.AutoPlace = Config.AutoPlace
-                        PreviousConfig.AutoCreateFarm = Config.AutoCreateFarm
-                        PreviousConfig.AutoPunchWorld = Config.AutoPunchWorld
-                        PreviousConfig.AutoClearWorld = Config.AutoClearWorld
-                        PreviousConfig.AutoClearWater = Config.AutoClearWater
-                        PreviousConfig.ClearWorldTeleportRow = Config.ClearWorldTeleportRow
-                        PreviousConfig.AutoSurgery = Config.AutoSurgery
-                        PreviousConfig.AutoTake = Config.AutoTake
-                        PreviousConfig.AutoBackpack = Config.AutoBackpack
-                        PreviousConfig.AutoJoinRunning = Config.AutoJoinRunning
-                        PreviousConfig.AutoJoin = Config.AutoJoin
+                        Log("`4Stranger in world! Pausing all features.")
 
-                        Config.AutoPunch = false
-                        Config.AutoPunchAntiMove = false
-                        Config.AutoPlace = false
-                        Config.AutoCreateFarm = false
+                        -- Save current feature states before disabling
+                        PreviousConfig.AutoPunch             = Config.AutoPunch
+                        PreviousConfig.AutoPunchAntiMove     = Config.AutoPunchAntiMove
+                        PreviousConfig.AutoPlace             = Config.AutoPlace
+                        PreviousConfig.AutoCreateFarm        = Config.AutoCreateFarm
+                        PreviousConfig.AutoPunchWorld        = Config.AutoPunchWorld
                         PreviousConfig.PunchWorldHarvestMode = Config.PunchWorldHarvestMode
-                        PreviousConfig.AutoMagplant = Config.AutoMagplant
-                        Config.AutoMagplant = false
+                        PreviousConfig.AutoClearWorld        = Config.AutoClearWorld
+                        PreviousConfig.AutoClearWater        = Config.AutoClearWater
+                        PreviousConfig.ClearWorldTeleportRow = Config.ClearWorldTeleportRow
+                        PreviousConfig.AutoSurgery           = Config.AutoSurgery
+                        PreviousConfig.AutoTake              = Config.AutoTake
+                        PreviousConfig.AutoBackpack          = Config.AutoBackpack
+                        PreviousConfig.AutoMagplant          = Config.AutoMagplant
+                        PreviousConfig.AutoJoinRunning       = Config.AutoJoinRunning
+                        PreviousConfig.AutoJoin              = Config.AutoJoin
+
+                        -- Disable all features
+                        Config.AutoPunch             = false
+                        Config.AutoPunchAntiMove     = false
+                        Config.AutoPlace             = false
+                        Config.AutoCreateFarm        = false
+                        Config.AutoPunchWorld        = false
                         Config.PunchWorldHarvestMode = false
-                        Config.AutoPunchWorld = false
-                        Config.AutoClearWorld = false
-                        Config.AutoClearWater = false
+                        Config.AutoClearWorld        = false
+                        Config.AutoClearWater        = false
                         Config.ClearWorldTeleportRow = false
-                        Config.AutoSurgery = false
-                        Config.AutoTake = false
-                        Config.AutoBackpack = false
-                        Config.AutoJoinRunning = false
-                        Config.AutoJoin = false
+                        Config.AutoSurgery           = false
+                        Config.AutoTake              = false
+                        Config.AutoBackpack          = false
+                        Config.AutoMagplant          = false
+                        Config.AutoJoinRunning       = false
+                        Config.AutoJoin              = false
                     end
+
                 else
+                    -- No strangers: resume if we were paused
                     if Paused then
                         Paused = false
+                        -- Also re-enable Run in case a mod/dev detection had set it false
+                        if not Run then
+                            Run = true
+                            Log("`2World clear. Re-enabling Run.")
+                        end
                         Log("`2No strangers! Resuming previously active features.")
-                        
-                        Config.AutoPunch = PreviousConfig.AutoPunch or false
-                        Config.AutoPunchAntiMove = PreviousConfig.AutoPunchAntiMove or false
-                        Config.AutoPlace = PreviousConfig.AutoPlace or false
-                        Config.AutoCreateFarm = PreviousConfig.AutoCreateFarm or false
-                        Config.AutoMagplant = PreviousConfig.AutoMagplant or false
+
+                        -- Restore all feature states
+                        Config.AutoPunch             = PreviousConfig.AutoPunch             or false
+                        Config.AutoPunchAntiMove     = PreviousConfig.AutoPunchAntiMove     or false
+                        Config.AutoPlace             = PreviousConfig.AutoPlace             or false
+                        Config.AutoCreateFarm        = PreviousConfig.AutoCreateFarm        or false
+                        Config.AutoPunchWorld        = PreviousConfig.AutoPunchWorld        or false
                         Config.PunchWorldHarvestMode = PreviousConfig.PunchWorldHarvestMode or false
-                        Config.AutoPunchWorld = PreviousConfig.AutoPunchWorld or false
-
-                        Config.AutoClearWorld = PreviousConfig.AutoClearWorld or false
-                        Config.AutoClearWater = PreviousConfig.AutoClearWater or false
+                        Config.AutoClearWorld        = PreviousConfig.AutoClearWorld        or false
+                        Config.AutoClearWater        = PreviousConfig.AutoClearWater        or false
                         Config.ClearWorldTeleportRow = PreviousConfig.ClearWorldTeleportRow or false
-                        Config.AutoSurgery = PreviousConfig.AutoSurgery or false
-                        Config.AutoTake = PreviousConfig.AutoTake or false
-                        Config.AutoBackpack = PreviousConfig.AutoBackpack or false
-                        Config.AutoJoinRunning = PreviousConfig.AutoJoinRunning or false
-                        Config.AutoJoin = PreviousConfig.AutoJoin or false
+                        Config.AutoSurgery           = PreviousConfig.AutoSurgery           or false
+                        Config.AutoTake              = PreviousConfig.AutoTake              or false
+                        Config.AutoBackpack          = PreviousConfig.AutoBackpack          or false
+                        Config.AutoMagplant          = PreviousConfig.AutoMagplant          or false
+                        Config.AutoJoinRunning       = PreviousConfig.AutoJoinRunning       or false
+                        Config.AutoJoin              = PreviousConfig.AutoJoin              or false
 
-                        -- Debug logs to confirm internal state restoration
-                        if Config.AutoCreateFarm then Log("`9-> Auto Create Farm resumed!") end
-                        if Config.AutoMagplant then
-                AutoMagplantStep()
-            end
-            
-            if Config.AutoPunchWorld then Log("`9-> Auto Punch World resumed!") end
-                        if Config.AutoClearWorld then Log("`9-> Auto Clear World resumed!") end
-                        if Config.AutoPlace then Log("`9-> Auto Place resumed!") end
-                        if Config.AutoPunch then Log("`9-> Auto Punch resumed!") end
+                        -- Log resumed features
+                        if Config.AutoPunch        then Log("`9-> Auto Punch resumed!")         end
+                        if Config.AutoPlace        then Log("`9-> Auto Place resumed!")         end
+                        if Config.AutoCreateFarm   then Log("`9-> Auto Create Farm resumed!")   end
+                        if Config.AutoMagplant     then Log("`9-> Auto Magplant resumed!")      end
+                        if Config.AutoPunchWorld   then Log("`9-> Auto Punch World resumed!")   end
+                        if Config.AutoClearWorld   then Log("`9-> Auto Clear World resumed!")   end
+                        if Config.AutoClearWater   then Log("`9-> Auto Clear Water resumed!")   end
+                        if Config.AutoSurgery      then Log("`9-> Auto Surgery resumed!")       end
+                        if Config.AutoBackpack     then Log("`9-> Auto Backpack resumed!")      end
+                        if Config.AutoTake         then Log("`9-> Auto Take resumed!")          end
+                        if Config.AutoJoin         then Log("`9-> Auto Join resumed!")          end
                     end
                 end
 
@@ -1744,6 +1759,7 @@ RunThread(function()
         end
     end
 end)
+
 
 -- ============================================================
 -- AUTO JOIN WORLD THREAD
