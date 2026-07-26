@@ -256,7 +256,7 @@ local function GetTimeStr()
     return t
 end
 
-local function SendToWebhook(content, ignoreConfig)
+local function SendToWebhook(title, description, color, ignoreConfig)
     if not ignoreConfig and not (Config.DebugSendPacket or Config.DebugSendPacketRaw or Config.DebugVariant) then
         return
     end
@@ -268,7 +268,7 @@ local function SendToWebhook(content, ignoreConfig)
     end
 
     local now = os.clock() * 1000
-    if not ignoreConfig and _G.lastWebhookTime and (now - _G.lastWebhookTime) < Config.DebugRateLimit then return end
+    if not ignoreConfig and _G.lastWebhookTime and (now - _G.lastWebhookTime) < (Config.DebugRateLimit or 2000) then return end
     _G.lastWebhookTime = now
 
     local function esc(s)
@@ -287,16 +287,17 @@ local function SendToWebhook(content, ignoreConfig)
     local worldName = world and world.name or "Unknown"
     local playerName = local_ and local_.name or "Unknown"
 
-    local msg = esc(content)
+    title = title or "Packet Debugger"
+    description = description or ""
+    color = color or 16776960
+
+    local msg = esc(description)
     if #msg > 1990 then msg = msg:sub(1, 1990) end
 
-    local data = '{"embeds":[{"title":"Packet Debugger","description":"```\n' .. msg .. '\n```","color":16776960,"footer":{"text":"Player: ' .. esc(playerName) .. ' | World: ' .. esc(worldName) .. '"}}]}'
+    local data = '{"embeds":[{"title":"' .. esc(title) .. '","description":"```\n' .. msg .. '\n```","color":' .. tostring(color) .. ',"footer":{"text":"Player: ' .. esc(playerName) .. ' | World: ' .. esc(worldName) .. '"}}]}'
     
     RunThread(function()
-        local s, e = pcall(function()
-            MakeRequest(Config.DebugWebhookURL, "POST", { ["Content-Type"] = "application/json" }, data)
-        end)
-        if not s then Log("`4[WH] MakeRequest ERROR: " .. tostring(e)) end
+        MakeRequest(Config.DebugWebhookURL, "POST", { ["Content-Type"] = "application/json" }, data)
     end)
 end
 
@@ -312,7 +313,7 @@ AddHook("OnSendPacket", "DebugPacketLogger", function(type, data)
         out = out .. "type " .. type .. ": " .. tostring(data)
         
         Log("`bSendPacket`0 (type " .. type .. ") logged to WH")
-        SendToWebhook(out)
+        SendToWebhook("Packet Debugger", out, 16776960)
     end
     return false
 end)
@@ -339,7 +340,7 @@ AddHook("OnSendPacketRaw", "DebugPacketRawLogger", function(packet)
         out = out .. "extDataSize: " .. tostring(packet.extDataSize or 0)
 
         Log("`eSendPacketRaw`0 logged to WH")
-        SendToWebhook(out)
+        SendToWebhook("Packet Debugger", out, 16776960)
     else
         Log("`eSendPacketRaw`0: unknown format (" .. type(packet) .. ")")
     end
@@ -355,7 +356,7 @@ AddHook("OnVariant", "DebugVariantLogger", function(var)
             out = out .. "params " .. tostring(k) .. ": " .. tostring(v) .. "\n"
         end
         Log("`dVariantList`0 logged to WH")
-        SendToWebhook(out)
+        SendToWebhook("Packet Debugger", out, 16776960)
     end
     -- We deliberately return false here so we don't accidentally block packets
     -- (ModDevDetector has its own hook and returns false as well)
@@ -1093,7 +1094,7 @@ local function CreateRandomAccount()
     whLog = whLog .. "Email: " .. email .. "\n"
     whLog = whLog .. "```"
     
-    SendToWebhook(whLog, true)
+    SendToWebhook("New Account Created", whLog, 3447003, true)
 end
 
 local guiOpen = true
@@ -1107,7 +1108,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.44", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.45", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
