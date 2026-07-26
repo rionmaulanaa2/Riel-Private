@@ -32,6 +32,7 @@ local Config = {
 
     AutoPunchWorld   = false, -- If true, breaks a specific block ID across the whole world
     PunchWorldTarget = 4584,  -- Item ID of the block to punch
+    PunchDirection   = "top", -- "top" or "bottom"
     PunchWorldDelay  = 200,   -- Delay between punches (ms)
 
     DebugSendPacket      = false,
@@ -72,6 +73,11 @@ local Config = {
     
     AutoClearWorld    = false,
     AutoClearWater    = false,
+    AutoSurgery       = false,
+    AutoSurgeryBuy    = false,
+    SurgeryTotal      = 0,
+    RecordName        = "MyRecord",
+    PlaybackFile      = "MyRecord",
     ClearDirection    = "top",
     ClearDelay        = 50,
     ClearSpongeID     = 822,
@@ -751,15 +757,25 @@ local function BuildPunchGrid()
     return true
 end
 
+local function InitializePunchWorld()
+    local world = GetWorld()
+    if not world then return end
+    if Config.PunchDirection == "top" then
+        punchWY = 0
+    else
+        punchWY = world.height - 1
+    end
+    punchWX = 0
+    punchGrid = nil
+    punchGridWorld = nil
+end
+
 local function AutoPunchWorldStep()
     local world = GetWorld()
     if not world then return end
 
     if punchWX == nil or punchWY == nil then
-        punchWX = 0
-        punchWY = 0
-        punchGrid = nil
-        punchGridWorld = nil
+        InitializePunchWorld()
     end
 
     -- Build/refresh cached grid only when entering a new world or first run
@@ -770,20 +786,28 @@ local function AutoPunchWorldStep()
     local targetX, targetY = nil, nil
 
     while true do
-        if punchWY >= punchGridH then break end
+        if Config.PunchDirection == "top" and punchWY >= punchGridH then break end
+        if Config.PunchDirection == "bottom" and punchWY < 0 then break end
 
         local fg = punchGrid[punchWX] and punchGrid[punchWX][punchWY]
 
         if fg == Config.PunchWorldTarget then
-            targetX = punchWX
-            targetY = punchWY
-            break
+            -- Verify with real tile instead of blindly trusting cache (blocks could have been destroyed by explosions/other punches)
+            local realTile = GetTile(punchWX, punchWY)
+            if realTile and realTile.fg == Config.PunchWorldTarget then
+                targetX = punchWX
+                targetY = punchWY
+                break
+            else
+                -- It was already destroyed! Update cache and move on.
+                punchGrid[punchWX][punchWY] = realTile and realTile.fg or 0
+            end
         end
 
         punchWX = punchWX + 1
         if punchWX >= punchGridW then
             punchWX = 0
-            punchWY = punchWY + 1
+            punchWY = Config.PunchDirection == "top" and (punchWY + 1) or (punchWY - 1)
         end
     end
 
@@ -808,7 +832,7 @@ local function AutoPunchWorldStep()
         punchWX = targetX + 1
         if punchWX >= punchGridW then
             punchWX = 0
-            punchWY = targetY + 1
+            punchWY = Config.PunchDirection == "top" and (targetY + 1) or (targetY - 1)
         end
     else
         -- Do one full scan of cache to detect any skipped blocks
@@ -817,8 +841,13 @@ local function AutoPunchWorldStep()
             if punchGrid[x] then
                 for y = 0, punchGridH - 1 do
                     if punchGrid[x][y] == Config.PunchWorldTarget then
-                        skipped = true
-                        break
+                        -- Verify with real tile before restarting scan
+                        if GetTile(x, y).fg == Config.PunchWorldTarget then
+                            skipped = true
+                            break
+                        else
+                            punchGrid[x][y] = GetTile(x, y).fg
+                        end
                     end
                 end
             end
@@ -827,7 +856,7 @@ local function AutoPunchWorldStep()
 
         if skipped then
             Log("`6Found skipped blocks! Restarting world scan...`0")
-            punchWX, punchWY = 0, 0
+            InitializePunchWorld()
         else
             Log("`2Auto Punch World finished! Disabled.`0")
             Config.AutoPunchWorld = false
@@ -883,12 +912,80 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.28", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.32", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
         ImGui.Text(statusTxt)
         ImGui.Text("World: " .. (world and world.name or "N/A") .. "  |  Player: " .. (local_ and local_.name or "N/A"))
+        ImGui.Separator()
+
+        if ImGui.Button("Get Server Info") then
+            local client = type(GetClient) == "function" and GetClient() or {}
+            local host = client.host or client.ip or client.server or "Unknown"
+            local port = client.port or "Unknown"
+            local ping = client.ping or "Unknown"
+            LogToConsole("`9[SERVER INFO] `0Host: `2" .. tostring(host) .. " `0Port: `2" .. tostring(port) .. " `0Ping: `2" .. tostring(ping) .. " ms")
+        end
+        ImGui.Separator()
+
+          -- AUTO SURGERY
+        if ImGui.CollapsingHeader("Auto Surgery") then
+            local cS, vS = ImGui.Checkbox("Enable Auto Surgery", Config.AutoSurgery)
+            if cS then Config.AutoSurgery = vS end
+
+            ImGui.SameLine()
+            local cSB, vSB = ImGui.Checkbox("Auto Buy Surg Kits", Config.AutoSurgeryBuy)
+            if cSB then Config.AutoSurgeryBuy = vSB end
+
+            ImGui.Text("Total Surgeries Done: " .. Config.SurgeryTotal)
+            ImGui.Text("`9How to use:`0 Wrench a player with a Surg-E to start!")
+        end
+
+        ImGui.Separator()
+
+        -- RECORD & PLAY
+        if ImGui.CollapsingHeader("Record & Play") then
+            local cRec, vRec = ImGui.InputText("Recording Name", Config.RecordName, 64)
+            if cRec then Config.RecordName = vRec end
+            
+            if isRecording then
+                if ImGui.Button("STOP RECORDING") then
+                    isRecording = false
+                    Log("`4Recording stopped. " .. #recordData .. " packets captured.")
+                    SaveRecording(Config.RecordName)
+                end
+                ImGui.Text("`4Recording in progress... Packets: " .. #recordData)
+            else
+                if ImGui.Button("START RECORDING") then
+                    recordData = {}
+                    lastPacketTime = 0
+                    isRecording = true
+                    Log("`2Recording started...")
+                end
+            end
+            
+            ImGui.Separator()
+            
+            local cPlay, vPlay = ImGui.InputText("Playback File", Config.PlaybackFile, 64)
+            if cPlay then Config.PlaybackFile = vPlay end
+            
+            if ImGui.Button("LOAD FILE") then
+                LoadRecording(Config.PlaybackFile)
+            end
+            
+            ImGui.SameLine()
+            if isPlaying then
+                if ImGui.Button("STOP PLAYBACK") then
+                    isPlaying = false
+                end
+            else
+                if ImGui.Button("PLAY RECORDING") then
+                    StartPlayback()
+                end
+            end
+        end
+
         ImGui.Separator()
 
         -- PUNCH
@@ -1061,6 +1158,15 @@ local function ShowUI()
             if c then
                 Config.AutoPunchWorld = v
                 if v then punchWX, punchWY = nil, nil end
+            end
+
+            ImGui.Text("Direction:")
+            if ImGui.RadioButton("Top to Bottom (Punch)", Config.PunchDirection == "top") then
+                Config.PunchDirection = "top"
+            end
+            ImGui.SameLine()
+            if ImGui.RadioButton("Bottom to Top (Punch)", Config.PunchDirection == "bottom") then
+                Config.PunchDirection = "bottom"
             end
 
             local c2, v2 = ImGui.InputInt("Target Block ID", Config.PunchWorldTarget)
@@ -1286,6 +1392,7 @@ RunThread(function()
                         PreviousConfig.AutoPunchWorld = Config.AutoPunchWorld
                         PreviousConfig.AutoClearWorld = Config.AutoClearWorld
                         PreviousConfig.AutoClearWater = Config.AutoClearWater
+                        PreviousConfig.AutoSurgery = Config.AutoSurgery
                         PreviousConfig.AutoTake = Config.AutoTake
                         PreviousConfig.AutoBackpack = Config.AutoBackpack
                         PreviousConfig.AutoJoinRunning = Config.AutoJoinRunning
@@ -1296,6 +1403,7 @@ RunThread(function()
                         Config.AutoPunchWorld = false
                         Config.AutoClearWorld = false
                         Config.AutoClearWater = false
+                        Config.AutoSurgery = false
                         Config.AutoTake = false
                         Config.AutoBackpack = false
                         Config.AutoJoinRunning = false
@@ -1311,6 +1419,7 @@ RunThread(function()
                         Config.AutoPunchWorld = PreviousConfig.AutoPunchWorld or false
                         Config.AutoClearWorld = PreviousConfig.AutoClearWorld or false
                         Config.AutoClearWater = PreviousConfig.AutoClearWater or false
+                        Config.AutoSurgery = PreviousConfig.AutoSurgery or false
                         Config.AutoTake = PreviousConfig.AutoTake or false
                         Config.AutoBackpack = PreviousConfig.AutoBackpack or false
                         Config.AutoJoinRunning = PreviousConfig.AutoJoinRunning or false
@@ -1572,6 +1681,252 @@ AddHook("onsendpacket", "SafePunchControl", function(type, packet)
         Paused = false
         Log("`4Script stopped by user command.")
         return true
+    end
+    return false
+end)
+
+-- ============================================================
+-- AUTO SURGERY LOGIC
+-- ============================================================
+local surging = false
+local surgid = nil
+local surgBuying = false
+local surgTools = { 1270, 1240, 1256, 1258, 1260, 1262, 1264, 1266, 1268 }
+
+local function SurgTrash(ID)
+    SendPacket(2, "action|dialog_return\ndialog_name|trash\nitem_trash|"..ID.. "|\nitem_count|".. (GetItemCount(ID) - 80) .."\n")
+end
+
+local function BuySurgPack()
+    for _, to in pairs(surgTools) do
+        local co = GetItemCount(to)
+        if surgBuying and co > 240 then
+            Sleep(200)
+            SurgTrash(to)
+            Sleep(500)
+            return BuySurgPack()
+        end
+    end
+    for _, t0 in pairs(surgTools) do
+        if GetItemCount(t0) < 150 then
+            SendPacket(2, "action|buy\nitem|buy_surgkit")
+            Sleep(75)
+            return BuySurgPack()
+        end
+    end
+end
+
+local function SendSurg(toolName)
+    if not Config.AutoSurgery or Paused or not Run then return end
+    local tools = ""
+    if toolName == "Sponge" then tools = "command_0"
+    elseif toolName == "Scalpel" then tools = "command_1"
+    elseif toolName == "Anesthetic" then tools = "command_2"
+    elseif toolName == "Antiseptic" then tools = "command_3"
+    elseif toolName == "Antibiotics" then tools = "command_4"
+    elseif toolName == "Splint" then tools = "command_5"
+    elseif toolName == "Stitches" then tools = "command_6"
+    elseif toolName == "Fix It!" then tools = "command_7"
+    end
+    SendPacket(2, "action|dialog_return\ndialog_name|surgery\nbuttonClicked|" .. tools)
+    Log("`9[AutoSurg] `0Used `2" .. toolName)
+end
+
+-- Surg Buy Thread
+RunThread(function()
+    while true do
+        Sleep(1000)
+        if Config.AutoSurgeryBuy and (GetItemCount(1270) < 40 and not surging or surgBuying) then
+            BuySurgPack()
+            surgBuying = false
+        end
+        
+        if Config.AutoSurgery and not surging and surgid and not Paused and Run then
+            SendPacket(2, "action|dialog_return\ndialog_name|popup\nnetID|"..surgid.."|\nbuttonClicked|surgery")
+            surging = true
+        end
+    end
+end)
+
+AddHook("onsendpacket", "AutoSurgPack", function(type, packet)
+    if not Config.AutoSurgery then return false end
+    
+    if packet:find("action|input\n|text|/bp") and Config.AutoSurgeryBuy then
+        Log("Buying Surgical Pack...")
+        surgBuying = true
+        return true
+    end   
+    if packet:find("action|wrench\n|netid|(%d+)") then
+        surgid = packet:match("action|wrench\n|netid|(%d+)")
+        SendPacket(2, "action|dialog_return\ndialog_name|popup\nnetID|" .. surgid .. "|\nbuttonClicked|surgery")
+        surging = true
+        return true
+    end
+    return false
+end)
+
+AddHook("OnVariant", "AutoSurgHooks", function(var)
+    if not Config.AutoSurgery or Paused or not Run then return false end
+
+    if var[0] == "OnConsoleMessage" and var[1]:find("You are not") then
+        RunThread(function()
+            Sleep(500)
+            Log("`4Patient left/died!")
+            surging = false
+            surgid = nil
+        end)
+        return true
+    elseif var[0] == "OnDialogRequest" and var[1]:find("Anatomical") then
+        local x = var[1]:match("|x|(%d+)")
+        local y = var[1]:match("|y|(%d+)")
+        SendPacket(2, "action|dialog_return\n|dialog_name|surge_edit\nx|" .. x .. "|\ny|" .. y .. "|")
+        return true
+    elseif type(var[0]) == "string" and var[0]:find("OnDialogRequest") then
+        local v = var[1]
+        if v:find("`4You can't see what you are doing(!+)") and v:find("command_0") then SendSurg("Sponge"); return true
+        elseif v:find("`6It is becoming hard to see your work(.+)") and v:find("command_0") then SendSurg("Sponge"); return true
+        elseif v:find("Patient's fever is `3slowly rising") and v:find("command_4") then SendSurg("Antibiotics"); return true
+        elseif v:find("Patient's fever is `6climbing") and v:find("command_4") then SendSurg("Antibiotics"); return true
+        elseif v:find("Incisions: `60") and v:find("command_7") then SendSurg("Fix It!"); return true
+        elseif v:find("Incisions: `30") and v:find("command_7") then SendSurg("Fix It!"); return true
+        elseif v:find("command_7") and not v:find("command_6") and not v:find("Incisions: 0") and not v:find("command_1") then SendSurg("Fix It!"); return true
+        elseif v:find("Operation site: `4Unsanitary") and v:find("command_3") then SendSurg("Antiseptic"); return true
+        elseif v:find("Status: `4Awake!") and v:find("command_2") then SendSurg("Anesthetic"); return true
+        elseif v:find("Patient is losing blood `4very quickly!") and v:find("command_6") then SendSurg("Stitches"); return true
+        elseif v:find("Patient is losing blood `3slowly") and v:find("command_6") then SendSurg("Stitches"); return true
+        elseif v:find("Patient is `6losing blood!") and v:find("command_6") then SendSurg("Stitches"); return true
+        elseif v:find("command_7") and v:find("command_6") then SendSurg("Stitches"); return true
+        elseif v:find("command_7") and v:find("Incisions: 0") then SendSurg("Stitches"); return true
+        elseif v:find("command_7") and v:find("command_1") then SendSurg("Scalpel"); return true
+        elseif v:find("command_1") then SendSurg("Scalpel"); return true
+        end
+    end
+    
+    if var[0] == "OnTalkBubble" and tostring(var[1]) == tostring(GetLocal().netid) then
+        surging = false
+        Config.SurgeryTotal = Config.SurgeryTotal + 1
+        Log("`2Surgery complete! Total: `0" .. Config.SurgeryTotal)
+        return true
+    end
+    return false
+end)
+
+-- ============================================================
+-- RECORD & PLAY LOGIC
+-- ============================================================
+isRecording = false
+isPlaying = false
+recordData = {}
+lastPacketTime = 0
+
+function SaveRecording(filename)
+    if not filename or filename == "" then filename = "default_record" end
+    local file = io.open(filename .. ".txt", "w")
+    if file then
+        for _, pkt in ipairs(recordData) do
+            file:write(pkt.delay .. "|" .. pkt.data .. "\n")
+        end
+        file:close()
+        Log("`2Saved recording to: " .. filename .. ".txt")
+    else
+        Log("`4Failed to save recording! Check folder permissions.")
+    end
+end
+
+function LoadRecording(filename)
+    if not filename or filename == "" then filename = "default_record" end
+    local file = io.open(filename .. ".txt", "r")
+    if file then
+        recordData = {}
+        for line in file:lines() do
+            local delayStr, dataStr = line:match("^(%d+)|(.+)$")
+            if delayStr and dataStr then
+                table.insert(recordData, {delay = tonumber(delayStr), data = dataStr})
+            end
+        end
+        file:close()
+        Log("`2Loaded recording: " .. filename .. ".txt with " .. #recordData .. " packets.")
+        return true
+    else
+        Log("`4File not found: " .. filename .. ".txt")
+        return false
+    end
+end
+
+function StartPlayback()
+    if #recordData == 0 then
+        Log("`4No data to play! Load a recording first.")
+        return
+    end
+    isPlaying = true
+    RunThread(function()
+        Log("`2Playback started...")
+        for _, pkt in ipairs(recordData) do
+            if not isPlaying or not Run or Paused then break end
+            if pkt.delay > 0 then
+                Sleep(pkt.delay)
+            end
+            
+            -- Parse data
+            if pkt.data:sub(1,3) == "RAW" then
+                local t, v, px, py, rx, ry = pkt.data:match("^RAW|(%d+)|(%d+)|(%-?%d+)|(%-?%d+)|(%-?%d+)|(%-?%d+)$")
+                if t then
+                    SendPacketRaw(false, {
+                        type = tonumber(t),
+                        value = tonumber(v),
+                        px = tonumber(px),
+                        py = tonumber(py),
+                        x = tonumber(rx),
+                        y = tonumber(ry)
+                    })
+                end
+            elseif pkt.data:sub(1,3) == "STR" then
+                local typStr, content = pkt.data:match("^STR|(%d+)|(.+)$")
+                if typStr and content then
+                    -- Unescape newlines
+                    content = content:gsub("\\n", "\n")
+                    SendPacket(tonumber(typStr), content)
+                end
+            end
+        end
+        if isPlaying then
+            Log("`2Playback finished.")
+        else
+            Log("`4Playback stopped.")
+        end
+        isPlaying = false
+    end)
+end
+
+AddHook("onsendpacket", "RecordPacketsHook", function(type, packet)
+    if isRecording then
+        -- Ignore normal chat logs, but KEEP user commands (like /bp, /ui, etc)
+        if packet:find("action|input\n|text|") and not packet:find("action|input\n|text|/") then return false end
+        
+        local now = os.clock()
+        local delay = 0
+        if lastPacketTime > 0 then
+            delay = math.floor((now - lastPacketTime) * 1000)
+        end
+        lastPacketTime = now
+        
+        local safeStr = packet:gsub("\n", "\\n")
+        table.insert(recordData, {delay = delay, data = "STR|" .. type .. "|" .. safeStr})
+    end
+    return false
+end)
+
+AddHook("onsendpacketraw", "RecordRawHook", function(packet)
+    if isRecording and packet then
+        local now = os.clock()
+        local delay = 0
+        if lastPacketTime > 0 then
+            delay = math.floor((now - lastPacketTime) * 1000)
+        end
+        lastPacketTime = now
+        
+        local rawStr = string.format("RAW|%d|%d|%d|%d|%d|%d", packet.type or 0, packet.value or 0, packet.px or 0, packet.py or 0, packet.x or 0, packet.y or 0)
+        table.insert(recordData, {delay = delay, data = rawStr})
     end
     return false
 end)
