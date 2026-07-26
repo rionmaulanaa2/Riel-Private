@@ -244,7 +244,6 @@ end
 -- (C-callback boundary). Solution: push jobs to a queue and drain
 -- from a dedicated RunThread where coroutine yields are legal.
 
-local webhookQueue = {} -- { {url, data}, ... }
 
 -- Helper to safely get time without crashing if OS lib is missing in sandbox
 local function GetTimeStr()
@@ -258,86 +257,43 @@ local function GetTimeStr()
 end
 
 local function SendToWebhook(content, ignoreConfig)
-    -- Step 1: check enabled
     if not ignoreConfig and not (Config.DebugSendPacket or Config.DebugSendPacketRaw or Config.DebugVariant) then
         return
     end
-    -- Step 2: check URL
     if Config.DebugWebhookURL == "" then
-        Log("`4[WH] No webhook URL set.")
         return
     end
-    -- Step 3: check MakeRequest exists
     if not MakeRequest then
-        Log("`4[WH] MakeRequest is nil — not available in this Bothax build.")
         return
     end
-    -- Removed cooldown block here so we don't drop fast logs!
 
-    -- Safe JSON string escaper: escapes backslash, quotes, and preserves newlines as \n for Discord
+    local now = os.clock() * 1000
+    if not ignoreConfig and _G.lastWebhookTime and (now - _G.lastWebhookTime) < Config.DebugRateLimit then return end
+    _G.lastWebhookTime = now
+
     local function esc(s)
         s = tostring(s)
-        s = s:gsub("\\", "\\\\")    -- backslash first
-        s = s:gsub('"',  '\\"')     -- double quotes
-        s = s:gsub("\r", "")        -- strip carriage return
-        s = s:gsub("\n", "\n")     -- encode newlines as literal \n for JSON
-        s = s:gsub("\t", " ")       -- replace tabs
-        s = s:gsub("[%z\1-\9\11\12\14-\31]", "") -- strip remaining control chars except \n
+        s = s:gsub("\\", "\\\\")
+        s = s:gsub('"', '\\"')
+        s = s:gsub("\\r", "")
+        s = s:gsub("\\n", "\\\\n")
+        s = s:gsub("\\t", " ")
+        s = s:gsub("[%z\\1-\\9\\11\\12\\14-\\31]", "")
         return s
     end
 
-    -- Format the message inside a Discord codeblock
-    local msg = "```text\n" .. content .. "\n```"
-    if #msg > 1990 then msg = msg:sub(1, 1990) .. "\n```" end
+    local world = GetWorld and GetWorld() or nil
+    local local_ = GetLocal and GetLocal() or nil
+    local worldName = world and world.name or "Unknown"
+    local playerName = local_ and local_.name or "Unknown"
 
-    local jsonData = '{"content":"' .. esc(msg) .. '"}'
+    local msg = esc(content)
+    if #msg > 1990 then msg = msg:sub(1, 1990) end
 
-    Log("`e[WH] Queuing webhook job...`0")
-    table.insert(webhookQueue, { url = Config.DebugWebhookURL, body = jsonData })
+    local data = '{"embeds":[{"title":"Packet Debugger","description":"```\\n' .. msg .. '\\n```","color":16776960,"footer":{"text":"Player: ' .. esc(playerName) .. ' | World: ' .. esc(worldName) .. '"}}]}'
+    
+    MakeRequest(Config.DebugWebhookURL, "POST", { ["Content-Type"] = "application/json" }, data)
 end
-
--- Drain thread — MakeRequest is safe here (own coroutine, can yield freely)
-RunThread(function()
-    Log("`2[WH] Webhook drain thread started.")
-    while true do
-        if #webhookQueue > 0 then
-            local job = table.remove(webhookQueue, 1)
-            Log("`e[WH] Sending...")
-            local headers = {
-                ["Content-Type"] = "application/json",
-                ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
-            local res = MakeRequest(job.url, "POST", headers, job.body)
-            if res then
-                -- Bothax may use .status, .statusCode or .code
-                local code = res.status or res.statusCode or res.code or 0
-                if code >= 200 and code < 300 then
-                    Log("`2[WH] OK (HTTP " .. tostring(code) .. ")")
-                elseif code == 0 then
-                    -- status 0 = Bothax HTTP client got no parseable response.
-                    -- Retry without explicit headers (some builds need this).
-                    Log("`e[WH] status 0 — retrying without headers...")
-                    local res2 = MakeRequest(job.url, "POST", job.body)
-                    local code2 = (res2 and (res2.status or res2.statusCode or res2.code)) or 0
-                    if code2 >= 200 and code2 < 300 then
-                        Log("`2[WH] OK on retry (HTTP " .. tostring(code2) .. ")")
-                    else
-                        Log("`4[WH] Retry failed (HTTP " .. tostring(code2) .. ") — verify webhook URL or internet")
-                    end
-                else
-                    Log("`4[WH] HTTP " .. tostring(code) .. " — check URL / content")
-                end
-            else
-                Log("`4[WH] MakeRequest returned nil — no network response")
-            end
-            
-            -- Sleep after sending to respect Discord's rate limits
-            Sleep(Config.DebugRateLimit)
-        else
-            Sleep(50)
-        end
-    end
-end)
 
 -- ============================================================
 -- PACKET DEBUG HOOKS
@@ -1146,7 +1102,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.41", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.42", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
