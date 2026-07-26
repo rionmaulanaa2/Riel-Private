@@ -343,7 +343,7 @@ end)
 -- PACKET DEBUG HOOKS
 -- ============================================================
 
-AddHook("onsendpacket", "DebugPacketLogger", function(type, data)
+AddHook("OnSendPacket", "DebugPacketLogger", function(type, data)
     if not Config.DebugSendPacket then return false end
 
     if type == 2 or type == 3 then
@@ -357,7 +357,7 @@ AddHook("onsendpacket", "DebugPacketLogger", function(type, data)
 end)
 
 -- onsendpacketraw passes a single table argument containing the packet properties
-AddHook("onsendpacketraw", "DebugPacketRawLogger", function(packet)
+AddHook("OnSendPacketRaw", "DebugPacketRawLogger", function(packet)
     if not Config.DebugSendPacketRaw then return false end
 
     if type(packet) == "table" then
@@ -385,7 +385,7 @@ AddHook("onsendpacketraw", "DebugPacketRawLogger", function(packet)
     return false
 end)
 
-AddHook("onvariant", "DebugVariantLogger", function(var)
+AddHook("OnVariant", "DebugVariantLogger", function(var)
     if not Config.DebugVariant then return false end
 
     if type(var) == "table" then
@@ -476,7 +476,7 @@ end)
 -- Developers and Moderators can enter invisible (not in GetPlayerList).
 -- They trigger an OnSpawn variant where their properties are sent.
 
-AddHook("onvariant", "ModDevDetector", function(var)
+AddHook("OnVariant", "ModDevDetector", function(var)
     if var[0] == "OnSpawn" then
         local spawnData = tostring(var[1] or "")
         -- Check for Developer/Moderator type flags or invisible states
@@ -1146,7 +1146,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.40", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.41", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -1648,7 +1648,7 @@ end
 AddHook("OnDraw", "SafePunchUI", ShowUI)
 
 -- /ui to toggle the window
-AddHook("onsendpacket", "SafePunchUIToggle", function(type, packet)
+AddHook("OnSendPacket", "SafePunchUIToggle", function(type, packet)
     if type == 2 and packet:find("action|input\n|text|/ui") then
         guiOpen = not guiOpen
         Log(guiOpen and "`2UI opened." or "`4UI closed.")
@@ -2015,7 +2015,7 @@ end)
 -- CHAT COMMANDS: /stop to stop
 -- ============================================================
 
-AddHook("onsendpacket", "SafePunchControl", function(type, packet)
+AddHook("OnSendPacket", "SafePunchControl", function(type, packet)
     if type == 2 and packet:find("action|input\n|text|/stop") then
         Run = false
         Paused = false
@@ -2088,16 +2088,16 @@ RunThread(function()
     end
 end)
 
-AddHook("onsendpacket", "AutoSurgPack", function(type, packet)
+AddHook("OnSendPacket", "AutoSurgPack", function(type, packet)
     if not Config.AutoSurgery then return false end
     
-    if packet:find("action|input\n|text|/bp") and Config.AutoSurgeryBuy then
+    if packet:find("action|input\ntext|/bp") and Config.AutoSurgeryBuy then
         Log("Buying Surgical Pack...")
         surgBuying = true
         return true
     end   
-    if packet:find("action|wrench\n|netid|(%d+)") then
-        surgid = packet:match("action|wrench\n|netid|(%d+)")
+    if packet:find("action|wrench\nnetid|(%d+)") then
+        surgid = packet:match("action|wrench\nnetid|(%d+)")
         SendPacket(2, "action|dialog_return\ndialog_name|popup\nnetID|" .. surgid .. "|\nbuttonClicked|surgery")
         surging = true
         return true
@@ -2119,7 +2119,7 @@ AddHook("OnVariant", "AutoSurgHooks", function(var)
     elseif var[0] == "OnDialogRequest" and var[1]:find("Anatomical") then
         local x = var[1]:match("|x|(%d+)")
         local y = var[1]:match("|y|(%d+)")
-        SendPacket(2, "action|dialog_return\n|dialog_name|surge_edit\nx|" .. x .. "|\ny|" .. y .. "|")
+        SendPacket(2, "action|dialog_return\ndialog_name|surge_edit\nx|" .. x .. "|\ny|" .. y .. "|")
         return true
     elseif type(var[0]) == "string" and var[0]:find("OnDialogRequest") then
         local v = var[1]
@@ -2238,7 +2238,7 @@ function StartPlayback()
     end)
 end
 
-AddHook("onsendpacket", "RecordPacketsHook", function(type, packet)
+AddHook("OnSendPacket", "RecordPacketsHook", function(type, packet)
     if isRecording then
         -- Ignore normal chat logs, but KEEP user commands (like /bp, /ui, etc)
         if packet:find("action|input\n|text|") and not packet:find("action|input\n|text|/") then return false end
@@ -2256,7 +2256,7 @@ AddHook("onsendpacket", "RecordPacketsHook", function(type, packet)
     return false
 end)
 
-AddHook("onsendpacketraw", "RecordRawHook", function(packet)
+AddHook("OnSendPacketRaw", "RecordRawHook", function(packet)
     if isRecording and packet then
         local now = os.clock()
         local delay = 0
