@@ -1169,7 +1169,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.54", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.55", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -2129,18 +2129,21 @@ local function BuySurgPack()
     end
 end
 
--- Tool ID -> button name mapping (from surgery dump analysis)
+-- Correct tool ID -> name mapping (verified from working script)
 local SURG_TOOL_IDS = {
-    [1258] = "Defibrillator",
-    [1260] = "Stitches",
+    [1258] = "Sponge",
+    [1260] = "Scalpel",
     [1262] = "Anesthetic",
-    [1264] = "Scalpel",
-    [1266] = "Antibiotics",
+    [1266] = "Antibiotic",
     [1268] = "Splint",
-    [1270] = "Sponge",
-    [4310] = "Fix It!",
-    [4316] = "Lab Kit",
-    [4318] = "Antiseptic",
+    [1270] = "Stitches",
+    [1296] = "Fix It",
+    [4308] = "Pins",
+    [4310] = "Transfusion",
+    [4312] = "Defibrillator",
+    [4314] = "Clamp",
+    [4316] = "Ultrasound",
+    [4318] = "Lab Kit",
 }
 
 -- Send surgery action using the real button ID from the dialog
@@ -2162,127 +2165,172 @@ local function ParseAvailableTools(dlg)
     local available = {}
     for toolID in dlg:gmatch("add_button_with_icon|tool(%d+)|") do
         local id = tonumber(toolID)
-        if id and id ~= 0 and id ~= 4320 then  -- 4320 = empty slot
+        if id and id ~= 0 then
             available[id] = true
         end
     end
     return available
 end
 
--- Parse add_smalltext lines from dialog into a single combined string for condition matching
-local function ParseStatus(dlg)
-    local lines = {}
-    for line in dlg:gmatch("add_smalltext|([^|]+)|") do
-        table.insert(lines, line)
-    end
-    return table.concat(lines, "\n")
-end
-
 -- Core surgery decision engine
--- Priority is based on the actual surgery dump dialog analysis.
--- "It is becoming hard to see your work" appears in EVERY frame, so it must
--- be checked LAST (only if nothing else needs attention), not first.
+-- Uses the exact same condition priority as the proven working script.
+-- Checks are done on the raw dialog string (dlg) + tool availability check.
 local function DecideSurgeryTool(dlg)
-    local tools  = ParseAvailableTools(dlg)
-    local status = ParseStatus(dlg)
-
-    local function has(id) return tools[id] == true end
-
-    -- ── 1. CRITICAL VISION BLOCK ─────────────────────────────────────
-    -- "can't see what you are doing" = completely blinded → must use Sponge NOW
-    if status:find("can't see what you are doing") then
-        if has(1270) then return 1270, "Sponge [critical vision]" end
+    local function has(id)
+        return dlg:find("tool" .. tostring(id)) ~= nil
     end
 
-    -- ── 2. NOT DIAGNOSED → Lab Kit ───────────────────────────────────
-    -- Must diagnose before anything else can be treated properly.
-    if status:find("has not been diagnosed") or status:find("not been diagnosed") then
-        if has(4316) then return 4316, "Lab Kit [diagnose]" end
+    -- 1. Patient wakes up mid-surgery
+    if dlg:find("`4The patient wakes up!") and has(1262) then
+        return 1262, "Anesthetic [woke up]"
     end
 
-    -- ── 3. PATIENT AWAKE → Anesthetic ────────────────────────────────
-    -- Status line format: "Status: `3Awake``" or "Status: `4Awake``"
-    -- `3 = orange/yellow (awake), `4 = red (danger awake)
-    if status:find("Status:") and (status:find("Awake") or status:find("`3Awake") or status:find("`4Awake")) then
-        -- Make sure they are NOT already asleep (Asleep = `2 green)
-        if not status:find("`2Asleep") and not status:find("Asleep") then
-            if has(1262) then return 1262, "Anesthetic [awake]" end
-        end
+    -- 2. Patient screams / flails (waking)
+    if dlg:find("`4The patient screams and flails!") and has(1262) then
+        return 1262, "Anesthetic [screaming]"
     end
 
-    -- ── 4. FEVER → Antibiotics ───────────────────────────────────────
-    -- "Patient's fever is `4climbing `4fast!" or "`6clim`6bing!" or "`3slowly rising"
-    if status:find("fever") then
-        if has(1266) then return 1266, "Antibiotics [fever]" end
+    -- 3. Heart stopped → Defibrillator
+    if dlg:find("Status: `4Heart stopped!") and has(4312) then
+        return 4312, "Defibrillator [heart stopped]"
     end
 
-    -- ── 5. BLEEDING → Stitches ───────────────────────────────────────
-    if status:find("losing blood") then
-        if has(1260) then return 1260, "Stitches [bleeding]" end
+    -- 4. Coming to / regaining consciousness → Anesthetic
+    if dlg:find("Status: `6Coming to") and has(1262) then
+        return 1262, "Anesthetic [coming to]"
     end
 
-    -- ── 6. UNSANITARY / UNCLEAN OPERATION SITE → Antiseptic ─────────
-    -- "Operation site: `4Uns`4anitary``" or "`6Unc`6lean``" or "Not `3sanitized``"
-    if status:find("Unsanitary") or status:find("Unclean") or
-       status:find("Uns`%danitary") or status:find("Unc`%dlean") or
-       status:find("Not.*sanitized") or status:find("Not `3sanitized") then
-        if has(4318) then return 4318, "Antiseptic [site]" end
+    -- 5. Bad pulse (red) → Transfusion
+    if dlg:find("Pulse: `4") and has(4310) then
+        return 4310, "Transfusion [bad pulse]"
     end
 
-    -- ── 7. MILD VISION WARNING → Sponge ──────────────────────────────
-    -- "It is becoming hard to see your work" - appears in almost every dialog
-    -- but is NOT blocking; handle it only after urgent conditions are resolved
-    if status:find("hard to see your work") or status:find("It is becoming hard") then
-        if has(1270) then return 1270, "Sponge [vision]" end
+    -- 6. High temp (red `4) → Antibiotic if available, else Lab Kit
+    if dlg:find("Temp: `4%d+") then
+        if has(1266) then return 1266, "Antibiotic [temp red]" end
+        if has(4318) then return 4318, "Lab Kit [temp red]" end
     end
 
-    -- ── 8. INCISIONS = 0 → Fix It! ───────────────────────────────────
-    -- Color codes: `2 = green (0), `3 = orange (0), `6 = light (0)
-    -- "Incisions: `20``" means 0 incisions.
-    -- Extract actual number: after "`X" color code, grab the digit(s)
-    local incStr = status:match("Incisions: [`]?%d?([%d]+)")
-    -- Also try without color: plain "Incisions: 0"
-    if not incStr then incStr = status:match("Incisions: (%d+)") end
-    local incCount = tonumber(incStr)
-
-    if incCount == 0 then
-        if has(4310) then return 4310, "Fix It! [incisions=0]" end
+    -- 7. Elevated temp (light `6) → Antibiotic if available, else Lab Kit
+    if dlg:find("Temp: `6%d+") then
+        if has(1266) then return 1266, "Antibiotic [temp orange]" end
+        if has(4318) then return 4318, "Lab Kit [temp orange]" end
     end
 
-    -- ── 9. INCISIONS > 0 → Scalpel ───────────────────────────────────
-    if incCount and incCount > 0 then
-        if has(1264) then return 1264, "Scalpel [incisions=" .. incCount .. "]" end
+    -- 8. Mild temp (yellow `3) → Antibiotic if available, else Lab Kit
+    if dlg:find("Temp: `3%d+") then
+        if has(1266) then return 1266, "Antibiotic [temp mild]" end
+        if has(4318) then return 4318, "Lab Kit [temp mild]" end
     end
 
-    -- ── 10. PREPPED FOR SURGERY / DEFAULT → Scalpel ──────────────────
-    if status:find("prepped for surgery") or status:find("prepped") then
-        if has(1264) then return 1264, "Scalpel [prepped]" end
+    -- 9. Losing blood very quickly → Clamp first, then Stitches
+    if dlg:find("Patient is losing blood `4very quickly!") then
+        if has(4314) then return 4314, "Clamp [critical bleed]" end
+        if has(1270) then return 1270, "Stitches [critical bleed]" end
     end
 
-    -- ── FALLBACK CHAIN ────────────────────────────────────────────────
-    if has(1264) then return 1264, "Scalpel (fallback)" end
-    if has(4310) then return 4310, "Fix It! (fallback)" end
-    if has(1270) then return 1270, "Sponge (fallback)" end
-    if has(4316) then return 4316, "Lab Kit (fallback)" end
-    if has(1266) then return 1266, "Antibiotics (fallback)" end
-    if has(1262) then return 1262, "Anesthetic (fallback)" end
-    if has(4318) then return 4318, "Antiseptic (fallback)" end
+    -- 10. Losing blood (moderate) → Clamp first, then Stitches
+    if dlg:find("Patient is `6losing blood!") then
+        if has(4314) then return 4314, "Clamp [bleed]" end
+        if has(1270) then return 1270, "Stitches [bleed]" end
+    end
+
+    -- 11. Incisions = 0 (green `2) → Fix It
+    if dlg:find("Incisions: `20") and has(1296) then
+        return 1296, "Fix It [inc=0 green]"
+    end
+
+    -- 12. Incisions = 0 (yellow `3) → Fix It
+    if dlg:find("Incisions: `30") and has(1296) then
+        return 1296, "Fix It [inc=0 yellow]"
+    end
+
+    -- 13. Not diagnosed → Ultrasound
+    if dlg:find("The patient has not been diagnosed.") and has(4316) then
+        return 4316, "Ultrasound [diagnose]"
+    end
+
+    -- 14. Status Awake (red `4) → Anesthetic
+    if dlg:find("Status: `4Awake") and has(1262) then
+        return 1262, "Anesthetic [awake red]"
+    end
+
+    -- 15. Bones broken (yellow `6 or red `4) → Splint
+    if (dlg:find("Bones: `6.+ broken") or dlg:find("Bones: `4.+ broken")) and has(1268) then
+        return 1268, "Splint [broken]"
+    end
+
+    -- 16. Broke arm
+    if dlg:find("Patient broke his arm.") and has(1270) then
+        return 1270, "Stitches [broke arm]"
+    end
+
+    -- 17. Status Awake (yellow `3) → Anesthetic
+    if dlg:find("Status: `3Awake") and has(1262) then
+        return 1262, "Anesthetic [awake yellow]"
+    end
+
+    -- 18. Weak pulse (light `6) → Transfusion
+    if dlg:find("Pulse: `6") and has(4310) then
+        return 4310, "Transfusion [weak pulse]"
+    end
+
+    -- 19. Can't see at all → Sponge
+    if dlg:find("`4You can't see what you are doing!") and has(1258) then
+        return 1258, "Sponge [blind]"
+    end
+
+    -- 20. Fix It + Stitches both present → Stitches (closing incisions)
+    if dlg:find("tool1296") and dlg:find("tool1270") then
+        return 1270, "Stitches [close]"
+    end
+
+    -- 21. Bones shattered (multi, any color combo) → Pins first, then Scalpel
+    if dlg:find("Bones: `.+, `.+ shattered") then
+        if has(4308) then return 4308, "Pins [shattered multi]" end
+        if has(1260) then return 1260, "Scalpel [shattered multi]" end
+    end
+
+    -- 22. Bones shattered (single, any color) → Pins first, then Scalpel
+    if dlg:find("Bones: `.+ shattered") then
+        if has(4308) then return 4308, "Pins [shattered]" end
+        if has(1260) then return 1260, "Scalpel [shattered]" end
+    end
+
+    -- 23. Broke leg
+    if dlg:find("Patient broke his leg.") and has(1270) then
+        return 1270, "Stitches [broke leg]"
+    end
+
+    -- 24. Losing blood slowly → Clamp
+    if dlg:find("Patient is losing blood `3slowly.") and has(4314) then
+        return 4314, "Clamp [slow bleed]"
+    end
+
+    -- 25. Default: Scalpel if available (make incisions)
+    if has(1260) then return 1260, "Scalpel [default]" end
+
+    -- 26. Last resort fallbacks
+    if has(1258) then return 1258, "Sponge (fallback)" end
+    if has(1296) then return 1296, "Fix It (fallback)" end
+    if has(4316) then return 4316, "Ultrasound (fallback)" end
 
     return nil, nil
 end
 
 
-
--- Surg Buy Thread (only handles kit buying, no longer re-sends surgery packets)
+-- Surg Buy Thread (only handles kit buying)
 RunThread(function()
     while true do
         Sleep(1000)
-        if Config.AutoSurgeryBuy and (GetItemCount(1270) < 40 and not surging or surgBuying) then
+        -- Sponge = 1258, Scalpel = 1260, Stitches = 1270 (correct IDs)
+        if Config.AutoSurgeryBuy and (GetItemCount(1258) < 40 and not surging or surgBuying) then
             BuySurgPack()
             surgBuying = false
         end
     end
 end)
+
 
 AddHook("OnSendPacket", "AutoSurgPack", function(type, packet)
     if not Config.AutoSurgery then return false end
