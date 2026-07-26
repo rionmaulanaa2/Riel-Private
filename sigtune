@@ -1169,7 +1169,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.53", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.54", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -2179,74 +2179,98 @@ local function ParseStatus(dlg)
 end
 
 -- Core surgery decision engine
--- Reads the real dialog (add_smalltext conditions + add_button_with_icon tools)
--- and picks the highest-priority correct tool
+-- Priority is based on the actual surgery dump dialog analysis.
+-- "It is becoming hard to see your work" appears in EVERY frame, so it must
+-- be checked LAST (only if nothing else needs attention), not first.
 local function DecideSurgeryTool(dlg)
-    local tools = ParseAvailableTools(dlg)
+    local tools  = ParseAvailableTools(dlg)
     local status = ParseStatus(dlg)
 
-    -- Helper: tool is available in this dialog
     local function has(id) return tools[id] == true end
 
-    -- ── VISION: clean the field first ───────────────────────────────
-    -- "can't see what you are doing" or "hard to see your work" → Sponge
-    if status:find("can't see what you are doing") or status:find("hard to see your work") then
-        if has(1270) then return 1270, "Sponge" end
+    -- ── 1. CRITICAL VISION BLOCK ─────────────────────────────────────
+    -- "can't see what you are doing" = completely blinded → must use Sponge NOW
+    if status:find("can't see what you are doing") then
+        if has(1270) then return 1270, "Sponge [critical vision]" end
     end
 
-    -- ── STATUS: patient is awake → Anesthetic ───────────────────────
-    if status:find("Status: `3Awake") or status:find("Status: `4Awake") then
-        if has(1262) then return 1262, "Anesthetic" end
-    end
-
-    -- ── OPERATION SITE: unsanitary / unclean → Antiseptic ───────────
-    if status:find("Operation site: `4Uns") or status:find("Operation site: `6Unc") or
-       status:find("Unsanitary") or status:find("Unclean") or status:find("Not `3sanitized") then
-        if has(4318) then return 4318, "Antiseptic" end
-    end
-
-    -- ── FEVER: rising / climbing → Antibiotics ───────────────────────
-    if status:find("fever is") or status:find("climbing") or status:find("rising") then
-        if has(1266) then return 1266, "Antibiotics" end
-    end
-
-    -- ── BLEEDING: stitches needed ─────────────────────────────────────
-    if status:find("losing blood") or status:find("losing blood `4very quickly") then
-        if has(1260) then return 1260, "Stitches" end
-    end
-
-    -- ── NOT DIAGNOSED: run lab kit first ─────────────────────────────
+    -- ── 2. NOT DIAGNOSED → Lab Kit ───────────────────────────────────
+    -- Must diagnose before anything else can be treated properly.
     if status:find("has not been diagnosed") or status:find("not been diagnosed") then
-        if has(4316) then return 4316, "Lab Kit" end
+        if has(4316) then return 4316, "Lab Kit [diagnose]" end
     end
 
-    -- ── INCISIONS = 0 and incision work available → Fix It! ──────────
-    if status:find("Incisions: `20") or status:find("Incisions: `30") or status:find("Incisions: `60") then
-        if has(4310) then return 4310, "Fix It!" end
-    end
-
-    -- ── DEFAULT INCISION LOGIC (scalpel if no incision done yet) ─────
-    if status:find("Incisions:") then
-        -- If incisions is not 0, it needs more cutting → Scalpel
-        local inc = status:match("Incisions: `?%d?(%d+)")
-        if inc and tonumber(inc) ~= 0 then
-            if has(1264) then return 1264, "Scalpel" end
+    -- ── 3. PATIENT AWAKE → Anesthetic ────────────────────────────────
+    -- Status line format: "Status: `3Awake``" or "Status: `4Awake``"
+    -- `3 = orange/yellow (awake), `4 = red (danger awake)
+    if status:find("Status:") and (status:find("Awake") or status:find("`3Awake") or status:find("`4Awake")) then
+        -- Make sure they are NOT already asleep (Asleep = `2 green)
+        if not status:find("`2Asleep") and not status:find("Asleep") then
+            if has(1262) then return 1262, "Anesthetic [awake]" end
         end
     end
 
-    -- ── GENERIC SCALPEL (prepped for surgery / need to make incision) ─
-    if status:find("prepped for surgery") or status:find("prepped") then
-        if has(1264) then return 1264, "Scalpel" end
+    -- ── 4. FEVER → Antibiotics ───────────────────────────────────────
+    -- "Patient's fever is `4climbing `4fast!" or "`6clim`6bing!" or "`3slowly rising"
+    if status:find("fever") then
+        if has(1266) then return 1266, "Antibiotics [fever]" end
     end
 
-    -- ── FALLBACK: Scalpel → Sponge → Fix It! → Lab Kit ──────────────
+    -- ── 5. BLEEDING → Stitches ───────────────────────────────────────
+    if status:find("losing blood") then
+        if has(1260) then return 1260, "Stitches [bleeding]" end
+    end
+
+    -- ── 6. UNSANITARY / UNCLEAN OPERATION SITE → Antiseptic ─────────
+    -- "Operation site: `4Uns`4anitary``" or "`6Unc`6lean``" or "Not `3sanitized``"
+    if status:find("Unsanitary") or status:find("Unclean") or
+       status:find("Uns`%danitary") or status:find("Unc`%dlean") or
+       status:find("Not.*sanitized") or status:find("Not `3sanitized") then
+        if has(4318) then return 4318, "Antiseptic [site]" end
+    end
+
+    -- ── 7. MILD VISION WARNING → Sponge ──────────────────────────────
+    -- "It is becoming hard to see your work" - appears in almost every dialog
+    -- but is NOT blocking; handle it only after urgent conditions are resolved
+    if status:find("hard to see your work") or status:find("It is becoming hard") then
+        if has(1270) then return 1270, "Sponge [vision]" end
+    end
+
+    -- ── 8. INCISIONS = 0 → Fix It! ───────────────────────────────────
+    -- Color codes: `2 = green (0), `3 = orange (0), `6 = light (0)
+    -- "Incisions: `20``" means 0 incisions.
+    -- Extract actual number: after "`X" color code, grab the digit(s)
+    local incStr = status:match("Incisions: [`]?%d?([%d]+)")
+    -- Also try without color: plain "Incisions: 0"
+    if not incStr then incStr = status:match("Incisions: (%d+)") end
+    local incCount = tonumber(incStr)
+
+    if incCount == 0 then
+        if has(4310) then return 4310, "Fix It! [incisions=0]" end
+    end
+
+    -- ── 9. INCISIONS > 0 → Scalpel ───────────────────────────────────
+    if incCount and incCount > 0 then
+        if has(1264) then return 1264, "Scalpel [incisions=" .. incCount .. "]" end
+    end
+
+    -- ── 10. PREPPED FOR SURGERY / DEFAULT → Scalpel ──────────────────
+    if status:find("prepped for surgery") or status:find("prepped") then
+        if has(1264) then return 1264, "Scalpel [prepped]" end
+    end
+
+    -- ── FALLBACK CHAIN ────────────────────────────────────────────────
     if has(1264) then return 1264, "Scalpel (fallback)" end
-    if has(1270) then return 1270, "Sponge (fallback)" end
     if has(4310) then return 4310, "Fix It! (fallback)" end
+    if has(1270) then return 1270, "Sponge (fallback)" end
     if has(4316) then return 4316, "Lab Kit (fallback)" end
+    if has(1266) then return 1266, "Antibiotics (fallback)" end
+    if has(1262) then return 1262, "Anesthetic (fallback)" end
+    if has(4318) then return 4318, "Antiseptic (fallback)" end
 
     return nil, nil
 end
+
 
 
 -- Surg Buy Thread (only handles kit buying, no longer re-sends surgery packets)
