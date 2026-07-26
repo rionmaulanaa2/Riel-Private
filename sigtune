@@ -86,6 +86,7 @@ local Config = {
     JoinPlaceAndLeave     = true,
     
     AutoClearWorld    = false,
+    ClearWorldTeleportRow = false, -- Teleports player to X=0 on each new row while clearing
     AutoClearWater    = false,
     AutoSurgery       = false,
     AutoSurgeryBuy    = false,
@@ -96,19 +97,22 @@ local Config = {
     ClearDelay        = 50,
     ClearSpongeID     = 822,
     ClearIgnoreBlocks = {
-        [6] = true,     -- White Door
-        [8] = true,     -- Bedrock
-        [202] = true,
-        [242] = true,   -- Main Door
-        [1796] = true,
-        [4992] = true,
-        [5260] = true,
-        [5638] = true,
-        [6948] = true,
-        [6950] = true,
-        [7188] = true,
+        [6]     = true,  -- White Door
+        [8]     = true,  -- Bedrock
+        [202]   = true,
+        [242]   = true,  -- Main Door
+        [1796]  = true,
+        [4992]  = true,
+        [5260]  = true,
+        [5638]  = true,  -- Magplant
+        [5930]  = true,  -- Legendary Magplant 5000
+        [6948]  = true,
+        [6950]  = true,
+        [7188]  = true,  -- Laser Grid
+        [8470]  = true,  -- Chemical Combiner
         [10266] = true,
-        [11550] = true
+        [11550] = true,
+        [21220] = true,  -- Legendary Chemical Combiner
     },
 }
 
@@ -1105,7 +1109,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.46", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.49", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -1521,6 +1525,8 @@ local function ShowUI()
             ImGui.SameLine()
             local cCWat, vCWat = ConfigCheckbox("Auto Clear Water", "AutoClearWater")
             if cCWat and vCWat then clearWX, clearWY = nil, nil end
+            local cCWT, vCWT = ConfigCheckbox("Teleport to X=0 on each row (Clear World)", "ClearWorldTeleportRow")
+            if cCWT then Config.ClearWorldTeleportRow = vCWT end
             
             ImGui.Text("Direction:")
             ImGui.SameLine()
@@ -1669,6 +1675,7 @@ RunThread(function()
                         PreviousConfig.AutoPunchWorld = Config.AutoPunchWorld
                         PreviousConfig.AutoClearWorld = Config.AutoClearWorld
                         PreviousConfig.AutoClearWater = Config.AutoClearWater
+                        PreviousConfig.ClearWorldTeleportRow = Config.ClearWorldTeleportRow
                         PreviousConfig.AutoSurgery = Config.AutoSurgery
                         PreviousConfig.AutoTake = Config.AutoTake
                         PreviousConfig.AutoBackpack = Config.AutoBackpack
@@ -1686,6 +1693,7 @@ RunThread(function()
                         Config.AutoPunchWorld = false
                         Config.AutoClearWorld = false
                         Config.AutoClearWater = false
+                        Config.ClearWorldTeleportRow = false
                         Config.AutoSurgery = false
                         Config.AutoTake = false
                         Config.AutoBackpack = false
@@ -1707,6 +1715,7 @@ RunThread(function()
 
                         Config.AutoClearWorld = PreviousConfig.AutoClearWorld or false
                         Config.AutoClearWater = PreviousConfig.AutoClearWater or false
+                        Config.ClearWorldTeleportRow = PreviousConfig.ClearWorldTeleportRow or false
                         Config.AutoSurgery = PreviousConfig.AutoSurgery or false
                         Config.AutoTake = PreviousConfig.AutoTake or false
                         Config.AutoBackpack = PreviousConfig.AutoBackpack or false
@@ -2049,18 +2058,37 @@ end)
 
 AddHook("OnSendPacket", "AutoSurgPack", function(type, packet)
     if not Config.AutoSurgery then return false end
-    
+
+    -- Trigger: player typed /bp command (buy surg kits)
     if packet:find("action|input\ntext|/bp") and Config.AutoSurgeryBuy then
         Log("Buying Surgical Pack...")
         surgBuying = true
         return true
-    end   
-    if packet:find("action|wrench\nnetid|(%d+)") then
-        surgid = packet:match("action|wrench\nnetid|(%d+)")
+    end
+
+    -- Trigger 1: player wrenches a player (original method)
+    local wrenchID = packet:match("action|wrench\nnetid|(%d+)")
+    if wrenchID then
+        surgid = wrenchID
         SendPacket(2, "action|dialog_return\ndialog_name|popup\nnetID|" .. surgid .. "|\nbuttonClicked|surgery")
         surging = true
-        return true
+        Log("`9[AutoSurg] `0Detected wrench on netID " .. surgid .. ", starting surgery...")
+        return false  -- let game process wrench too
     end
+
+    -- Trigger 2: player sends dialog_return with dialog_name|surge
+    -- This fires when clicking "Surgery" from the Surg-E wand popup dialog
+    if type == 2 and packet:find("dialog_name|surge") then
+        -- Extract netID from the packet (format: netID|12345|)
+        local nid = packet:match("netID|(%d+)")
+        if nid then
+            surgid = nid
+            surging = true
+            Log("`9[AutoSurg] `0Detected dialog_name|surge for netID " .. surgid .. ", taking over surgery!")
+        end
+        return false  -- let the packet through so the surgery dialog opens normally
+    end
+
     return false
 end)
 
@@ -2234,9 +2262,11 @@ end)
 -- CLEAR WORLD & WATER LOGIC
 -- ============================================================
 local clearWX, clearWY = nil, nil
-local clearWGrid = nil
+local clearWGrid    = nil
 local clearWGridW, clearWGridH = 0, 0
-local clearWWorld = nil
+local clearWWorld   = nil
+local clearWVisited = {}  -- tracks tiles already fully processed (key: x*10000+y)
+local lastClearRowY = nil  -- tracks last row we teleported to for ClearWorldTeleportRow
 
 local function BuildClearGrid()
     local tiles = GetTiles()
@@ -2261,9 +2291,12 @@ local function InitializeClear()
     else
         clearWY = world.height - 1
     end
-    clearWX = 0
-    clearWGrid = nil
-    clearWWorld = nil
+    clearWX      = 0
+    clearWGrid   = nil
+    clearWWorld  = nil
+    clearWVisited = {}  -- reset visited set on fresh start
+    lastClearRowY = nil  -- reset row teleport tracker
+    Log("`9[Clear World] `0Initialized. Ignored block IDs: 6,8,242,1796,5638,5930,7188,8470,10266,21220 + others.")
 end
 
 local function ClearWorldStep()
@@ -2280,9 +2313,13 @@ local function ClearWorldStep()
         if Config.ClearDirection == "top" and clearWY >= world.height then break end
         if Config.ClearDirection == "bottom" and clearWY < 0 then break end
 
+        local key  = clearWX * 10000 + clearWY
         local cell = GetTile(clearWX, clearWY)
-        if cell then
-            if (cell.fg ~= 0 or cell.bg ~= 0) and not Config.ClearIgnoreBlocks[cell.fg] then
+        if cell and not clearWVisited[key] then
+            -- skip ignored blocks AND bg-only ignored IDs
+            local skipFg = Config.ClearIgnoreBlocks[cell.fg]
+            local skipBg = Config.ClearIgnoreBlocks[cell.bg]
+            if (cell.fg ~= 0 or cell.bg ~= 0) and not skipFg and not skipBg then
                 targetX = clearWX
                 targetY = clearWY
                 break
@@ -2297,8 +2334,29 @@ local function ClearWorldStep()
     end
 
     if targetX and targetY then
-        while (GetTile(targetX, targetY).fg ~= 0 or GetTile(targetX, targetY).bg ~= 0) and not Config.ClearIgnoreBlocks[GetTile(targetX, targetY).fg] do
-            if not Run or Paused or not Config.AutoClearWorld then return end -- Abort if paused by stranger or manually disabled
+        -- Teleport to X=0 of the current row when the row changes
+        if Config.ClearWorldTeleportRow and lastClearRowY ~= targetY then
+            lastClearRowY = targetY
+            SendPacketRaw(false, {
+                type = 0,
+                x    = 0,
+                y    = targetY * 32,
+                px   = 0,
+                py   = 0
+            })
+            Log("`2[Clear World] `0Teleported to X=0 row Y=" .. targetY)
+            Sleep(200)
+        end
+
+        -- Punch until tile is clear or we hit an ignored block / abort condition
+        local maxHits = 60  -- safety cap per tile
+        local hits = 0
+        repeat
+            if not Run or Paused or not Config.AutoClearWorld then return end
+            local t = GetTile(targetX, targetY)
+            if not t then break end
+            if Config.ClearIgnoreBlocks[t.fg] or Config.ClearIgnoreBlocks[t.bg] then break end
+            if t.fg == 0 and t.bg == 0 then break end
             SendPacketRaw(false, {
                 type  = 3,
                 value = 18,
@@ -2308,16 +2366,23 @@ local function ClearWorldStep()
                 y     = targetY * 32
             })
             Sleep(Config.ClearDelay)
-        end
+            hits = hits + 1
+        until hits >= maxHits
+
+        -- Mark tile as visited so we never retry it
+        clearWVisited[targetX * 10000 + targetY] = true
+
+        -- Advance cursor
         clearWX = targetX + 1
         if clearWX >= world.width then
             clearWX = 0
             clearWY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)
         end
     else
-        Log("`2[Auto Clear World] `0Finished clearing!")
+        Log("`2[Auto Clear World] `0Finished clearing world! Tiles skipped: " .. tostring(#clearWVisited or 0))
         Config.AutoClearWorld = false
         clearWX, clearWY = nil, nil
+        clearWVisited = {}
     end
 end
 
