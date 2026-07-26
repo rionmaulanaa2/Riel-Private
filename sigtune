@@ -1244,6 +1244,34 @@ local function ShowUI()
         ImGui.Separator()
 
         -- AUTO PLACE
+        if ImGui.CollapsingHeader("Auto Create Farm") then
+            local c, v = ConfigCheckbox("Enable Auto Create Farm", "AutoCreateFarm")
+            if c and v then farmWX, farmWY = nil, nil end
+
+            local c2, v2 = ImGui.InputInt("Block Item ID", Config.CreateFarmTarget)
+            if c2 then Config.CreateFarmTarget = v2 end
+
+            local c3, v3 = ImGui.InputInt("Place Delay ms##Farm", Config.CreateFarmDelay)
+            if c3 then Config.CreateFarmDelay = math.max(1, v3) end
+
+            ImGui.Text("Direction:")
+            if ImGui.RadioButton("Top to Bottom##Farm", Config.CreateFarmDirection == "top") then
+                Config.CreateFarmDirection = "top"
+            end
+            ImGui.SameLine()
+            if ImGui.RadioButton("Bottom to Top##Farm", Config.CreateFarmDirection == "bottom") then
+                Config.CreateFarmDirection = "bottom"
+            end
+            
+            if ImGui.RadioButton("Take from Backpack##Farm", Config.PlaceResupplyMode == 1) then
+                Config.PlaceResupplyMode = 1
+            end
+            ImGui.SameLine()
+            if ImGui.RadioButton("Stop if Empty##Farm", Config.PlaceResupplyMode == 0) then
+                Config.PlaceResupplyMode = 0
+            end
+        end
+
         if ImGui.CollapsingHeader("Auto Place World") then
             local c, v = ConfigCheckbox("Enable Auto Place", "AutoPlace")
             if c and v then placeX, placeY = nil, nil end
