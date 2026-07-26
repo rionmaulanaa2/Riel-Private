@@ -90,6 +90,7 @@ local Config = {
     AutoClearWater    = false,
     AutoSurgery       = false,
     AutoSurgeryBuy    = false,
+    SurgeryDelay      = 700,   -- ms delay between each surgery packet sent
     SurgeryTotal      = 0,
     RecordName        = "MyRecord",
     PlaybackFile      = "MyRecord",
@@ -1168,7 +1169,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.52", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.53", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -1217,8 +1218,11 @@ local function ShowUI()
             local cSB, vSB = ImGui.Checkbox("Auto Buy Surg Kits", Config.AutoSurgeryBuy)
             if cSB then Config.AutoSurgeryBuy = vSB end
 
+            local cSD, vSD = ImGui.InputInt("Surgery Packet Delay (ms)", Config.SurgeryDelay)
+            if cSD then Config.SurgeryDelay = math.max(100, vSD) end
+
             ImGui.Text("Total Surgeries Done: " .. Config.SurgeryTotal)
-            ImGui.Text("`9How to use:`0 Wrench a player with a Surg-E to start!")
+            ImGui.Text("`9How to use:`0 Click OK on the Surg-E wand popup to start!")
         end
 
         ImGui.Separator()
@@ -2098,10 +2102,9 @@ end)
 -- ============================================================
 -- AUTO SURGERY LOGIC
 -- ============================================================
-local surging = false
-local surgid = nil
+local surging    = false
 local surgBuying = false
-local surgTools = { 1270, 1240, 1256, 1258, 1260, 1262, 1264, 1266, 1268 }
+local surgTools  = { 1270, 1240, 1256, 1258, 1260, 1262, 1264, 1266, 1268 }
 
 local function SurgTrash(ID)
     SendPacket(2, "action|dialog_return\ndialog_name|trash\nitem_trash|"..ID.. "|\nitem_count|".. (GetItemCount(ID) - 80) .."\n")
@@ -2141,11 +2144,16 @@ local SURG_TOOL_IDS = {
 }
 
 -- Send surgery action using the real button ID from the dialog
--- toolID: the numeric item ID (e.g. 1270 for Sponge)
+-- Wraps in RunThread+Sleep so the server is not flooded
 local function SendSurg(toolID, toolName)
     if not Config.AutoSurgery or Paused or not Run then return end
-    SendPacket(2, "action|dialog_return\ndialog_name|surgery\nbuttonClicked|tool" .. tostring(toolID))
-    Log("`9[AutoSurg] `0Used `2" .. (toolName or tostring(toolID)))
+    local delay = math.max(100, Config.SurgeryDelay or 700)
+    RunThread(function()
+        Sleep(delay)
+        if not Config.AutoSurgery or Paused or not Run then return end
+        SendPacket(2, "action|dialog_return\ndialog_name|surgery\nbuttonClicked|tool" .. tostring(toolID))
+        Log("`9[AutoSurg] `0Used `2" .. (toolName or tostring(toolID)))
+    end)
 end
 
 -- Parse all available tool button IDs from the dialog string
@@ -2241,7 +2249,7 @@ local function DecideSurgeryTool(dlg)
 end
 
 
--- Surg Buy Thread
+-- Surg Buy Thread (only handles kit buying, no longer re-sends surgery packets)
 RunThread(function()
     while true do
         Sleep(1000)
@@ -2249,45 +2257,26 @@ RunThread(function()
             BuySurgPack()
             surgBuying = false
         end
-        
-        if Config.AutoSurgery and not surging and surgid and not Paused and Run then
-            SendPacket(2, "action|dialog_return\ndialog_name|popup\nnetID|"..surgid.."|\nbuttonClicked|surgery")
-            surging = true
-        end
     end
 end)
 
 AddHook("OnSendPacket", "AutoSurgPack", function(type, packet)
     if not Config.AutoSurgery then return false end
 
-    -- Trigger: player typed /bp command (buy surg kits)
+    -- /bp command: trigger surg kit purchase
     if packet:find("action|input\ntext|/bp") and Config.AutoSurgeryBuy then
         Log("Buying Surgical Pack...")
         surgBuying = true
         return true
     end
 
-    -- Trigger 1: player wrenches a player (original method)
-    local wrenchID = packet:match("action|wrench\nnetid|(%d+)")
-    if wrenchID then
-        surgid = wrenchID
-        SendPacket(2, "action|dialog_return\ndialog_name|popup\nnetID|" .. surgid .. "|\nbuttonClicked|surgery")
-        surging = true
-        Log("`9[AutoSurg] `0Detected wrench on netID " .. surgid .. ", starting surgery...")
-        return false  -- let game process wrench too
-    end
-
-    -- Trigger 2: player sends dialog_return with dialog_name|surge
-    -- This fires when clicking "Surgery" from the Surg-E wand popup dialog
+    -- Intercept dialog_name|surge (the "Okay!" confirm from the Surg-E wand)
+    -- We let it pass through so the server opens the surgery dialog normally.
+    -- Setting surging=true here tells the bot a session is active.
     if type == 2 and packet:find("dialog_name|surge") then
-        -- Extract netID from the packet (format: netID|12345|)
-        local nid = packet:match("netID|(%d+)")
-        if nid then
-            surgid = nid
-            surging = true
-            Log("`9[AutoSurg] `0Detected dialog_name|surge for netID " .. surgid .. ", taking over surgery!")
-        end
-        return false  -- let the packet through so the surgery dialog opens normally
+        surging = true
+        Log("`9[AutoSurg] `0Surgery session started - waiting for dialog...")
+        return false  -- MUST pass through or server never sends the surgery dialog back
     end
 
     return false
@@ -2300,12 +2289,8 @@ AddHook("OnVariant", "AutoSurgHooks", function(var)
     if var[0] == "OnConsoleMessage" and type(var[1]) == "string" then
         local msg = var[1]
         if msg:find("You are not") or msg:find("patient has left") or msg:find("gave up") then
-            RunThread(function()
-                Sleep(500)
-                Log("`4[AutoSurg] Patient left/died/gave up! Resetting.")
-                surging = false
-                surgid  = nil
-            end)
+            surging = false
+            Log("`4[AutoSurg] Surgery ended (patient left/gave up). Ready for next.")
             return true
         end
     end
