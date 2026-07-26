@@ -416,38 +416,45 @@ end
 -- ============================================================
 -- GHOST PLAYER PATCH (Fixes GetPlayerList caching bug)
 -- ============================================================
+-- forceLeft: netid -> true, means this player has been confirmed gone
+-- We reset it each time WE enter a new world (OnSendPacket join_request)
 local forceLeft = {}
 local lastPlayersRef = {} -- for name resolving on leave
 
-AddHook("onpacket", "GhostPlayerCleanupPacket", function(type, packet)
+-- Bug fix: Use correct PascalCase hook names per Bothax API docs
+-- 'OnSendPacket'  fires when WE send a packet (client -> server)
+-- 'OnProcessTankUpdate' fires when server sends us a tank update packet
+
+-- Reset forceLeft when we ourselves join a new world
+AddHook("OnSendPacket", "GhostPlayerCleanupSend", function(type, packet)
     if type == 3 and packet:find("action|join_request") then
         forceLeft = {}
         lastPlayersRef = {}
-    end
-    if type == 3 and packet:find("action|leave") then
-        local netid = tonumber(packet:match("netID|(%d+)"))
-        if netid then forceLeft[netid] = true end
+        Log("`9[GhostPatch] World change detected - clearing player cache.`0")
     end
     return false
 end)
 
-AddHook("onvariant", "GhostPlayerCleanupVariant", function(var)
+-- Detect when server sends OnRemove to evict a player's avatar
+AddHook("OnVariant", "GhostPlayerCleanupVariant", function(var)
+    -- OnRemove is sent by the server when a player's entity is removed
+    -- var[1] is the netid as an integer in Bothax
     if var[0] == "OnRemove" then
-        local str = tostring(var[1] or "")
-        local netid = tonumber(str:match("netID|(%d+)")) or tonumber(str:match("netid|(%d+)"))
-        if not netid then
-            -- Sometimes OnRemove passes the netid directly as var[1] if it's an int, or string
-            netid = tonumber(var[1])
+        local netid = tonumber(var[1])
+        if netid then
+            forceLeft[netid] = true
+            Log("`9[GhostPatch] Forced evict netid " .. tostring(netid) .. "`0")
         end
-        if netid then forceLeft[netid] = true end
     end
     
+    -- Also catch console message "PlayerName left, X others here"
     if var[0] == "OnConsoleMessage" and type(var[1]) == "string" and var[1]:find("left,") then
         local nameStr = var[1]:match("`w([^`]+) left,")
         if nameStr then
             for netid, info in pairs(lastPlayersRef) do
-                if info.name:find(nameStr) or nameStr:find(info.name) then
+                if info.name == nameStr then
                     forceLeft[netid] = true
+                    Log("`9[GhostPatch] Forced evict by name: " .. nameStr .. "`0")
                 end
             end
         end
@@ -1024,7 +1031,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.33", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.34", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
