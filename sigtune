@@ -31,6 +31,11 @@ local Config = {
     PlaceDelay      = 200,   -- Delay after placing an item (ms)
     PlaceResupplyMode = 0,   -- 0 = Stop, 1 = Backpack
 
+    AutoCreateFarm   = false,
+    CreateFarmTarget = 3018,
+    CreateFarmDirection = "bottom",
+    CreateFarmDelay  = 200,
+
     AutoPunchWorld   = false, -- If true, breaks a specific block ID across the whole world
     PunchWorldTarget = 4584,  -- Item ID of the block to punch
     PunchDirection   = "top", -- "top" or "bottom"
@@ -668,6 +673,109 @@ local function InitializePlace()
     -- Force grid rebuild on start
     placeGrid = nil
     placeGridWorld = nil
+end
+
+
+local farmWX, farmWY = nil, nil
+
+local function InitializeCreateFarm()
+    local world = GetWorld()
+    if not world then return end
+    if Config.CreateFarmDirection == "top" then
+        farmWY = 0
+    else
+        farmWY = world.height - 1
+    end
+    farmWX = 0
+end
+
+local function AutoCreateFarmStep()
+    local world = GetWorld()
+    if not world then return end
+
+    if farmWX == nil or farmWY == nil then
+        InitializeCreateFarm()
+    end
+
+    local targetX, targetY = nil, nil
+
+    while true do
+        if Config.CreateFarmDirection == "top" and farmWY >= world.height then break end
+        if Config.CreateFarmDirection == "bottom" and farmWY < 0 then break end
+
+        -- Skip logic based on direction (alternating rows)
+        local isRowValid = false
+        if Config.CreateFarmDirection == "top" then
+            isRowValid = (farmWY % 2 == 1)
+        else
+            isRowValid = ((world.height - 1 - farmWY) % 2 == 1)
+        end
+
+        if isRowValid then
+            -- Skip if placing on local player pos
+            local local_ = GetLocal()
+            local pX = local_ and math.floor(local_.pos.x / 32)
+            local pY = local_ and math.floor(local_.pos.y / 32)
+            local isPlayerPos = (pX == farmWX and pY == farmWY)
+
+            if not isPlayerPos then
+                local tile = GetTile(farmWX, farmWY)
+                if tile and tile.fg == 0 then
+                    targetX = farmWX
+                    targetY = farmWY
+                    break
+                end
+            end
+        end
+
+        farmWX = farmWX + 1
+        if farmWX >= world.width then
+            farmWX = 0
+            farmWY = Config.CreateFarmDirection == "top" and (farmWY + 1) or (farmWY - 1)
+        end
+    end
+
+    if targetX and targetY then
+        -- Check inventory
+        if GetItemCount(Config.CreateFarmTarget) == 0 then
+            if Config.PlaceResupplyMode == 1 then
+                Log("`eOut of items! Attempting to resupply from backpack...`0")
+                if TryResupplyFromBackpack(Config.CreateFarmTarget) then
+                    return -- Wait for backpack UI to process
+                else
+                    Log("`4Failed to resupply! Out of items in backpack too. Stopping.`0")
+                    Config.AutoCreateFarm = false
+                    return
+                end
+            else
+                Log("`4Out of items! Stopping Auto Create Farm.`0")
+                Config.AutoCreateFarm = false
+                return
+            end
+        end
+
+        while GetTile(targetX, targetY).fg == 0 do
+            if not Run or Paused or not Config.AutoCreateFarm then return end
+            SendPacketRaw(false, {
+                type  = 3,
+                value = Config.CreateFarmTarget,
+                px    = targetX,
+                py    = targetY,
+                x     = targetX * 32,
+                y     = targetY * 32
+            })
+            Sleep(Config.CreateFarmDelay)
+        end
+
+        farmWX = targetX + 1
+        if farmWX >= world.width then
+            farmWX = 0
+            farmWY = Config.CreateFarmDirection == "top" and (targetY + 1) or (targetY - 1)
+        end
+    else
+        Log("`2[Auto Create Farm] `0Finished placing!")
+        Config.AutoCreateFarm = false
+    end
 end
 
 local function AutoPlaceStep()
@@ -1363,6 +1471,7 @@ RunThread(function()
                         PreviousConfig.AutoPunch = Config.AutoPunch
                         PreviousConfig.AutoPunchAntiMove = Config.AutoPunchAntiMove
                         PreviousConfig.AutoPlace = Config.AutoPlace
+                        PreviousConfig.AutoCreateFarm = Config.AutoCreateFarm
                         PreviousConfig.AutoPunchWorld = Config.AutoPunchWorld
                         PreviousConfig.AutoClearWorld = Config.AutoClearWorld
                         PreviousConfig.AutoClearWater = Config.AutoClearWater
@@ -1375,6 +1484,7 @@ RunThread(function()
                         Config.AutoPunch = false
                         Config.AutoPunchAntiMove = false
                         Config.AutoPlace = false
+                        Config.AutoCreateFarm = false
                         Config.AutoPunchWorld = false
                         Config.AutoClearWorld = false
                         Config.AutoClearWater = false
@@ -1392,6 +1502,7 @@ RunThread(function()
                         Config.AutoPunch = PreviousConfig.AutoPunch or false
                         Config.AutoPunchAntiMove = PreviousConfig.AutoPunchAntiMove or false
                         Config.AutoPlace = PreviousConfig.AutoPlace or false
+                        Config.AutoCreateFarm = PreviousConfig.AutoCreateFarm or false
                         Config.AutoPunchWorld = PreviousConfig.AutoPunchWorld or false
                         Config.AutoClearWorld = PreviousConfig.AutoClearWorld or false
                         Config.AutoClearWater = PreviousConfig.AutoClearWater or false
@@ -1402,6 +1513,7 @@ RunThread(function()
                         Config.AutoJoin = PreviousConfig.AutoJoin or false
 
                         -- Debug logs to confirm internal state restoration
+                        if Config.AutoCreateFarm then Log("`9-> Auto Create Farm resumed!") end
                         if Config.AutoPunchWorld then Log("`9-> Auto Punch World resumed!") end
                         if Config.AutoClearWorld then Log("`9-> Auto Clear World resumed!") end
                         if Config.AutoPlace then Log("`9-> Auto Place resumed!") end
@@ -2092,6 +2204,9 @@ while true do
             elseif Config.AutoPlace then
                 AutoPlaceStep()
                 currentDelay = Config.PlaceDelay
+            elseif Config.AutoCreateFarm then
+                AutoCreateFarmStep()
+                currentDelay = Config.CreateFarmDelay
             elseif Config.AutoPunchWorld then
                 AutoPunchWorldStep()
                 currentDelay = Config.PunchWorldDelay
