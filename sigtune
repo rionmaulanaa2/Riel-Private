@@ -1168,7 +1168,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.51", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.52", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -2126,21 +2126,120 @@ local function BuySurgPack()
     end
 end
 
-local function SendSurg(toolName)
+-- Tool ID -> button name mapping (from surgery dump analysis)
+local SURG_TOOL_IDS = {
+    [1258] = "Defibrillator",
+    [1260] = "Stitches",
+    [1262] = "Anesthetic",
+    [1264] = "Scalpel",
+    [1266] = "Antibiotics",
+    [1268] = "Splint",
+    [1270] = "Sponge",
+    [4310] = "Fix It!",
+    [4316] = "Lab Kit",
+    [4318] = "Antiseptic",
+}
+
+-- Send surgery action using the real button ID from the dialog
+-- toolID: the numeric item ID (e.g. 1270 for Sponge)
+local function SendSurg(toolID, toolName)
     if not Config.AutoSurgery or Paused or not Run then return end
-    local tools = ""
-    if toolName == "Sponge" then tools = "command_0"
-    elseif toolName == "Scalpel" then tools = "command_1"
-    elseif toolName == "Anesthetic" then tools = "command_2"
-    elseif toolName == "Antiseptic" then tools = "command_3"
-    elseif toolName == "Antibiotics" then tools = "command_4"
-    elseif toolName == "Splint" then tools = "command_5"
-    elseif toolName == "Stitches" then tools = "command_6"
-    elseif toolName == "Fix It!" then tools = "command_7"
-    end
-    SendPacket(2, "action|dialog_return\ndialog_name|surgery\nbuttonClicked|" .. tools)
-    Log("`9[AutoSurg] `0Used `2" .. toolName)
+    SendPacket(2, "action|dialog_return\ndialog_name|surgery\nbuttonClicked|tool" .. tostring(toolID))
+    Log("`9[AutoSurg] `0Used `2" .. (toolName or tostring(toolID)))
 end
+
+-- Parse all available tool button IDs from the dialog string
+-- Returns a set: { [toolID] = true, ... }
+local function ParseAvailableTools(dlg)
+    local available = {}
+    for toolID in dlg:gmatch("add_button_with_icon|tool(%d+)|") do
+        local id = tonumber(toolID)
+        if id and id ~= 0 and id ~= 4320 then  -- 4320 = empty slot
+            available[id] = true
+        end
+    end
+    return available
+end
+
+-- Parse add_smalltext lines from dialog into a single combined string for condition matching
+local function ParseStatus(dlg)
+    local lines = {}
+    for line in dlg:gmatch("add_smalltext|([^|]+)|") do
+        table.insert(lines, line)
+    end
+    return table.concat(lines, "\n")
+end
+
+-- Core surgery decision engine
+-- Reads the real dialog (add_smalltext conditions + add_button_with_icon tools)
+-- and picks the highest-priority correct tool
+local function DecideSurgeryTool(dlg)
+    local tools = ParseAvailableTools(dlg)
+    local status = ParseStatus(dlg)
+
+    -- Helper: tool is available in this dialog
+    local function has(id) return tools[id] == true end
+
+    -- ── VISION: clean the field first ───────────────────────────────
+    -- "can't see what you are doing" or "hard to see your work" → Sponge
+    if status:find("can't see what you are doing") or status:find("hard to see your work") then
+        if has(1270) then return 1270, "Sponge" end
+    end
+
+    -- ── STATUS: patient is awake → Anesthetic ───────────────────────
+    if status:find("Status: `3Awake") or status:find("Status: `4Awake") then
+        if has(1262) then return 1262, "Anesthetic" end
+    end
+
+    -- ── OPERATION SITE: unsanitary / unclean → Antiseptic ───────────
+    if status:find("Operation site: `4Uns") or status:find("Operation site: `6Unc") or
+       status:find("Unsanitary") or status:find("Unclean") or status:find("Not `3sanitized") then
+        if has(4318) then return 4318, "Antiseptic" end
+    end
+
+    -- ── FEVER: rising / climbing → Antibiotics ───────────────────────
+    if status:find("fever is") or status:find("climbing") or status:find("rising") then
+        if has(1266) then return 1266, "Antibiotics" end
+    end
+
+    -- ── BLEEDING: stitches needed ─────────────────────────────────────
+    if status:find("losing blood") or status:find("losing blood `4very quickly") then
+        if has(1260) then return 1260, "Stitches" end
+    end
+
+    -- ── NOT DIAGNOSED: run lab kit first ─────────────────────────────
+    if status:find("has not been diagnosed") or status:find("not been diagnosed") then
+        if has(4316) then return 4316, "Lab Kit" end
+    end
+
+    -- ── INCISIONS = 0 and incision work available → Fix It! ──────────
+    if status:find("Incisions: `20") or status:find("Incisions: `30") or status:find("Incisions: `60") then
+        if has(4310) then return 4310, "Fix It!" end
+    end
+
+    -- ── DEFAULT INCISION LOGIC (scalpel if no incision done yet) ─────
+    if status:find("Incisions:") then
+        -- If incisions is not 0, it needs more cutting → Scalpel
+        local inc = status:match("Incisions: `?%d?(%d+)")
+        if inc and tonumber(inc) ~= 0 then
+            if has(1264) then return 1264, "Scalpel" end
+        end
+    end
+
+    -- ── GENERIC SCALPEL (prepped for surgery / need to make incision) ─
+    if status:find("prepped for surgery") or status:find("prepped") then
+        if has(1264) then return 1264, "Scalpel" end
+    end
+
+    -- ── FALLBACK: Scalpel → Sponge → Fix It! → Lab Kit ──────────────
+    if has(1264) then return 1264, "Scalpel (fallback)" end
+    if has(1270) then return 1270, "Sponge (fallback)" end
+    if has(4310) then return 4310, "Fix It! (fallback)" end
+    if has(4316) then return 4316, "Lab Kit (fallback)" end
+
+    return nil, nil
+end
+
 
 -- Surg Buy Thread
 RunThread(function()
@@ -2197,48 +2296,70 @@ end)
 AddHook("OnVariant", "AutoSurgHooks", function(var)
     if not Config.AutoSurgery or Paused or not Run then return false end
 
-    if var[0] == "OnConsoleMessage" and var[1]:find("You are not") then
-        RunThread(function()
-            Sleep(500)
-            Log("`4Patient left/died!")
-            surging = false
-            surgid = nil
-        end)
-        return true
-    elseif var[0] == "OnDialogRequest" and var[1]:find("Anatomical") then
-        local x = var[1]:match("|x|(%d+)")
-        local y = var[1]:match("|y|(%d+)")
-        SendPacket(2, "action|dialog_return\ndialog_name|surge_edit\nx|" .. x .. "|\ny|" .. y .. "|")
-        return true
-    elseif type(var[0]) == "string" and var[0]:find("OnDialogRequest") then
-        local v = var[1]
-        if v:find("`4You can't see what you are doing(!+)") and v:find("command_0") then SendSurg("Sponge"); return true
-        elseif v:find("`6It is becoming hard to see your work(.+)") and v:find("command_0") then SendSurg("Sponge"); return true
-        elseif v:find("Patient's fever is `3slowly rising") and v:find("command_4") then SendSurg("Antibiotics"); return true
-        elseif v:find("Patient's fever is `6climbing") and v:find("command_4") then SendSurg("Antibiotics"); return true
-        elseif v:find("Incisions: `60") and v:find("command_7") then SendSurg("Fix It!"); return true
-        elseif v:find("Incisions: `30") and v:find("command_7") then SendSurg("Fix It!"); return true
-        elseif v:find("command_7") and not v:find("command_6") and not v:find("Incisions: 0") and not v:find("command_1") then SendSurg("Fix It!"); return true
-        elseif v:find("Operation site: `4Unsanitary") and v:find("command_3") then SendSurg("Antiseptic"); return true
-        elseif v:find("Status: `4Awake!") and v:find("command_2") then SendSurg("Anesthetic"); return true
-        elseif v:find("Patient is losing blood `4very quickly!") and v:find("command_6") then SendSurg("Stitches"); return true
-        elseif v:find("Patient is losing blood `3slowly") and v:find("command_6") then SendSurg("Stitches"); return true
-        elseif v:find("Patient is `6losing blood!") and v:find("command_6") then SendSurg("Stitches"); return true
-        elseif v:find("command_7") and v:find("command_6") then SendSurg("Stitches"); return true
-        elseif v:find("command_7") and v:find("Incisions: 0") then SendSurg("Stitches"); return true
-        elseif v:find("command_7") and v:find("command_1") then SendSurg("Scalpel"); return true
-        elseif v:find("command_1") then SendSurg("Scalpel"); return true
+    -- Patient left or surgery cancelled
+    if var[0] == "OnConsoleMessage" and type(var[1]) == "string" then
+        local msg = var[1]
+        if msg:find("You are not") or msg:find("patient has left") or msg:find("gave up") then
+            RunThread(function()
+                Sleep(500)
+                Log("`4[AutoSurg] Patient left/died/gave up! Resetting.")
+                surging = false
+                surgid  = nil
+            end)
+            return true
         end
     end
-    
-    if var[0] == "OnTalkBubble" and tostring(var[1]) == tostring(GetLocal().netid) then
-        surging = false
-        Config.SurgeryTotal = Config.SurgeryTotal + 1
-        Log("`2Surgery complete! Total: `0" .. Config.SurgeryTotal)
+
+    -- Anatomy grid dialog (surge_edit) → auto-dismiss
+    if var[0] == "OnDialogRequest" and type(var[1]) == "string" and var[1]:find("Anatomical") then
+        local x = var[1]:match("|x|(%d+)")
+        local y = var[1]:match("|y|(%d+)")
+        if x and y then
+            SendPacket(2, "action|dialog_return\ndialog_name|surge_edit\nx|" .. x .. "|\ny|" .. y .. "|")
+        end
         return true
     end
+
+    -- Main surgery dialog: end_dialog|surgery
+    if var[0] == "OnDialogRequest" and type(var[1]) == "string" and var[1]:find("end_dialog|surgery") then
+        local dlg = var[1]
+
+        -- Log the status for debugging
+        local status = ParseStatus(dlg)
+        Log("`b[AutoSurg] `0Dialog received. Status: " .. status:gsub("\n", " | "):sub(1, 120))
+
+        -- Decision engine
+        local toolID, toolName = DecideSurgeryTool(dlg)
+
+        if toolID then
+            SendSurg(toolID, toolName)
+        else
+            -- No tool matched — log all available tools for debugging
+            local tools = ParseAvailableTools(dlg)
+            local tlist = {}
+            for id, _ in pairs(tools) do
+                table.insert(tlist, tostring(id) .. "(" .. (SURG_TOOL_IDS[id] or "?") .. ")")
+            end
+            Log("`4[AutoSurg] No tool decision! Available: " .. table.concat(tlist, ", "))
+            Log("`4[AutoSurg] Status dump: " .. status:sub(1, 200))
+        end
+        return true
+    end
+
+    -- Surgery complete: server sends OnTalkBubble on the local player's netid
+    if var[0] == "OnTalkBubble" then
+        local local_ = GetLocal()
+        if local_ and tostring(var[1]) == tostring(local_.netid) then
+            surging = false
+            Config.SurgeryTotal = Config.SurgeryTotal + 1
+            Log("`2[AutoSurg] Surgery complete! Total: `0" .. Config.SurgeryTotal)
+            return true
+        end
+    end
+
     return false
 end)
+
 
 -- ============================================================
 -- RECORD & PLAY LOGIC
