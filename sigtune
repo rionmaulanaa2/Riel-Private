@@ -389,6 +389,15 @@ AddHook("onvariant", "DebugVariantLogger", function(var)
 end)
 
 -- Returns true if a userid is in the whitelist or is the local player
+local function ConfigCheckbox(label, key)
+    local c, v = ImGui.Checkbox(label, Config[key])
+    if c then
+        Config[key] = v
+        if Paused then PreviousConfig[key] = v end
+    end
+    return c, v
+end
+
 local function IsWhitelisted(userid)
     local local_ = GetLocal()
     if local_ and local_.userid and tonumber(local_.userid) == tonumber(userid) then return true end
@@ -1391,6 +1400,12 @@ RunThread(function()
                         Config.AutoBackpack = PreviousConfig.AutoBackpack or false
                         Config.AutoJoinRunning = PreviousConfig.AutoJoinRunning or false
                         Config.AutoJoin = PreviousConfig.AutoJoin or false
+
+                        -- Debug logs to confirm internal state restoration
+                        if Config.AutoPunchWorld then Log("`9-> Auto Punch World resumed!") end
+                        if Config.AutoClearWorld then Log("`9-> Auto Clear World resumed!") end
+                        if Config.AutoPlace then Log("`9-> Auto Place resumed!") end
+                        if Config.AutoPunch then Log("`9-> Auto Punch resumed!") end
                     end
                 end
 
