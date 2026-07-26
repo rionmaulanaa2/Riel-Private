@@ -16,6 +16,9 @@ local Config = {
     CheckDelay = 1000, -- How often to check for players (ms)
 
     AutoPunch       = false, -- If true, automatically punches the target tile
+    AutoMagplant    = false, -- Retrieve items from Magplant
+    MagplantDelay   = 500,
+
     AutoTake        = false, -- If true, will automatically collect floating items
     UseTakeList     = false, -- If true, only collects items in TakeList. If false, collects ALL floating items.
     TakeList        = { 2, 3, 18 }, -- Add Item IDs to collect here (only used if UseTakeList is true)
@@ -38,8 +41,13 @@ local Config = {
 
     AutoPunchWorld   = false, -- If true, breaks a specific block ID across the whole world
     PunchWorldTarget = 4584,  -- Item ID of the block to punch
+    PunchWorldHarvestMode = false, -- Teleports player to x=0 of the current row being punched
+
     PunchDirection   = "top", -- "top" or "bottom"
     PunchWorldDelay  = 200,   -- Delay between punches (ms)
+
+    TeleportX       = 0,     -- Target X coordinate for instant teleport
+    TeleportY       = 0,     -- Target Y coordinate for instant teleport
 
     DebugSendPacket      = false,
     DebugSendPacketRaw   = false,
@@ -507,24 +515,52 @@ AddHook("onvariant", "ModDevDetector", function(var)
         end
     end
     
-    -- Handle Backpack Resupply UI parsing
-    if var[0] == "OnDialogRequest" and waitingForBackpackItem and type(var[1]) == "string" and var[1]:find("backpack_menu") then
-        local dialog = var[1]
-        local itemIDStr = tostring(waitingForBackpackItem)
-        -- Match: add_button_with_icon|<SLOT>|<Name>|frame|<ITEM_ID>|<AMOUNT>|
-        local pattern = "add_button_with_icon|(%d+)|[^|]*|frame|" .. itemIDStr .. "|"
-        local slot = dialog:match(pattern)
-        
-        if slot then
-            SendPacket(2, "action|dialog_return\ndialog_name|backpack_menu\nbuttonClicked|" .. slot)
-            Log("`2Resupplied item `b" .. itemIDStr .. "`2 from backpack slot `b" .. slot .. "`0")
-        else
-            Log("`4Item `b" .. itemIDStr .. "`4 not found in backpack! Pausing AutoPlace.`0")
-            Config.AutoPlace = false
+    if var[0] == "OnDialogRequest" and Config.AutoMagplant and type(var[1]) == "string" then
+        if var[1]:find("MAGPLANT") or var[1]:find("itemsucker_block") or var[1]:find("itemremovedfromsucker") then
+            if var[1]:find("itemsucker_block") then
+                local tx = var[1]:match("embed_data|tilex|(%d+)")
+                local ty = var[1]:match("embed_data|tiley|(%d+)")
+                local itemID = var[1]:match("add_label_with_icon|small|[^|]*|left|(%d+)|")
+                local amount = var[1]:match("The machine contains (%d+)")
+                
+                if tx and ty then
+                    local ix, iy = tonumber(tx), tonumber(ty)
+                    for _, m in ipairs(MagplantsList or {}) do
+                        if m.x == ix and m.y == iy then
+                            if itemID then m.itemID = tonumber(itemID) end
+                            if amount then m.amount = tonumber(amount) end
+                            break
+                        end
+                    end
+                end
+            end
+            return true
         end
-        
-        waitingForBackpackItem = nil
-        return true -- Block the dialog from showing on screen
+    end
+    
+    -- Handle Backpack Resupply UI parsing
+    if var[0] == "OnDialogRequest" and type(var[1]) == "string" and var[1]:find("backpack_menu") then
+        if waitingForBackpackItem then
+            local dialog = var[1]
+            local itemIDStr = tostring(waitingForBackpackItem)
+            -- Match: add_button_with_icon|<SLOT>|<Name>|frame|<ITEM_ID>|<AMOUNT>|
+            local pattern = "add_button_with_icon|(%d+)|[^|]*|frame|" .. itemIDStr .. "|"
+            local slot = dialog:match(pattern)
+            
+            if slot then
+                SendPacket(2, "action|dialog_return\ndialog_name|backpack_menu\nbuttonClicked|" .. slot)
+                Log("`2Resupplied item `b" .. itemIDStr .. "`2 from backpack slot `b" .. slot .. "`0")
+            else
+                Log("`4Item `b" .. itemIDStr .. "`4 not found in backpack! Pausing AutoPlace.`0")
+                Config.AutoPlace = false
+            end
+            
+            waitingForBackpackItem = nil
+            return true -- Block the dialog from showing on screen
+        elseif (Config.AutoBackpack or Config.AutoMagplant) and Run and not Paused then
+            -- Block the dialog from popping up randomly when the bot is auto-stashing items
+            return true
+        end
     end
     
     return false
@@ -912,7 +948,9 @@ end
 -- AUTO PUNCH WORLD LOGIC
 -- ============================================================
 local punchWX, punchWY = nil, nil
+local lastHarvestY = nil
 local punchGrid = nil
+
 local punchGridWorld = nil
 local punchGridW, punchGridH = 0, 0
 
@@ -925,9 +963,88 @@ local function InitializePunchWorld()
     else
         punchWY = world.height - 1
     end
+    lastHarvestY = nil
     punchWX = 0
+
     punchGrid = nil
     punchGridWorld = nil
+end
+
+
+MagplantsList = {}
+local currentMagplantIndex = 1
+
+function ScanMagplants()
+    MagplantsList = {}
+    currentMagplantIndex = 1
+    local world = GetWorld()
+    if not world then return end
+    
+    for x = 0, world.width - 1 do
+        for y = 0, world.height - 1 do
+            local fg = GetTile(x, y).fg
+            if fg == 5638 or fg == 5930 then
+                table.insert(MagplantsList, {x = x, y = y, itemID = nil, amount = nil})
+            end
+        end
+    end
+    Log("`2[Auto Magplant] Scanned and found `b" .. #MagplantsList .. "`2 magplants in world.`0")
+    if #MagplantsList == 0 then
+        Config.AutoMagplant = false
+    end
+end
+
+local function AutoMagplantStep()
+    if not Config.AutoMagplant then return end
+    if currentMagplantIndex > #MagplantsList then
+        Log("`2[Auto Magplant] All magplants processed! Stopping.`0")
+        Config.AutoMagplant = false
+        return
+    end
+    
+    local m = MagplantsList[currentMagplantIndex]
+    
+    -- Wrench magplant to open dialog (this updates itemID and amount asynchronously via OnVariant)
+    SendPacketRaw(false, {type = 3, value = 32, px = m.x, py = m.y, x = m.x * 32, y = m.y * 32})
+    Sleep(Config.MagplantDelay)
+    
+    if not Run or Paused or not Config.AutoMagplant then return end
+    
+    -- If amount is 0 (or was updated to 0), skip to next
+    if m.amount and m.amount == 0 then
+        Log("`4[Auto Magplant] Magplant at " .. m.x .. "," .. m.y .. " is empty! Moving to next.`0")
+        currentMagplantIndex = currentMagplantIndex + 1
+        return
+    end
+    
+    -- Attempt retrieve
+    SendPacket(2, "action|dialog_return
+dialog_name|itemsucker_block
+tilex|" .. m.x .. "|
+tiley|" .. m.y .. "|
+buttonClicked|retrieveitem
+
+chk_enablesucking|1
+")
+    Sleep(Config.MagplantDelay)
+    
+    if not Run or Paused or not Config.AutoMagplant then return end
+    
+    SendPacket(2, "action|dialog_return
+dialog_name|itemremovedfromsucker
+tilex|" .. m.x .. "|
+tiley|" .. m.y .. "|
+itemtoremove|250
+")
+    Sleep(Config.MagplantDelay)
+    
+    -- Stash to backpack if we know the item ID
+    if m.itemID then
+        SendPacket(2, "action|dialog_return
+dialog_name|backpack_menu
+itemid|" .. tostring(m.itemID))
+        Sleep(Config.MagplantDelay)
+    end
 end
 
 local function AutoPunchWorldStep()
@@ -959,6 +1076,18 @@ local function AutoPunchWorldStep()
     end
 
     if targetX and targetY then
+        if Config.PunchWorldHarvestMode and lastHarvestY ~= targetY then
+            lastHarvestY = targetY
+            SendPacketRaw(false, {
+                type = 0,
+                x = 0,
+                y = targetY * 32,
+                px = 0,
+                py = 0
+            })
+            Log("`2[Harvest Mode] Teleported to start of row Y: " .. targetY .. "`0")
+            Sleep(200)
+        end
         -- Match exactly the method from clearworldandwaterputlgrid.lua but without retries
         while GetTile(targetX, targetY).fg == Config.PunchWorldTarget do
             if not Run or Paused or not Config.AutoPunchWorld then return end
@@ -1031,7 +1160,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.34", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.40", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -1321,6 +1450,10 @@ local function ShowUI()
             local c, v = ConfigCheckbox("Enable Punch World", "AutoPunchWorld")
             if c and v then punchWX, punchWY = nil, nil end
 
+            local cHM, vHM = ConfigCheckbox("Harvest Mode (Teleport to X=0 on row)", "PunchWorldHarvestMode")
+            if cHM and vHM then lastHarvestY = nil end
+
+
             ImGui.Text("Direction:")
             if ImGui.RadioButton("Top to Bottom (Punch)", Config.PunchDirection == "top") then
                 Config.PunchDirection = "top"
@@ -1465,6 +1598,49 @@ buttonClicked|register]]
             ImGui.TextWrapped("Note: These run safely from top to bottom and respect the stranger detection pause.")
         end
 
+        -- AUTO MAGPLANT
+        if ImGui.CollapsingHeader("Auto Magplant Scanner") then
+            local cAM, vAM = ConfigCheckbox("Enable Auto Magplant", "AutoMagplant")
+            if cAM and vAM then
+                ScanMagplants()
+            end
+            
+            local cD, vD = ImGui.InputInt("Delay (ms)", Config.MagplantDelay)
+            if cD then Config.MagplantDelay = math.max(100, vD) end
+            
+            if ImGui.Button("Rescan World Manually") then
+                ScanMagplants()
+            end
+            
+            ImGui.Text("Found " .. #(MagplantsList or {}) .. " Magplants:")
+            for i, m in ipairs(MagplantsList or {}) do
+                local status = (i == currentMagplantIndex) and "[ACTIVE]" or (i < currentMagplantIndex and "[DONE]" or "[WAITING]")
+                local idStr = m.itemID and tostring(m.itemID) or "?"
+                local amtStr = m.amount and tostring(m.amount) or "?"
+                ImGui.Text(status .. " [" .. m.x .. ", " .. m.y .. "] - Item: " .. idStr .. " - Qty: " .. amtStr)
+            end
+        end
+
+        -- INSTANT TELEPORT
+        if ImGui.CollapsingHeader("Instant Teleport") then
+            local cX, vX = ImGui.InputInt("Teleport X", Config.TeleportX)
+            if cX then Config.TeleportX = vX end
+
+            local cY, vY = ImGui.InputInt("Teleport Y", Config.TeleportY)
+            if cY then Config.TeleportY = vY end
+
+            if ImGui.Button("Teleport Now") then
+                SendPacketRaw(false, {
+                    type = 0,
+                    x = Config.TeleportX * 32,
+                    y = Config.TeleportY * 32,
+                    px = 0,
+                    py = 0
+                })
+                Log("`2Teleported to X: `b" .. Config.TeleportX .. " `2Y: `b" .. Config.TeleportY .. "`0")
+            end
+        end
+
         -- PACKET DEBUG
         if ImGui.CollapsingHeader("Packet Debugger") then
             local cP, vP = ImGui.Checkbox("Debug SendPacket (Text)", Config.DebugSendPacket)
@@ -1564,6 +1740,10 @@ RunThread(function()
                         Config.AutoPunchAntiMove = false
                         Config.AutoPlace = false
                         Config.AutoCreateFarm = false
+                        PreviousConfig.PunchWorldHarvestMode = Config.PunchWorldHarvestMode
+                        PreviousConfig.AutoMagplant = Config.AutoMagplant
+                        Config.AutoMagplant = false
+                        Config.PunchWorldHarvestMode = false
                         Config.AutoPunchWorld = false
                         Config.AutoClearWorld = false
                         Config.AutoClearWater = false
@@ -1582,7 +1762,10 @@ RunThread(function()
                         Config.AutoPunchAntiMove = PreviousConfig.AutoPunchAntiMove or false
                         Config.AutoPlace = PreviousConfig.AutoPlace or false
                         Config.AutoCreateFarm = PreviousConfig.AutoCreateFarm or false
+                        Config.AutoMagplant = PreviousConfig.AutoMagplant or false
+                        Config.PunchWorldHarvestMode = PreviousConfig.PunchWorldHarvestMode or false
                         Config.AutoPunchWorld = PreviousConfig.AutoPunchWorld or false
+
                         Config.AutoClearWorld = PreviousConfig.AutoClearWorld or false
                         Config.AutoClearWater = PreviousConfig.AutoClearWater or false
                         Config.AutoSurgery = PreviousConfig.AutoSurgery or false
@@ -1593,7 +1776,11 @@ RunThread(function()
 
                         -- Debug logs to confirm internal state restoration
                         if Config.AutoCreateFarm then Log("`9-> Auto Create Farm resumed!") end
-                        if Config.AutoPunchWorld then Log("`9-> Auto Punch World resumed!") end
+                        if Config.AutoMagplant then
+                AutoMagplantStep()
+            end
+            
+            if Config.AutoPunchWorld then Log("`9-> Auto Punch World resumed!") end
                         if Config.AutoClearWorld then Log("`9-> Auto Clear World resumed!") end
                         if Config.AutoPlace then Log("`9-> Auto Place resumed!") end
                         if Config.AutoPunch then Log("`9-> Auto Punch resumed!") end
