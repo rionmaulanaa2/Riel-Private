@@ -1139,6 +1139,51 @@ local currentMagplantIndex  = 1
 local magplantScanInfoRunning = false   -- true while ScanMagplantInfo thread is running
 local magplantDialogReceived  = false   -- set true by OnDialogRequest when we get the dialog
 
+local function GoToMagplant(mx, my)
+    local world = GetWorld()
+    if not world then return end
+
+    local function isWalkable(x, y)
+        if x < 0 or x >= world.width or y < 0 or y >= world.height then return false end
+        local t = GetTile(x, y)
+        if not t then return true end
+        if t.fg == 0 then return true end
+        return false
+    end
+
+    local candidates = {
+        { x = mx,     y = my - 1 }, -- Top
+        { x = mx - 1, y = my },     -- Left
+        { x = mx + 1, y = my },     -- Right
+        { x = mx,     y = my + 1 }, -- Bottom
+    }
+
+    local targetX, targetY = nil, nil
+    for _, c in ipairs(candidates) do
+        if isWalkable(c.x, c.y) then
+            targetX = c.x
+            targetY = c.y
+            break
+        end
+    end
+
+    if not targetX or not targetY then
+        targetX = mx
+        targetY = my - 1
+    end
+
+    Log("`9[Magplant] Pathfinding to (" .. targetX .. ", " .. targetY .. ") beside Magplant (" .. mx .. ", " .. my .. ")`0")
+    if FindPath then
+        FindPath(targetX, targetY, 50)
+    end
+end
+
+local function GetMagplantRemote(mx, my)
+    Log("`9[Magplant] Requesting remote control for Magplant at (" .. mx .. ", " .. my .. ")...`0")
+    local packet = "action|dialog_return\ndialog_name|itemsucker_block\ntilex|" .. mx .. "|\ntiley|" .. my .. "|\nbuttonClicked|getplantationdevice\n\nchk_enablesucking|1"
+    SendPacket(2, packet)
+end
+
 function ScanMagplants()
     MagplantsList = {}
     currentMagplantIndex = 1
@@ -1514,7 +1559,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.67", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.69", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -2030,6 +2075,15 @@ local function ShowUI()
             ImGui.Separator()
 
             for i, m in ipairs(MagplantsList or {}) do
+                if ImGui.Button("Go##mag_" .. i) then
+                    GoToMagplant(m.x, m.y)
+                end
+                ImGui.SameLine()
+                if ImGui.Button("Get Remote##magrem_" .. i) then
+                    GetMagplantRemote(m.x, m.y)
+                end
+                ImGui.SameLine()
+
                 local status = (i == currentMagplantIndex and Config.AutoMagplant) and "[Active]" or "[Wait]"
                 local name = (m.kind == "Legendary") and "Legendary Magplant 5000" or "Magplant"
                 local pos = "(" .. tostring(m.x) .. ", " .. tostring(m.y) .. ")"
