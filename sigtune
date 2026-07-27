@@ -1326,7 +1326,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.59", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.60", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -1649,7 +1649,7 @@ local function ShowUI()
             if cAH and vAH then harvestY = nil end
 
             local cHID, vHID = ImGui.InputInt("Target Provider / Tree Item ID", Config.HarvestItemID)
-            if cHID then
+            if cHID and vHID ~= Config.HarvestItemID then
                 Config.HarvestItemID = vHID
                 harvestY = nil
             end
@@ -1659,24 +1659,32 @@ local function ShowUI()
 
             ImGui.Text("Direction:")
             if ImGui.RadioButton("Top to Bottom (Harvest)", Config.HarvestDirection == "top") then
-                Config.HarvestDirection = "top"
-                harvestY = nil
+                if Config.HarvestDirection ~= "top" then
+                    Config.HarvestDirection = "top"
+                    harvestY = nil
+                end
             end
             ImGui.SameLine()
             if ImGui.RadioButton("Bottom to Top (Harvest)", Config.HarvestDirection == "bottom") then
-                Config.HarvestDirection = "bottom"
-                harvestY = nil
+                if Config.HarvestDirection ~= "bottom" then
+                    Config.HarvestDirection = "bottom"
+                    harvestY = nil
+                end
             end
 
             ImGui.Text("Step Mode:")
             if ImGui.RadioButton("1 Far (Punch every tile)", Config.HarvestStep == 1) then
-                Config.HarvestStep = 1
-                harvestY = nil
+                if Config.HarvestStep ~= 1 then
+                    Config.HarvestStep = 1
+                    harvestY = nil
+                end
             end
             ImGui.SameLine()
             if ImGui.RadioButton("3 Far (0, 1, 4, 7, 10...)", Config.HarvestStep == 3) then
-                Config.HarvestStep = 3
-                harvestY = nil
+                if Config.HarvestStep ~= 3 then
+                    Config.HarvestStep = 3
+                    harvestY = nil
+                end
             end
 
             if harvestY ~= nil then
