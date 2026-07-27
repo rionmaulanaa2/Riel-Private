@@ -46,6 +46,12 @@ local Config = {
     PunchDirection   = "top", -- "top" or "bottom"
     PunchWorldDelay  = 200,   -- Delay between punches (ms)
 
+    AutoHarvest      = false, -- Auto harvest trees / providers
+    HarvestItemID    = 5666,  -- Item ID of target provider or tree to harvest
+    HarvestDirection = "top", -- "top" or "bottom"
+    HarvestStep      = 1,     -- 1 for 1 far, 3 for 3 far
+    HarvestDelay     = 150,   -- Delay between punches sent (ms)
+
     TeleportX       = 0,     -- Target X coordinate for instant teleport
     TeleportY       = 0,     -- Target Y coordinate for instant teleport
 
@@ -1124,6 +1130,168 @@ local function AutoPunchWorldStep()
 end
 
 -- ============================================================
+-- AUTO HARVEST LOGIC
+-- ============================================================
+local harvestY = nil
+local harvestRowMinY, harvestRowMaxY = nil, nil
+local harvestXIndex = 1
+local harvestRowXList = {}
+local lastHarvestTeleportY = nil
+
+local function ScanHarvestMinMaxY()
+    local world = GetWorld()
+    local tiles = GetTiles()
+    if not world or not tiles then return nil, nil end
+
+    local targetID = Config.HarvestItemID
+    local minY, maxY = nil, nil
+
+    for _, t in pairs(tiles) do
+        if t.fg == targetID or t.bg == targetID then
+            if minY == nil or t.y < minY then minY = t.y end
+            if maxY == nil or t.y > maxY then maxY = t.y end
+        end
+    end
+
+    return minY, maxY
+end
+
+local function BuildHarvestRowXList(stepMode, worldWidth)
+    local xList = {}
+    if stepMode == 3 then
+        -- 3 far: 0, 1, 4, 7, 10, 13, 16...
+        table.insert(xList, 0)
+        local curr = 1
+        while curr < worldWidth do
+            table.insert(xList, curr)
+            curr = curr + 3
+        end
+    else
+        -- 1 far: 0, 1, 2, 3, 4, 5...
+        for x = 0, worldWidth - 1 do
+            table.insert(xList, x)
+        end
+    end
+    return xList
+end
+
+local function InitializeHarvest()
+    local world = GetWorld()
+    if not world then return false end
+
+    local minY, maxY = ScanHarvestMinMaxY()
+    if not minY or not maxY then
+        Log("`4[Auto Harvest] Target Item ID (" .. tostring(Config.HarvestItemID) .. ") not found in world!")
+        Config.AutoHarvest = false
+        harvestY = nil
+        return false
+    end
+
+    harvestRowMinY = minY
+    harvestRowMaxY = maxY
+
+    if Config.HarvestDirection == "top" then
+        harvestY = minY
+    else
+        harvestY = maxY
+    end
+
+    harvestRowXList = BuildHarvestRowXList(Config.HarvestStep, world.width)
+    harvestXIndex = 1
+    lastHarvestTeleportY = nil
+
+    Log("`9[Auto Harvest] `0Initialized! Target ID: " .. Config.HarvestItemID .. ", Range Y: " .. minY .. " -> " .. maxY .. ", Dir: " .. Config.HarvestDirection .. ", Step: " .. Config.HarvestStep .. " far")
+    return true
+end
+
+local function AutoHarvestStep()
+    local world = GetWorld()
+    if not world then return end
+
+    if harvestY == nil then
+        if not InitializeHarvest() then return end
+    end
+
+    -- Check if we finished all rows
+    if Config.HarvestDirection == "top" then
+        if harvestY > harvestRowMaxY then
+            Log("`2[Auto Harvest] `0Finished harvesting all target items!")
+            Config.AutoHarvest = false
+            harvestY = nil
+            return
+        end
+    else
+        if harvestY < harvestRowMinY then
+            Log("`2[Auto Harvest] `0Finished harvesting all target items!")
+            Config.AutoHarvest = false
+            harvestY = nil
+            return
+        end
+    end
+
+    -- Teleport player to x=0 of current row if row changed
+    if lastHarvestTeleportY ~= harvestY then
+        lastHarvestTeleportY = harvestY
+        SendPacketRaw(false, {
+            type = 0,
+            x    = 0,
+            y    = harvestY * 32,
+            px   = 0,
+            py   = 0
+        })
+        Log("`2[Auto Harvest] Teleported to X=0 row Y: " .. harvestY)
+        Sleep(200)
+    end
+
+    -- Advance through harvestRowXList until we find a target block or reach end of row
+    local targetX = nil
+    while harvestXIndex <= #harvestRowXList do
+        local x = harvestRowXList[harvestXIndex]
+        local tile = GetTile(x, harvestY)
+        if tile and (tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID) then
+            targetX = x
+            break
+        end
+        harvestXIndex = harvestXIndex + 1
+    end
+
+    if targetX then
+        -- Punch target tile until it's harvested/broken (or max 15 hits safety cap)
+        local maxHits = 15
+        local hits = 0
+        while true do
+            if not Run or Paused or not Config.AutoHarvest then return end
+            local t = GetTile(targetX, harvestY)
+            if not t or (t.fg ~= Config.HarvestItemID and t.bg ~= Config.HarvestItemID) then break end
+
+            SendPacketRaw(false, {
+                type  = 3,
+                value = 18,
+                px    = targetX,
+                py    = harvestY,
+                x     = targetX * 32,
+                y     = harvestY * 32
+            })
+            Sleep(Config.HarvestDelay)
+            hits = hits + 1
+            if hits >= maxHits then break end
+        end
+
+        -- Move to next position in row X list
+        harvestXIndex = harvestXIndex + 1
+    else
+        -- Reached end of row, move to next Y row
+        harvestXIndex = 1
+        if Config.HarvestDirection == "top" then
+            harvestY = harvestY + 1
+        else
+            harvestY = harvestY - 1
+        end
+    end
+end
+
+
+-- ============================================================
 -- IMGUI UI
 -- ============================================================
 local function CreateRandomAccount()
@@ -1169,7 +1337,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.57", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.58", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -1486,6 +1654,48 @@ local function ShowUI()
             end
         end
 
+        -- AUTO HARVEST
+        if ImGui.CollapsingHeader("Auto Harvest") then
+            local cAH, vAH = ConfigCheckbox("Enable Auto Harvest", "AutoHarvest")
+            if cAH and vAH then harvestY = nil end
+
+            local cHID, vHID = ImGui.InputInt("Target Provider / Tree Item ID", Config.HarvestItemID)
+            if cHID then
+                Config.HarvestItemID = vHID
+                harvestY = nil
+            end
+
+            local cHD, vHD = ImGui.InputInt("Harvest Delay (ms)", Config.HarvestDelay)
+            if cHD then Config.HarvestDelay = math.max(1, vHD) end
+
+            ImGui.Text("Direction:")
+            if ImGui.RadioButton("Top to Bottom (Harvest)", Config.HarvestDirection == "top") then
+                Config.HarvestDirection = "top"
+                harvestY = nil
+            end
+            ImGui.SameLine()
+            if ImGui.RadioButton("Bottom to Top (Harvest)", Config.HarvestDirection == "bottom") then
+                Config.HarvestDirection = "bottom"
+                harvestY = nil
+            end
+
+            ImGui.Text("Step Mode:")
+            if ImGui.RadioButton("1 Far (Punch every tile)", Config.HarvestStep == 1) then
+                Config.HarvestStep = 1
+                harvestY = nil
+            end
+            ImGui.SameLine()
+            if ImGui.RadioButton("3 Far (0, 1, 4, 7, 10...)", Config.HarvestStep == 3) then
+                Config.HarvestStep = 3
+                harvestY = nil
+            end
+
+            if harvestY ~= nil then
+                ImGui.Text("Progress: Row Y=" .. tostring(harvestY) .. " (Min: " .. tostring(harvestRowMinY) .. ", Max: " .. tostring(harvestRowMaxY) .. ")")
+            end
+        end
+
+
         -- AUTO JOINER ENGINE
         if ImGui.CollapsingHeader("Auto Joiner Engine") then
             local cJR, vJR = ConfigCheckbox("Start Auto Joiner", "AutoJoinRunning")
@@ -1769,6 +1979,7 @@ RunThread(function()
                         PreviousConfig.AutoCreateFarm        = Config.AutoCreateFarm
                         PreviousConfig.AutoPunchWorld        = Config.AutoPunchWorld
                         PreviousConfig.PunchWorldHarvestMode = Config.PunchWorldHarvestMode
+                        PreviousConfig.AutoHarvest           = Config.AutoHarvest
                         PreviousConfig.AutoClearWorld        = Config.AutoClearWorld
                         PreviousConfig.AutoClearWater        = Config.AutoClearWater
                         PreviousConfig.ClearWorldTeleportRow = Config.ClearWorldTeleportRow
@@ -1786,6 +1997,7 @@ RunThread(function()
                         Config.AutoCreateFarm        = false
                         Config.AutoPunchWorld        = false
                         Config.PunchWorldHarvestMode = false
+                        Config.AutoHarvest           = false
                         Config.AutoClearWorld        = false
                         Config.AutoClearWater        = false
                         Config.ClearWorldTeleportRow = false
@@ -1815,6 +2027,7 @@ RunThread(function()
                         Config.AutoCreateFarm        = PreviousConfig.AutoCreateFarm        or false
                         Config.AutoPunchWorld        = PreviousConfig.AutoPunchWorld        or false
                         Config.PunchWorldHarvestMode = PreviousConfig.PunchWorldHarvestMode or false
+                        Config.AutoHarvest           = PreviousConfig.AutoHarvest           or false
                         Config.AutoClearWorld        = PreviousConfig.AutoClearWorld        or false
                         Config.AutoClearWater        = PreviousConfig.AutoClearWater        or false
                         Config.ClearWorldTeleportRow = PreviousConfig.ClearWorldTeleportRow or false
@@ -1831,6 +2044,7 @@ RunThread(function()
                         if Config.AutoCreateFarm   then Log("`9-> Auto Create Farm resumed!")   end
                         if Config.AutoMagplant     then Log("`9-> Auto Magplant resumed!")      end
                         if Config.AutoPunchWorld   then Log("`9-> Auto Punch World resumed!")   end
+                        if Config.AutoHarvest      then Log("`9-> Auto Harvest resumed!")       end
                         if Config.AutoClearWorld   then Log("`9-> Auto Clear World resumed!")   end
                         if Config.AutoClearWater   then Log("`9-> Auto Clear Water resumed!")   end
                         if Config.AutoSurgery      then Log("`9-> Auto Surgery resumed!")       end
@@ -2787,6 +3001,9 @@ while true do
             elseif Config.AutoPunchWorld then
                 AutoPunchWorldStep()
                 currentDelay = Config.PunchWorldDelay
+            elseif Config.AutoHarvest then
+                AutoHarvestStep()
+                currentDelay = Config.HarvestDelay
             else
                 if Config.AutoPunch then
                     PunchTile()
