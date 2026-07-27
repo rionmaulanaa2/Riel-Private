@@ -247,6 +247,8 @@ local modDetected  = false   -- True if a mod/dev was detected invisibly
 local whitelistInput = ""   -- UI text input buffer for adding whitelist UIDs
 local manualGrowID = ""     -- UI text input buffer for manual account creation
 local waitingForBackpackItem = nil -- State for backpack resupply
+local pendingGoToTarget = nil -- Deferred Go pathfinding target {mx, my} to avoid C-call boundary yield
+local pendingScanInfo   = false -- Deferred ScanMagplantInfo request
 
 _G.SafePunchCleanup = function()
     Run = false
@@ -1173,11 +1175,9 @@ local function GoToMagplant(mx, my)
     end
 
     Log("`9[Magplant] Pathfinding to (" .. targetX .. ", " .. targetY .. ") beside Magplant (" .. mx .. ", " .. my .. ")`0")
-    RunThread(function()
-        if FindPath then
-            FindPath(targetX, targetY, 50)
-        end
-    end)
+    if FindPath then
+        FindPath(targetX, targetY, 50)
+    end
 end
 
 local function GetMagplantRemote(mx, my)
@@ -1561,7 +1561,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.70", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.71", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -2068,7 +2068,7 @@ local function ShowUI()
                 ImGui.Text("`9Scanning info...`0")
             else
                 if ImGui.Button("Scan Item Info") then
-                    ScanMagplantInfo()
+                    pendingScanInfo = true
                 end
             end
 
@@ -2078,7 +2078,7 @@ local function ShowUI()
 
             for i, m in ipairs(MagplantsList or {}) do
                 if ImGui.Button("Go##mag_" .. i) then
-                    GoToMagplant(m.x, m.y)
+                    pendingGoToTarget = { mx = m.x, my = m.y }
                 end
                 ImGui.SameLine()
                 if ImGui.Button("Get Remote##magrem_" .. i) then
@@ -2986,6 +2986,18 @@ local punchCount = 0
 
 -- Main loop execution guard
 while currentSessionID == _G.SafePunchSessionID and Run do
+    -- Process pending UI action requests (prevents yielding across C-call boundary in OnDraw)
+    if pendingGoToTarget then
+        local target = pendingGoToTarget
+        pendingGoToTarget = nil
+        GoToMagplant(target.mx, target.my)
+    end
+
+    if pendingScanInfo then
+        pendingScanInfo = false
+        ScanMagplantInfo()
+    end
+
     if not Paused then
         if not GetLocal() or not GetWorld() then
             Sleep(500)
