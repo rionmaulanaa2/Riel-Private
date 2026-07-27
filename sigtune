@@ -1256,26 +1256,15 @@ local function AutoHarvestStep()
     end
 
     if targetX then
-        -- Punch target tile until it's harvested/broken (or max 15 hits safety cap)
-        local maxHits = 15
-        local hits = 0
-        while true do
-            if not Run or Paused or not Config.AutoHarvest then return end
-            local t = GetTile(targetX, harvestY)
-            if not t or (t.fg ~= Config.HarvestItemID and t.bg ~= Config.HarvestItemID) then break end
-
-            SendPacketRaw(false, {
-                type  = 3,
-                value = 18,
-                px    = targetX,
-                py    = harvestY,
-                x     = targetX * 32,
-                y     = harvestY * 32
-            })
-            Sleep(Config.HarvestDelay)
-            hits = hits + 1
-            if hits >= maxHits then break end
-        end
+        -- Punch target tile ONLY ONCE
+        SendPacketRaw(false, {
+            type  = 3,
+            value = 18,
+            px    = targetX,
+            py    = harvestY,
+            x     = targetX * 32,
+            y     = harvestY * 32
+        })
 
         -- Move to next position in row X list
         harvestXIndex = harvestXIndex + 1
@@ -1337,7 +1326,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.58", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.59", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
