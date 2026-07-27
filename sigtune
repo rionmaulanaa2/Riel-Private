@@ -669,8 +669,8 @@ AddHook("OnVariant", "ModDevDetector", function(var)
                 -- Signal to ScanMagplantInfo that dialog was received
                 magplantDialogReceived = true
             end
-            -- Only block the dialog if AutoMagplant is actively retrieving
-            if Config.AutoMagplant then
+            -- Block the dialog from showing on screen if AutoMagplant is active OR ScanMagplantInfo is running
+            if Config.AutoMagplant or magplantScanInfoRunning then
                 return true
             end
         end
@@ -1182,8 +1182,22 @@ end
 
 local function GetMagplantRemote(mx, my)
     Log("`9[Magplant] Requesting remote control for Magplant at (" .. mx .. ", " .. my .. ")...`0")
-    local packet = "action|dialog_return\ndialog_name|itemsucker_block\ntilex|" .. mx .. "|\ntiley|" .. my .. "|\nbuttonClicked|getplantationdevice\n\nchk_enablesucking|1"
-    SendPacket(2, packet)
+    RunThread(function()
+        -- Wrench the magplant first so server recognizes open dialog state for (mx, my)
+        SendPacketRaw(false, {
+            type  = 3,
+            value = 32,
+            px    = mx,
+            py    = my,
+            x     = mx * 32,
+            y     = my * 32
+        })
+        Sleep(200)
+
+        local packet = "action|dialog_return\ndialog_name|itemsucker_block\ntilex|" .. mx .. "|\ntiley|" .. my .. "|\nbuttonClicked|getplantationdevice\n\nchk_enablesucking|1\n"
+        SendPacket(2, packet)
+        Log("`2[Magplant] Remote control request sent for (" .. mx .. ", " .. my .. ")!`0")
+    end)
 end
 
 function ScanMagplants()
@@ -1561,7 +1575,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.71", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.72", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
