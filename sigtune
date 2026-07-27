@@ -249,6 +249,19 @@ local manualGrowID = ""     -- UI text input buffer for manual account creation
 local waitingForBackpackItem = nil -- State for backpack resupply
 local pendingGoToTarget = nil -- Deferred Go pathfinding target {mx, my} to avoid C-call boundary yield
 local pendingScanInfo   = false -- Deferred ScanMagplantInfo request
+local autoHarvestGhostState = false -- Tracks ghost state for Auto Harvest toggle
+
+local function CheckHarvestGhostState()
+    if Config.AutoHarvest and not autoHarvestGhostState then
+        autoHarvestGhostState = true
+        SendPacket(2, "action|input\n|text|/ghost")
+        Log("`9[Auto Harvest] Activated -> Sent /ghost command packet.`0")
+    elseif not Config.AutoHarvest and autoHarvestGhostState then
+        autoHarvestGhostState = false
+        SendPacket(2, "action|input\n|text|/ghost")
+        Log("`9[Auto Harvest] Deactivated -> Sent /ghost command packet.`0")
+    end
+end
 
 _G.SafePunchCleanup = function()
     Run = false
@@ -662,6 +675,12 @@ AddHook("OnVariant", "ModDevDetector", function(var)
                             else
                                 m.amount = 0  -- dialog opened but no items
                             end
+                            -- Check if Building Mode (chk_enablesucking) is Active (1) or Disabled (0)
+                            if dlg:find("chk_enablesucking|1") or dlg:find("add_checkbox|chk_enablesucking|[^|]*|1") then
+                                m.active = true
+                            else
+                                m.active = false
+                            end
                             break
                         end
                     end
@@ -669,8 +688,8 @@ AddHook("OnVariant", "ModDevDetector", function(var)
                 -- Signal to ScanMagplantInfo that dialog was received
                 magplantDialogReceived = true
             end
-            -- Block the dialog from showing on screen if AutoMagplant is active OR ScanMagplantInfo is running
-            if Config.AutoMagplant or magplantScanInfoRunning then
+            -- ONLY block the dialog from showing on screen while ScanMagplantInfo process is running!
+            if magplantScanInfoRunning then
                 return true
             end
         end
@@ -1211,7 +1230,7 @@ function ScanMagplants()
             local fg = GetTile(x, y).fg
             if fg == 5638 or fg == 5930 then
                 local kind = (fg == 5930) and "Legendary" or "Normal"
-                table.insert(MagplantsList, {x = x, y = y, itemID = nil, amount = nil, kind = kind})
+                table.insert(MagplantsList, {x = x, y = y, itemID = nil, amount = nil, kind = kind, active = false})
             end
         end
     end
@@ -1575,7 +1594,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.72", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.75", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -1896,7 +1915,10 @@ local function ShowUI()
         -- AUTO HARVEST
         if ImGui.CollapsingHeader("Auto Harvest") then
             local cAH, vAH = ConfigCheckbox("Enable Auto Harvest", "AutoHarvest")
-            if cAH and vAH then harvestY = nil end
+            if cAH then
+                if vAH then harvestY = nil end
+                CheckHarvestGhostState()
+            end
 
             local cHID, vHID = ImGui.InputInt("Target Provider / Tree Item ID", Config.HarvestItemID)
             if cHID and vHID ~= Config.HarvestItemID then
@@ -2100,7 +2122,7 @@ local function ShowUI()
                 end
                 ImGui.SameLine()
 
-                local status = (i == currentMagplantIndex and Config.AutoMagplant) and "[Active]" or "[Wait]"
+                local status = (m.active == true) and "[Active]" or "[Disabled]"
                 local name = (m.kind == "Legendary") and "Legendary Magplant 5000" or "Magplant"
                 local pos = "(" .. tostring(m.x) .. ", " .. tostring(m.y) .. ")"
 
@@ -3000,6 +3022,8 @@ local punchCount = 0
 
 -- Main loop execution guard
 while currentSessionID == _G.SafePunchSessionID and Run do
+    CheckHarvestGhostState()
+
     -- Process pending UI action requests (prevents yielding across C-call boundary in OnDraw)
     if pendingGoToTarget then
         local target = pendingGoToTarget
