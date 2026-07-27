@@ -1173,9 +1173,11 @@ local function GoToMagplant(mx, my)
     end
 
     Log("`9[Magplant] Pathfinding to (" .. targetX .. ", " .. targetY .. ") beside Magplant (" .. mx .. ", " .. my .. ")`0")
-    if FindPath then
-        FindPath(targetX, targetY, 50)
-    end
+    RunThread(function()
+        if FindPath then
+            FindPath(targetX, targetY, 50)
+        end
+    end)
 end
 
 local function GetMagplantRemote(mx, my)
@@ -1559,7 +1561,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.69", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.70", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
