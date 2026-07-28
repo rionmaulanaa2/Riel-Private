@@ -688,6 +688,10 @@ AddHook("OnVariant", "ModDevDetector", function(var)
     
     if var[0] == "OnDialogRequest" and type(var[1]) == "string" then
         local dlg = var[1]
+        if blockingWaterDropDialog or (dlg:find("drop_item") and dlg:find("822")) then
+            return true -- Block drop dialog strictly when water 200 qty drop is executed
+        end
+
         if dlg:find("MAGPLANT") or dlg:find("itemsucker_block") or dlg:find("itemremovedfromsucker") then
             if dlg:find("itemsucker_block") then
                 local tx     = dlg:match("embed_data|tilex|(%d+)")
@@ -1714,7 +1718,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.89", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.91", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -3154,11 +3158,15 @@ local function InitializeClearWater()
     Log("`9[Clear Water] `0Initialized. Scanning for water tiles with Sponge ID: " .. tostring(Config.ClearSpongeID))
 end
 
+local blockingWaterDropDialog = false
+
 local function CheckWaterDrop()
     if GetItemCount(822) >= 200 then
+        blockingWaterDropDialog = true
         SendPacket(2, "action|dialog_return\ndialog_name|drop_item\nitemID|822|\ncount|198\n")
         Log("`2[Clear Water] `0Water inventory reached 200! Automatically dropped 198 Water (ID 822).`0")
         Sleep(200)
+        blockingWaterDropDialog = false
     end
 end
 
@@ -3237,7 +3245,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-Log("`2SafePunch v1.89 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
+Log("`2SafePunch v1.91 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
 Log("Type `4/stop`9 to stop the script.")
 
