@@ -28,7 +28,7 @@ local Config = {
 
     AutoBackpack      = false, -- If true, auto-stash items into backpack when they hit the limit
     AutoBackpackLimit = 200,   -- How many items to reach before stashing
-    BackpackList      = { 5666, 822, 5667, 21364, 11038, 7960, 5138, 20192, 2574, 9902, 10716, 9380, 9386, 9350, 1004, 1005, 542, 4570, 4571, 2, 3, 14, 15, 358, 359, 4584, 4585, 2914, 3018 }, -- List of item IDs to auto stash
+    BackpackList      = { 5666, 822, 5667, 21364, 11038, 7960, 5138, 20192, 2574, 9902, 10716, 9380, 9386, 9350, 1004, 1005, 542, 4570, 4571, 2, 3, 14, 15, 358, 359, 4584, 4585, 2914, 3018, 728, 729, 3564, 3565 }, -- List of item IDs to auto stash
 
     AutoPlace       = false, -- If true, automatically places PlaceItemID across the whole world on blank tiles
     PlaceItemID     = 4584,  -- Item ID to place (e.g. pepper seeds)
@@ -1648,7 +1648,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.81", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.82", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
