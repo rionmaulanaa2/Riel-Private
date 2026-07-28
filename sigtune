@@ -1026,6 +1026,7 @@ local function CheckAutoClearWorldCleanup()
         -- Send respawn packet and log completion
         SendPacket(2, "action|respawn")
         Log("`2[Auto Clear World] Finish clearing world!`0")
+        Sleep(2000) -- Wait 2 seconds after respawn before doing other things
     end
 end
 
@@ -1724,7 +1725,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.94", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.95", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -3027,10 +3028,10 @@ local function ConfigureWorldLockDrop()
         -- Wait 200ms then send respawn packet
         Sleep(200)
         SendPacket(2, "action|respawn")
-        Log("`2[Auto Clear World] `0Sent respawn packet!`0")
+        Log("`2[Auto Clear World] `0Sent respawn packet! Waiting 2 seconds for respawn...`0")
 
-        -- Wait 500ms before proceeding to next step
-        Sleep(500)
+        -- Wait 2 seconds (2000ms) after respawn before doing next step
+        Sleep(2000)
     else
         Log("`4[Auto Clear World] `0No World Lock detected in world.`0")
     end
@@ -3306,7 +3307,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-Log("`2SafePunch v1.94 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
+Log("`2SafePunch v1.95 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
 Log("Type `4/stop`9 to stop the script.")
 
