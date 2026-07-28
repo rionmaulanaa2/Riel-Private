@@ -477,31 +477,31 @@ AddHook("OnVariant", "DebugVariantLogger", function(var)
 end)
 
 local function SavePreviousConfig()
-    PreviousConfig.AutoPunch             = Config.AutoPunch
-    PreviousConfig.AutoPunchAntiMove     = Config.AutoPunchAntiMove
-    PreviousConfig.AutoPlace             = Config.AutoPlace
-    PreviousConfig.AutoCreateFarm        = Config.AutoCreateFarm
-    PreviousConfig.AutoPunchWorld        = Config.AutoPunchWorld
-    PreviousConfig.PunchWorldHarvestMode = Config.PunchWorldHarvestMode
-    PreviousConfig.AutoHarvest           = Config.AutoHarvest
-    PreviousConfig.AutoClearWorld        = Config.AutoClearWorld
-    PreviousConfig.AutoClearWater        = Config.AutoClearWater
-    PreviousConfig.ClearWorldTeleportRow = Config.ClearWorldTeleportRow
-    PreviousConfig.AutoSurgery           = Config.AutoSurgery
-    PreviousConfig.DebugSurgery          = Config.DebugSurgery
-    PreviousConfig.AutoTake              = Config.AutoTake
-    PreviousConfig.AutoBackpack          = Config.AutoBackpack
-    PreviousConfig.AutoMagplant          = Config.AutoMagplant
-    PreviousConfig.LoopMagplantScan      = Config.LoopMagplantScan
-    PreviousConfig.AutoJoinRunning       = Config.AutoJoinRunning
-    PreviousConfig.AutoJoin              = Config.AutoJoin
+    if Paused then return end -- NEVER overwrite saved config while already paused!
+
+    local hasActive = false
+    for k, v in pairs(Config) do
+        if type(v) == "boolean" and v == true and k ~= "DebugSendPacket" and k ~= "DebugSendPacketRaw" and k ~= "DebugVariant" then
+            hasActive = true
+            break
+        end
+    end
+
+    if hasActive then
+        PreviousConfig = {}
+        for k, v in pairs(Config) do
+            if type(v) == "boolean" then
+                PreviousConfig[k] = v
+            end
+        end
+    end
 end
 
 local function PauseAllFeatures(reason)
     if not Paused then
         SavePreviousConfig()
         Paused = true
-        Log("`4" .. (reason or "Stranger in world! Pausing all features."))
+        Log("`4[PAUSE] `0" .. (reason or "Stranger in world! Pausing all active features."))
 
         Config.AutoPunch             = false
         Config.AutoPunchAntiMove     = false
@@ -529,41 +529,22 @@ local function ResumeAllFeatures()
         Paused = false
         if not Run then
             Run = true
-            Log("`2World clear. Re-enabling Run.")
+            Log("`2[RESUME] `0World clear. Re-enabling script run loop.")
         end
-        Log("`2No strangers! Resuming previously active features.")
+        Log("`2[RESUME] `0No strangers in world! Resuming previously active features...")
 
-        Config.AutoPunch             = PreviousConfig.AutoPunch             or false
-        Config.AutoPunchAntiMove     = PreviousConfig.AutoPunchAntiMove     or false
-        Config.AutoPlace             = PreviousConfig.AutoPlace             or false
-        Config.AutoCreateFarm        = PreviousConfig.AutoCreateFarm        or false
-        Config.AutoPunchWorld        = PreviousConfig.AutoPunchWorld        or false
-        Config.PunchWorldHarvestMode = PreviousConfig.PunchWorldHarvestMode or false
-        Config.AutoHarvest           = PreviousConfig.AutoHarvest           or false
-        Config.AutoClearWorld        = PreviousConfig.AutoClearWorld        or false
-        Config.AutoClearWater        = PreviousConfig.AutoClearWater        or false
-        Config.ClearWorldTeleportRow = PreviousConfig.ClearWorldTeleportRow or false
-        Config.AutoSurgery           = PreviousConfig.AutoSurgery           or false
-        Config.DebugSurgery          = PreviousConfig.DebugSurgery          or false
-        Config.AutoTake              = PreviousConfig.AutoTake              or false
-        Config.AutoBackpack          = PreviousConfig.AutoBackpack          or false
-        Config.AutoMagplant          = PreviousConfig.AutoMagplant          or false
-        Config.LoopMagplantScan      = PreviousConfig.LoopMagplantScan      or false
-        Config.AutoJoinRunning       = PreviousConfig.AutoJoinRunning       or false
-        Config.AutoJoin              = PreviousConfig.AutoJoin              or false
+        local countResumed = 0
+        for k, v in pairs(PreviousConfig) do
+            if type(v) == "boolean" and v == true then
+                Config[k] = true
+                countResumed = countResumed + 1
+                Log("`9 -> Resumed feature: `2" .. tostring(k) .. "`0")
+            end
+        end
 
-        if Config.AutoPunch        then Log("`9-> Auto Punch resumed!")         end
-        if Config.AutoPlace        then Log("`9-> Auto Place resumed!")         end
-        if Config.AutoCreateFarm   then Log("`9-> Auto Create Farm resumed!")   end
-        if Config.AutoMagplant     then Log("`9-> Auto Magplant resumed!")      end
-        if Config.AutoPunchWorld   then Log("`9-> Auto Punch World resumed!")   end
-        if Config.AutoHarvest      then Log("`9-> Auto Harvest resumed!")       end
-        if Config.AutoClearWorld   then Log("`9-> Auto Clear World resumed!")   end
-        if Config.AutoClearWater   then Log("`9-> Auto Clear Water resumed!")   end
-        if Config.AutoSurgery      then Log("`9-> Auto Surgery resumed!")       end
-        if Config.AutoBackpack     then Log("`9-> Auto Backpack resumed!")      end
-        if Config.AutoTake         then Log("`9-> Auto Take resumed!")          end
-        if Config.AutoJoin         then Log("`9-> Auto Join resumed!")          end
+        if countResumed == 0 then
+            Log("`e[RESUME] `0No features were active prior to pause.")
+        end
     end
 end
 
@@ -613,26 +594,26 @@ AddHook("OnSendPacket", "GhostPlayerCleanupSend", function(type, packet)
     return false
 end)
 
--- Detect when server sends OnRemove to evict a player's avatar
+-- Detect when server sends OnRemove or OnConsoleMessage to evict a player's avatar
 AddHook("OnVariant", "GhostPlayerCleanupVariant", function(var)
-    -- OnRemove is sent by the server when a player's entity is removed
-    -- var[1] is the netid as an integer in Bothax
     if var[0] == "OnRemove" then
         local netid = tonumber(var[1])
         if netid then
             forceLeft[netid] = true
-            Log("`9[GhostPatch] Forced evict netid " .. tostring(netid) .. "`0")
+            Log("`9[GhostPatch] Player entity removed (netid " .. tostring(netid) .. ").`0")
         end
     end
     
-    -- Also catch console message "PlayerName left, X others here"
-    if var[0] == "OnConsoleMessage" and type(var[1]) == "string" and var[1]:find("left,") then
-        local nameStr = var[1]:match("`w([^`]+) left,")
-        if nameStr then
-            for netid, info in pairs(lastPlayersRef) do
-                if info.name == nameStr then
-                    forceLeft[netid] = true
-                    Log("`9[GhostPatch] Forced evict by name: " .. nameStr .. "`0")
+    if var[0] == "OnConsoleMessage" and type(var[1]) == "string" then
+        local msg = var[1]
+        if msg:find("left,") or msg:find("left the world") then
+            local nameStr = msg:match("`w([^`]+) left,") or msg:match("`w([^`]+) left")
+            if nameStr then
+                for netid, info in pairs(lastPlayersRef) do
+                    if info.name == nameStr then
+                        forceLeft[netid] = true
+                        Log("`9[GhostPatch] Forced evict player: " .. nameStr .. "`0")
+                    end
                 end
             end
         end
@@ -773,16 +754,16 @@ local function GetOtherPlayers()
     if not list then return players end
 
     for _, p in pairs(list) do
-        if p then
+        if p and p.netid then
             local isLocal = false
             if p.netid == local_.netid then isLocal = true end
             if p.userid and local_.userid and tonumber(p.userid) == tonumber(local_.userid) then isLocal = true end
             if p.name and local_.name and p.name == local_.name then isLocal = true end
+
             if not isLocal and not forceLeft[p.netid] then
                 players[p.netid] = { name = p.name, userid = p.userid }
                 lastPlayersRef[p.netid] = { name = p.name, userid = p.userid }
             end
-
         end
     end
     return players
@@ -1725,7 +1706,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.97", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.98", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -2375,58 +2356,56 @@ end)
 -- PLAYER WATCH THREAD: Runs in background, checks for players
 -- ============================================================
 
-
-RunThread(function()
+SafeRunThread(function()
     Log("Player watch thread started.")
 
     while currentSessionID == _G.SafePunchSessionID do
-        if not Run and not Paused then
-            Sleep(300)
-        else
-            local world  = GetWorld()
-            local local_ = GetLocal()
+        local world  = GetWorld()
+        local local_ = GetLocal()
 
-            if world and local_ then
-                local current = GetOtherPlayers()
+        if world and local_ then
+            local current = GetOtherPlayers()
 
-                -- Detect NEW players that joined
-                for netid, info in pairs(current) do
-                    if not lastPlayers[netid] then
-                        local tag = IsWhitelisted(info.userid) and "`a[WHITELIST]`0 " or "`4[STRANGER]`0 "
-                        Log(tag .. "`e" .. tostring(info.name) .. "`0 (UID: `b" .. tostring(info.userid) .. "`0) joined.")
-                    end
+            -- Detect NEW players that joined
+            for netid, info in pairs(current) do
+                if not lastPlayers[netid] then
+                    local tag = IsWhitelisted(info.userid) and "`a[WHITELIST]`0 " or "`4[STRANGER]`0 "
+                    Log(tag .. "`e" .. tostring(info.name) .. "`0 (UID: `b" .. tostring(info.userid) .. "`0) joined.")
                 end
-
-                -- Detect players that LEFT
-                for netid, info in pairs(lastPlayers) do
-                    if not current[netid] then
-                        local tag = IsWhitelisted(info.userid) and "`a[WHITELIST]`0 " or "`4[STRANGER]`0 "
-                        Log(tag .. "`e" .. tostring(info.name) .. "`0 (UID: `b" .. tostring(info.userid) .. "`0) left.")
-                    end
-                end
-
-                -- Check if any non-whitelisted player is still present
-                local hasStranger = false
-                for _, info in pairs(current) do
-                    if not IsWhitelisted(info.userid) then
-                        hasStranger = true
-                        break
-                    end
-                end
-
-                if hasStranger then
-                    -- A stranger is present: pause if not already paused
-                    PauseAllFeatures("Stranger in world! Pausing all features.")
-                else
-                    -- No strangers: resume if we were paused
-                    ResumeAllFeatures()
-                end
-
-                lastPlayers = current
             end
 
-            Sleep(Config.CheckDelay)
+            -- Detect players that LEFT
+            for netid, info in pairs(lastPlayers) do
+                if not current[netid] then
+                    local tag = IsWhitelisted(info.userid) and "`a[WHITELIST]`0 " or "`4[STRANGER]`0 "
+                    Log(tag .. "`e" .. tostring(info.name) .. "`0 (UID: `b" .. tostring(info.userid) .. "`0) left world.")
+                end
+            end
+
+            lastPlayers = current
+
+            -- Check if any non-whitelisted stranger is present
+            local strangerCount = 0
+            local strangerNames = {}
+            for _, info in pairs(current) do
+                if not IsWhitelisted(info.userid) then
+                    strangerCount = strangerCount + 1
+                    table.insert(strangerNames, info.name or "Stranger")
+                end
+            end
+
+            if strangerCount > 0 then
+                if not Paused then
+                    PauseAllFeatures("Stranger (" .. table.concat(strangerNames, ", ") .. ") in world! Pausing all features.")
+                end
+            else
+                if Paused and not modDetected then
+                    ResumeAllFeatures()
+                end
+            end
         end
+
+        Sleep(Config.CheckDelay or 1000)
     end
 end)
 
@@ -3332,7 +3311,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-Log("`2SafePunch v1.97 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
+Log("`2SafePunch v1.98 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
 Log("Type `4/stop`9 to stop the script.")
 
