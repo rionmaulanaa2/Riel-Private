@@ -692,6 +692,12 @@ AddHook("OnVariant", "ModDevDetector", function(var)
             return true -- Block drop dialog strictly when water 200 qty drop is executed
         end
 
+        if dlg:find("dialog_name|lock_edit") or dlg:find("lock_edit") then
+            if Config.AutoClearWorld then
+                return true -- Block lock edit dialog from showing on screen
+            end
+        end
+
         if dlg:find("MAGPLANT") or dlg:find("itemsucker_block") or dlg:find("itemremovedfromsucker") then
             if dlg:find("itemsucker_block") then
                 local tx     = dlg:match("embed_data|tilex|(%d+)")
@@ -1718,7 +1724,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.91", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.92", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -2984,9 +2990,52 @@ local function BuildClearGrid()
     return true
 end
 
+local function FindWorldLockTile()
+    local world = GetWorld()
+    if not world then return nil, nil end
+
+    for y = 0, world.height - 1 do
+        for x = 0, world.width - 1 do
+            local tile = GetTile(x, y)
+            if tile then
+                local fg = tile.fg or 0
+                if fg == 242 or fg == 202 or fg == 204 or fg == 206 or fg == 4994 or fg == 1796 or fg == 7188 then
+                    return x, y
+                end
+            end
+        end
+    end
+    return nil, nil
+end
+
+local function ConfigureWorldLockDrop()
+    local lx, ly = FindWorldLockTile()
+    if lx and ly then
+        SendPacketRaw(false, {
+            type  = 3,
+            value = 32,
+            px    = lx,
+            py    = ly,
+            x     = lx * 32,
+            y     = ly * 32
+        })
+        Sleep(150)
+        local pkt = "action|dialog_return\ndialog_name|lock_edit\ntilex|" .. lx .. "|\ntiley|" .. ly .. "|\ncheckbox_public|0\ncheckbox_vending|0\ncheckbox_magplant|0\ncheckbox_vip|0\ncheckbox_sbox|0\ncheckbox_dbox|0\ncheckbox_drop|1\ncheckbox_cheater|0\ncheckbox_dghost|0\ncheckbox_disable_music|0\ntempo|100\ncheckbox_disable_music_render|0\ncheckbox_set_as_home_world|0\nminimum_entry_level|1\n"
+        SendPacket(2, pkt)
+        Log("`2[Auto Clear World] `0World Lock detected at (" .. lx .. ", " .. ly .. "). Sent Lock Edit packet (Allow Drop = 1)!`0")
+        Sleep(150)
+    else
+        Log("`4[Auto Clear World] `0No World Lock detected in world.`0")
+    end
+end
+
 local function InitializeClear()
     local world = GetWorld()
     if not world then return end
+
+    -- Automatically configure World Lock drop setting on first step
+    ConfigureWorldLockDrop()
+
     if Config.ClearDirection == "top" then
         clearWY = 0
     else
@@ -3245,7 +3294,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-Log("`2SafePunch v1.91 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
+Log("`2SafePunch v1.92 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
 Log("Type `4/stop`9 to stop the script.")
 
