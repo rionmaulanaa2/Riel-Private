@@ -1288,37 +1288,49 @@ end
 
 local function AutoMagplantStep()
     if not Config.AutoMagplant then return end
+
+    -- Fast-forward past empty magplants in 0ms
+    while currentMagplantIndex <= #MagplantsList do
+        local m = MagplantsList[currentMagplantIndex]
+        if m and m.amount and m.amount == 0 then
+            Log("`4[Auto Magplant] Skipping empty magplant (" .. m.amount .. " items) at (" .. m.x .. ", " .. m.y .. ")`0")
+            currentMagplantIndex = currentMagplantIndex + 1
+        else
+            break
+        end
+    end
+
     if currentMagplantIndex > #MagplantsList then
         Log("`2[Auto Magplant] All magplants processed! Stopping.`0")
         Config.AutoMagplant = false
         return
     end
-    
+
     local m = MagplantsList[currentMagplantIndex]
-    
-    -- Wrench magplant to open dialog (this updates itemID and amount asynchronously via OnVariant)
+
+    -- Wrench magplant to update state/dialog
     SendPacketRaw(false, {type = 3, value = 32, px = m.x, py = m.y, x = m.x * 32, y = m.y * 32})
     Sleep(Config.MagplantDelay)
-    
+
     if not Run or Paused or not Config.AutoMagplant then return end
-    
-    -- If amount is 0 (or was updated to 0), skip to next
+
+    -- If amount was updated to 0, skip
     if m.amount and m.amount == 0 then
-        Log("`4[Auto Magplant] Magplant at " .. m.x .. "," .. m.y .. " is empty! Moving to next.`0")
+        Log("`4[Auto Magplant] Magplant at (" .. m.x .. ", " .. m.y .. ") is empty! Moving to next.`0")
         currentMagplantIndex = currentMagplantIndex + 1
         return
     end
-    
-    -- Attempt retrieve
+
+    -- Retrieve items from magplant
     SendPacket(2, "action|dialog_return\ndialog_name|itemsucker_block\ntilex|" .. m.x .. "|\ntiley|" .. m.y .. "|\nbuttonClicked|retrieveitem\n\nchk_enablesucking|1\n")
     Sleep(Config.MagplantDelay)
-    
+
     if not Run or Paused or not Config.AutoMagplant then return end
-    
+
     SendPacket(2, "action|dialog_return\ndialog_name|itemremovedfromsucker\ntilex|" .. m.x .. "|\ntiley|" .. m.y .. "|\nitemtoremove|250\n")
     Sleep(Config.MagplantDelay)
-    
-    -- Stash to backpack if we know the item ID
+
+    -- Auto stash to backpack if itemID is known
     if m.itemID then
         SendPacket(2, "action|dialog_return\ndialog_name|backpack_menu\nitemid|" .. tostring(m.itemID))
         Sleep(Config.MagplantDelay)
@@ -1403,43 +1415,41 @@ local lastHarvestTeleportY = nil
 
 local function InitializeHarvest()
     local world = GetWorld()
-    local tiles = GetTiles()
-    if not world or not tiles then return false end
+    if not world then return false end
 
     local targetID = Config.HarvestItemID
     harvestTargetRows = {}
     local minY, maxY = nil, nil
 
-    -- Pre-calculate valid X set for 3-far or 1-far
-    local validX = {}
-    if Config.HarvestStep == 3 then
-        validX[0] = true
-        local curr = 1
-        while curr < world.width do
-            validX[curr] = true
-            curr = curr + 3
-        end
-    else
+    -- Fast 2D scan using robust GetTile(x, y)
+    for y = 0, world.height - 1 do
         for x = 0, world.width - 1 do
-            validX[x] = true
-        end
-    end
+            local tile = GetTile(x, y)
+            if tile and (tile.fg == targetID or tile.bg == targetID) then
+                local isValidX = false
+                if Config.HarvestStep == 3 then
+                    if x == 0 or x == 1 or ((x - 1) % 3 == 0) then
+                        isValidX = true
+                    end
+                else
+                    isValidX = true
+                end
 
-    -- Fast 1-pass tile indexing
-    for _, t in pairs(tiles) do
-        if (t.fg == targetID or t.bg == targetID) and validX[t.x] then
-            if not harvestTargetRows[t.y] then
-                harvestTargetRows[t.y] = {}
+                if isValidX then
+                    if not harvestTargetRows[y] then
+                        harvestTargetRows[y] = {}
+                    end
+                    table.insert(harvestTargetRows[y], x)
+
+                    if minY == nil or y < minY then minY = y end
+                    if maxY == nil or y > maxY then maxY = y end
+                end
             end
-            table.insert(harvestTargetRows[t.y], t.x)
-
-            if minY == nil or t.y < minY then minY = t.y end
-            if maxY == nil or t.y > maxY then maxY = t.y end
         end
     end
 
     if not minY or not maxY then
-        Log("`4[Auto Harvest] Target Item ID (" .. tostring(Config.HarvestItemID) .. ") not found in world!")
+        Log("`4[Auto Harvest] Target Item ID (" .. tostring(Config.HarvestItemID) .. ") not found in world!`0")
         Config.AutoHarvest = false
         harvestY = nil
         return false
@@ -1493,7 +1503,18 @@ local function AutoHarvestStep()
         end
 
         local xList = harvestTargetRows[harvestY]
-        if xList and #xList > 0 and harvestXIndex <= #xList then
+
+        -- Fast-forward harvestXIndex to next actual valid target tile in 0ms
+        while xList and harvestXIndex <= #xList do
+            local tx = xList[harvestXIndex]
+            local tile = GetTile(tx, harvestY)
+            if tile and (tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID) then
+                break -- Found active target item!
+            end
+            harvestXIndex = harvestXIndex + 1 -- Skip empty/already harvested tile in 0ms
+        end
+
+        if xList and harvestXIndex <= #xList then
             break -- Row has target items to process!
         end
 
@@ -1524,15 +1545,18 @@ local function AutoHarvestStep()
     local targetX = xList and xList[harvestXIndex]
 
     if targetX then
-        -- Send 1 punch packet to target tile
-        SendPacketRaw(false, {
-            type  = 3,
-            value = 18,
-            px    = targetX,
-            py    = harvestY,
-            x     = targetX * 32,
-            y     = harvestY * 32
-        })
+        -- Verify tile still has target item before punching
+        local tile = GetTile(targetX, harvestY)
+        if tile and (tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID) then
+            SendPacketRaw(false, {
+                type  = 3,
+                value = 18,
+                px    = targetX,
+                py    = harvestY,
+                x     = targetX * 32,
+                y     = harvestY * 32
+            })
+        end
 
         -- Advance to next target position in current row
         harvestXIndex = harvestXIndex + 1
@@ -1594,7 +1618,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.75", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.77", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
