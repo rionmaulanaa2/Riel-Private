@@ -1725,7 +1725,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.95", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.97", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -3059,15 +3059,36 @@ end
 
 local function ClearWorldStep()
     local world = GetWorld()
-    if not world then return end
+    if not world or not GetTile(0, 0) then
+        Sleep(200)
+        return
+    end
 
     if clearWX == nil or clearWY == nil then
         InitializeClear()
     end
 
+    -- Check if all rows have been completed
+    if (Config.ClearDirection == "top" and clearWY >= world.height) or
+       (Config.ClearDirection == "bottom" and clearWY < 0) then
+        Log("`2[Auto Clear World] `0Finished clearing world! Transitioning to Auto Clear Water with 150ms delay...`0")
+        Config.AutoClearWorld = false
+        clearWX, clearWY = nil, nil
+        clearWVisited = {}
+
+        -- Automatically activate Auto Clear Water with 150ms delay
+        Config.ClearDelay = 150
+        Config.AutoClearWater = true
+        waterCX, waterCY = nil, nil
+        return
+    end
+
     -- Find next active tile in world
     local targetX, targetY = nil, nil
-    while true do
+    local passes = 0
+    local maxPasses = world.width * world.height
+
+    while passes < maxPasses do
         if Config.ClearDirection == "top" and clearWY >= world.height then break end
         if Config.ClearDirection == "bottom" and clearWY < 0 then break end
 
@@ -3088,39 +3109,43 @@ local function ClearWorldStep()
             clearWX = 0
             clearWY = Config.ClearDirection == "top" and (clearWY + 1) or (clearWY - 1)
         end
+        passes = passes + 1
     end
 
+    -- Check again if all rows are finished after scanning
     if (Config.ClearDirection == "top" and clearWY >= world.height) or
-       (Config.ClearDirection == "bottom" and clearWY < 0) or not targetX or not targetY then
+       (Config.ClearDirection == "bottom" and clearWY < 0) then
         Log("`2[Auto Clear World] `0Finished clearing world! Transitioning to Auto Clear Water with 150ms delay...`0")
         Config.AutoClearWorld = false
         clearWX, clearWY = nil, nil
         clearWVisited = {}
 
-        -- Automatically activate Auto Clear Water with 150ms delay
         Config.ClearDelay = 150
         Config.AutoClearWater = true
         waterCX, waterCY = nil, nil
         return
     end
 
-    -- Anti-Move Position Lock: Teleport & lock player at X=0 of row targetY
-    if Config.ClearWorldTeleportRow then
-        local local_ = GetLocal()
-        local curX = local_ and math.floor(local_.pos.x / 32) or nil
-        local curY = local_ and math.floor(local_.pos.y / 32) or nil
+    if not targetX or not targetY then
+        return
+    end
 
-        if curX ~= 0 or curY ~= targetY or lastClearRowY ~= targetY then
-            lastClearRowY = targetY
-            SendPacketRaw(false, {
-                type = 0,
-                x    = 0,
-                y    = targetY * 32,
-                px   = 0,
-                py   = targetY
-            })
-            Sleep(50)
-        end
+    -- Status Progress Logging
+    if lastClearRowY ~= targetY then
+        lastClearRowY = targetY
+        local pct = math.floor((targetY / math.max(1, world.height - 1)) * 100)
+        Log("`2[Auto Clear World] `0Clearing Row Y: `b" .. targetY .. "/" .. (world.height - 1) .. " `0(" .. pct .. "%) | Target X: " .. targetX .. (Config.ClearWorldTeleportRow and " `9[Locked at X=0]`0" or ""))
+    end
+
+    -- Strict Anti-Move Position Lock: Enforce player position at X=0, Y=targetY before punching
+    if Config.ClearWorldTeleportRow then
+        SendPacketRaw(false, {
+            type = 0,
+            x    = 0,
+            y    = targetY * 32,
+            px   = 0,
+            py   = targetY
+        })
     end
 
     -- Collect up to 5 adjacent valid blocks starting at targetX on targetY
@@ -3307,7 +3332,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-Log("`2SafePunch v1.95 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
+Log("`2SafePunch v1.97 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
 Log("Type `4/stop`9 to stop the script.")
 
