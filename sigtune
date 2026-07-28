@@ -3130,7 +3130,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-Log("Script loaded! Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
+Log("`2SafePunch v1.82 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
 Log("Type `4/stop`9 to stop the script.")
 
