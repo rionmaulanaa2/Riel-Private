@@ -1,5 +1,5 @@
 -- ============================================================
--- AUTO PUNCH SAFE (v1.99): Punch tile (92, 26) using item ID 18
+-- AUTO PUNCH SAFE (v2.00): Punch tile (92, 26) using item ID 18
 -- Auto PAUSES when a non-whitelisted player is detected.
 -- Auto RESUMES when all non-whitelisted players leave.
 -- Whitelisted players are ignored — punch keeps going.
@@ -1706,7 +1706,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.99", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v2.00", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -3011,6 +3011,19 @@ local function ConfigureWorldLockDrop()
 
         -- Wait 2 seconds (2000ms) after respawn before doing next step
         Sleep(2000)
+
+        -- Instant teleport to (0, 0) if teleport to X=0 feature is activated
+        if Config.ClearWorldTeleportRow then
+            SendPacketRaw(false, {
+                type = 0,
+                x    = 0,
+                y    = 0,
+                px   = 0,
+                py   = 0
+            })
+            Log("`2[Auto Clear World] `0Instant teleported to (0, 0) after respawn!`0")
+            Sleep(150)
+        end
     else
         Log("`4[Auto Clear World] `0No World Lock detected in world.`0")
     end
@@ -3311,7 +3324,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-Log("`2SafePunch v1.99 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
+Log("`2SafePunch v2.00 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
 Log("Type `4/stop`9 to stop the script.")
 
