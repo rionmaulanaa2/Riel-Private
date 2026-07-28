@@ -253,6 +253,7 @@ local waitingForBackpackItem = nil -- State for backpack resupply
 local pendingGoToTarget = nil -- Deferred Go pathfinding target {mx, my} to avoid C-call boundary yield
 local pendingScanInfo   = false -- Deferred ScanMagplantInfo request
 local autoHarvestGhostState = false -- Tracks ghost state for Auto Harvest toggle
+local autoClearWorldCleanupState = false -- Tracks final item collect & stash cleanup for Auto Clear World
 
 local function CheckHarvestGhostState()
     if Config.AutoHarvest and not autoHarvestGhostState then
@@ -953,6 +954,38 @@ local function CollectItems()
     end
 end
 
+local function CheckAutoClearWorldCleanup()
+    if not autoClearWorldCleanupState then return end
+
+    -- Check remaining floating items in world
+    local objs = GetObjectList()
+    local remainingItems = 0
+    if objs then
+        for _, obj in pairs(objs) do
+            local shouldTake = not Config.UseTakeList or IsInTakeList(obj.id)
+            if shouldTake then
+                remainingItems = remainingItems + 1
+            end
+        end
+    end
+
+    -- If no remaining floating items left to collect
+    if remainingItems == 0 then
+        -- Perform final backpack stash check
+        CheckBackpack()
+
+        -- Disable cleanup states
+        autoClearWorldCleanupState = false
+        Config.AutoTake        = false
+        Config.AutoBackpack    = false
+        Config.TeleportToItems = false
+
+        -- Send respawn packet and log completion
+        SendPacket(2, "action|respawn")
+        Log("`2[Auto Clear World] Finish clearing world!`0")
+    end
+end
+
 -- ============================================================
 -- AUTO PLACE LOGIC
 -- ============================================================
@@ -1648,7 +1681,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.84", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.85", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -3123,10 +3156,11 @@ local function ClearWaterStep()
         Config.AutoClearWater = false
         waterCX, waterCY = nil, nil
 
-        -- Automatically enable Auto Backpack Stash, Auto Take Items, and Teleport to Items
+        -- Automatically enable Auto Backpack Stash, Auto Take Items, and Teleport to Items for final cleanup
         Config.AutoBackpack    = true
         Config.AutoTake        = true
         Config.TeleportToItems = true
+        autoClearWorldCleanupState = true
     end
 end
 
@@ -3135,7 +3169,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-Log("`2SafePunch v1.84 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
+Log("`2SafePunch v1.85 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
 Log("Type `4/stop`9 to stop the script.")
 
@@ -3172,7 +3206,12 @@ while currentSessionID == _G.SafePunchSessionID and Run do
                 -- Determine the correct delay based on the active mode
                 local currentDelay = Config.PunchDelay
 
-                if Config.AutoClearWorld then
+                if autoClearWorldCleanupState then
+                    CollectItems()
+                    CheckBackpack()
+                    CheckAutoClearWorldCleanup()
+                    currentDelay = 100
+                elseif Config.AutoClearWorld then
                     ClearWorldStep()
                     currentDelay = Config.ClearDelay
                 elseif Config.AutoClearWater then
