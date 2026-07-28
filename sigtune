@@ -1714,7 +1714,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.85", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.88", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -3004,16 +3004,15 @@ local function ClearWorldStep()
         InitializeClear()
     end
 
+    -- Find next active tile in world
     local targetX, targetY = nil, nil
-
     while true do
         if Config.ClearDirection == "top" and clearWY >= world.height then break end
         if Config.ClearDirection == "bottom" and clearWY < 0 then break end
 
-        local key  = clearWX * 10000 + clearWY
+        local key = clearWX * 10000 + clearWY
         local cell = GetTile(clearWX, clearWY)
         if cell and not clearWVisited[key] then
-            -- skip ignored blocks AND bg-only ignored IDs
             local skipFg = Config.ClearIgnoreBlocks[cell.fg]
             local skipBg = Config.ClearIgnoreBlocks[cell.bg]
             if (cell.fg ~= 0 or cell.bg ~= 0) and not skipFg and not skipBg then
@@ -3030,52 +3029,8 @@ local function ClearWorldStep()
         end
     end
 
-    if targetX and targetY then
-        -- Teleport to X=0 of the current row when the row changes
-        if Config.ClearWorldTeleportRow and lastClearRowY ~= targetY then
-            lastClearRowY = targetY
-            SendPacketRaw(false, {
-                type = 0,
-                x    = 0,
-                y    = targetY * 32,
-                px   = 0,
-                py   = 0
-            })
-            Log("`2[Clear World] `0Teleported to X=0 row Y=" .. targetY)
-            Sleep(200)
-        end
-
-        -- Punch until tile is clear or we hit an ignored block / abort condition
-        local maxHits = 60  -- safety cap per tile
-        local hits = 0
-        repeat
-            if not Run or Paused or not Config.AutoClearWorld then return end
-            local t = GetTile(targetX, targetY)
-            if not t then break end
-            if Config.ClearIgnoreBlocks[t.fg] or Config.ClearIgnoreBlocks[t.bg] then break end
-            if t.fg == 0 and t.bg == 0 then break end
-            SendPacketRaw(false, {
-                type  = 3,
-                value = 18,
-                px    = targetX,
-                py    = targetY,
-                x     = targetX * 32,
-                y     = targetY * 32
-            })
-            Sleep(Config.ClearDelay)
-            hits = hits + 1
-        until hits >= maxHits
-
-        -- Mark tile as visited so we never retry it
-        clearWVisited[targetX * 10000 + targetY] = true
-
-        -- Advance cursor
-        clearWX = targetX + 1
-        if clearWX >= world.width then
-            clearWX = 0
-            clearWY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)
-        end
-    else
+    if (Config.ClearDirection == "top" and clearWY >= world.height) or
+       (Config.ClearDirection == "bottom" and clearWY < 0) or not targetX or not targetY then
         Log("`2[Auto Clear World] `0Finished clearing world! Transitioning to Auto Clear Water with 150ms delay...`0")
         Config.AutoClearWorld = false
         clearWX, clearWY = nil, nil
@@ -3085,6 +3040,75 @@ local function ClearWorldStep()
         Config.ClearDelay = 150
         Config.AutoClearWater = true
         waterCX, waterCY = nil, nil
+        return
+    end
+
+    -- Teleport to X=0 of current row ONCE when row changes
+    if Config.ClearWorldTeleportRow and lastClearRowY ~= targetY then
+        lastClearRowY = targetY
+        SendPacketRaw(false, {
+            type = 0,
+            x    = 0,
+            y    = targetY * 32,
+            px   = 0,
+            py   = targetY
+        })
+        Log("`2[Clear World] `0Teleported to X=0 of row Y=" .. targetY)
+        Sleep(150)
+    end
+
+    -- Collect up to 5 adjacent valid blocks starting at targetX on targetY
+    local multiTargetList = {}
+    for dx = 0, 4 do
+        local tx = targetX + dx
+        if tx < world.width then
+            local key = tx * 10000 + targetY
+            if not clearWVisited[key] then
+                local cell = GetTile(tx, targetY)
+                if cell then
+                    local skipFg = Config.ClearIgnoreBlocks[cell.fg]
+                    local skipBg = Config.ClearIgnoreBlocks[cell.bg]
+                    if (cell.fg ~= 0 or cell.bg ~= 0) and not skipFg and not skipBg then
+                        table.insert(multiTargetList, tx)
+                    else
+                        clearWVisited[key] = true
+                    end
+                end
+            end
+        end
+    end
+
+    if #multiTargetList > 0 then
+        -- Send 1 punch packet to all 5 blocks simultaneously from X=0
+        for _, tx in ipairs(multiTargetList) do
+            if not Run or Paused or not Config.AutoClearWorld then return end
+            SendPacketRaw(false, {
+                type  = 3,
+                value = 18,
+                px    = tx,
+                py    = targetY,
+                x     = tx * 32,
+                y     = targetY * 32
+            })
+        end
+
+        Sleep(Config.ClearDelay)
+
+        -- Check which of the 5 tiles were destroyed
+        for _, tx in ipairs(multiTargetList) do
+            local cell = GetTile(tx, targetY)
+            if not cell or (cell.fg == 0 and cell.bg == 0) or
+               Config.ClearIgnoreBlocks[cell.fg] or Config.ClearIgnoreBlocks[cell.bg] then
+                clearWVisited[tx * 10000 + targetY] = true
+            end
+        end
+    else
+        clearWVisited[targetX * 10000 + targetY] = true
+        clearWX = targetX + 1
+        if clearWX >= world.width then
+            clearWX = 0
+            clearWY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)
+        end
     end
 end
 
@@ -3202,7 +3226,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-Log("`2SafePunch v1.85 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
+Log("`2SafePunch v1.88 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
 Log("Type `4/stop`9 to stop the script.")
 
