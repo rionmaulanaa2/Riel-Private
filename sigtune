@@ -1,5 +1,5 @@
 -- ============================================================
--- AUTO PUNCH SAFE: Punch tile (92, 26) using item ID 18
+-- AUTO PUNCH SAFE (v1.99): Punch tile (92, 26) using item ID 18
 -- Auto PAUSES when a non-whitelisted player is detected.
 -- Auto RESUMES when all non-whitelisted players leave.
 -- Whitelisted players are ignored — punch keeps going.
