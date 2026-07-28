@@ -1724,7 +1724,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.93", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.94", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -3103,18 +3103,23 @@ local function ClearWorldStep()
         return
     end
 
-    -- Teleport to X=0 of current row ONCE when row changes
-    if Config.ClearWorldTeleportRow and lastClearRowY ~= targetY then
-        lastClearRowY = targetY
-        SendPacketRaw(false, {
-            type = 0,
-            x    = 0,
-            y    = targetY * 32,
-            px   = 0,
-            py   = targetY
-        })
-        Log("`2[Clear World] `0Teleported to X=0 of row Y=" .. targetY)
-        Sleep(150)
+    -- Anti-Move Position Lock: Teleport & lock player at X=0 of row targetY
+    if Config.ClearWorldTeleportRow then
+        local local_ = GetLocal()
+        local curX = local_ and math.floor(local_.pos.x / 32) or nil
+        local curY = local_ and math.floor(local_.pos.y / 32) or nil
+
+        if curX ~= 0 or curY ~= targetY or lastClearRowY ~= targetY then
+            lastClearRowY = targetY
+            SendPacketRaw(false, {
+                type = 0,
+                x    = 0,
+                y    = targetY * 32,
+                px   = 0,
+                py   = targetY
+            })
+            Sleep(50)
+        end
     end
 
     -- Collect up to 5 adjacent valid blocks starting at targetX on targetY
@@ -3301,7 +3306,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-Log("`2SafePunch v1.93 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
+Log("`2SafePunch v1.94 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
 Log("Type `4/stop`9 to stop the script.")
 
