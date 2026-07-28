@@ -15,9 +15,11 @@ local Config = {
     PunchDelay = 200,  -- Delay between punches (ms)
     CheckDelay = 1000, -- How often to check for players (ms)
 
-    AutoPunch       = false, -- If true, automatically punches the target tile
-    AutoMagplant    = false, -- Retrieve items from Magplant
-    MagplantDelay   = 500,
+    AutoMagplant        = false, -- Retrieve items from Magplant
+    MagplantDelay       = 500,
+    LoopMagplantScan    = false, -- Continuously loop scan item info for all magplants
+    MagplantScanDelay   = 100,   -- Delay for each magplant scanned (ms, default 100)
+    MagplantLoopDelay   = 500,   -- Delay between each full world scan loop (ms, default 500)
 
     AutoTake        = false, -- If true, will automatically collect floating items
     UseTakeList     = false, -- If true, only collects items in TakeList. If false, collects ALL floating items.
@@ -96,6 +98,7 @@ local Config = {
     AutoClearWater    = false,
     AutoSurgery       = false,
     AutoSurgeryBuy    = false,
+    DebugSurgery      = false, -- If true, sends all surgery packets & dialogs to Discord Webhook
     SurgeryDelay      = 700,   -- ms delay between each surgery packet sent
     SurgeryTotal      = 0,
     RecordName        = "MyRecord",
@@ -276,6 +279,24 @@ end
 
 local function Log(msg)
     LogToConsole("`0[`2SafePunch`0] `9" .. tostring(msg))
+end
+
+local function ReportScriptError(errSource, errMessage)
+    local errText = "`4[Script Error] " .. tostring(errSource) .. ": " .. tostring(errMessage) .. "`0"
+    Log(errText)
+    if SendToWebhook then
+        local desc = "Source: **" .. tostring(errSource) .. "**\nError: ```\n" .. tostring(errMessage) .. "\n```"
+        SendToWebhook("Script Error Alert", desc, 16711680, true)
+    end
+end
+
+local function SafeRunThread(fn)
+    RunThread(function()
+        local ok, err = pcall(fn)
+        if not ok then
+            ReportScriptError("Background Thread", err)
+        end
+    end)
 end
 
 local function StripColorCodes(str)
@@ -466,9 +487,11 @@ local function SavePreviousConfig()
     PreviousConfig.AutoClearWater        = Config.AutoClearWater
     PreviousConfig.ClearWorldTeleportRow = Config.ClearWorldTeleportRow
     PreviousConfig.AutoSurgery           = Config.AutoSurgery
+    PreviousConfig.DebugSurgery          = Config.DebugSurgery
     PreviousConfig.AutoTake              = Config.AutoTake
     PreviousConfig.AutoBackpack          = Config.AutoBackpack
     PreviousConfig.AutoMagplant          = Config.AutoMagplant
+    PreviousConfig.LoopMagplantScan      = Config.LoopMagplantScan
     PreviousConfig.AutoJoinRunning       = Config.AutoJoinRunning
     PreviousConfig.AutoJoin              = Config.AutoJoin
 end
@@ -490,9 +513,11 @@ local function PauseAllFeatures(reason)
         Config.AutoClearWater        = false
         Config.ClearWorldTeleportRow = false
         Config.AutoSurgery           = false
+        Config.DebugSurgery          = false
         Config.AutoTake              = false
         Config.AutoBackpack          = false
         Config.AutoMagplant          = false
+        Config.LoopMagplantScan      = false
         Config.AutoJoinRunning       = false
         Config.AutoJoin              = false
     end
@@ -518,9 +543,11 @@ local function ResumeAllFeatures()
         Config.AutoClearWater        = PreviousConfig.AutoClearWater        or false
         Config.ClearWorldTeleportRow = PreviousConfig.ClearWorldTeleportRow or false
         Config.AutoSurgery           = PreviousConfig.AutoSurgery           or false
+        Config.DebugSurgery          = PreviousConfig.DebugSurgery          or false
         Config.AutoTake              = PreviousConfig.AutoTake              or false
         Config.AutoBackpack          = PreviousConfig.AutoBackpack          or false
         Config.AutoMagplant          = PreviousConfig.AutoMagplant          or false
+        Config.LoopMagplantScan      = PreviousConfig.LoopMagplantScan      or false
         Config.AutoJoinRunning       = PreviousConfig.AutoJoinRunning       or false
         Config.AutoJoin              = PreviousConfig.AutoJoin              or false
 
@@ -650,6 +677,8 @@ AddHook("OnVariant", "ModDevDetector", function(var)
 
         if isMod or isDev or isInvis then
             local role = isDev and "`4[DEVELOPER]" or (isMod and "`6[MODERATOR]" or "`b[INVISIBLE STAFF]")
+            Log("`4[MOD DETECTED] `0" .. role .. " detected: `e" .. name .. "`0 (UID: `b" .. userid .. "`0). Pausing all features.")
+            ReportScriptError("Security Detector", role .. " detected entering world: " .. name .. "! All features paused.")
             PauseAllFeatures("ALL FEATURES PAUSED! " .. role .. "`0 detected entering world: `e" .. name)
             modDetected = true
             Run = false
@@ -830,6 +859,7 @@ local function CheckBackpack()
                     failedStashCounts[id] = (failedStashCounts[id] or 0) + 1
                     if failedStashCounts[id] >= 3 then
                         Log("`4[Auto Backpack] Storage full or Item ID `b" .. tostring(id) .. "`4 cannot be stashed! Disabling Auto Backpack to prevent lag.`0")
+                        ReportScriptError("Auto Backpack", "Storage full or Item ID " .. tostring(id) .. " cannot be stashed! Auto Backpack disabled.")
                         Config.AutoBackpack = false
                         return
                     end
@@ -1279,7 +1309,7 @@ function ScanMagplantInfo()
             if not magplantDialogReceived then
                 Log("`4[Magplant Scan] No dialog response from magplant at (" .. m.x .. "," .. m.y .. ") — skipping.`0")
             end
-            Sleep(300)  -- brief pause between magplants
+            Sleep(Config.MagplantScanDelay or 100)  -- delay per magplant scanned
         end
         magplantScanInfoRunning = false
         Log("`2[Magplant Scan] Deep scan complete!`0")
@@ -1618,7 +1648,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v1.77", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v1.81", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -1666,6 +1696,9 @@ local function ShowUI()
             ImGui.SameLine()
             local cSB, vSB = ImGui.Checkbox("Auto Buy Surg Kits", Config.AutoSurgeryBuy)
             if cSB then Config.AutoSurgeryBuy = vSB end
+
+            local cDS, vDS = ImGui.Checkbox("Enable Surgery Debugger (Webhook Log)", Config.DebugSurgery)
+            if cDS then Config.DebugSurgery = vDS end
 
             local cSD, vSD = ImGui.InputInt("Surgery Packet Delay (ms)", Config.SurgeryDelay)
             if cSD then Config.SurgeryDelay = math.max(100, vSD) end
@@ -2116,8 +2149,17 @@ local function ShowUI()
                 ScanMagplants()
             end
 
-            local cD, vD = ImGui.InputInt("Delay (ms)", Config.MagplantDelay)
+            local cD, vD = ImGui.InputInt("Retrieve Delay (ms)", Config.MagplantDelay)
             if cD then Config.MagplantDelay = math.max(100, vD) end
+
+            ImGui.Separator()
+            local cLMS, vLMS = ConfigCheckbox("Enable Loop Scan Info", "LoopMagplantScan")
+
+            local cMSD, vMSD = ImGui.InputInt("Scan Delay per Magplant (ms)", Config.MagplantScanDelay)
+            if cMSD then Config.MagplantScanDelay = math.max(10, vMSD) end
+
+            local cMLD, vMLD = ImGui.InputInt("Loop Scan Delay (ms)", Config.MagplantLoopDelay)
+            if cMLD then Config.MagplantLoopDelay = math.max(10, vMLD) end
 
             -- Buttons row
             if ImGui.Button("Rescan World") then
@@ -2127,7 +2169,7 @@ local function ShowUI()
             if magplantScanInfoRunning then
                 ImGui.Text("`9Scanning info...`0")
             else
-                if ImGui.Button("Scan Item Info") then
+                if ImGui.Button("Scan Item Info (Single Pass)") then
                     pendingScanInfo = true
                 end
             end
@@ -2222,6 +2264,34 @@ AddHook("OnSendPacket", "SafePunchUIToggle", function(type, packet)
         return true
     end
     return false
+end)
+
+-- ============================================================
+-- LOOP MAGPLANT SCAN THREAD
+-- ============================================================
+SafeRunThread(function()
+    while currentSessionID == _G.SafePunchSessionID do
+        if Config.LoopMagplantScan and Run and not Paused then
+            if #MagplantsList == 0 then
+                ScanMagplants()
+            end
+
+            if #MagplantsList > 0 and not magplantScanInfoRunning then
+                ScanMagplantInfo()
+                -- Wait for current scan pass to finish
+                while magplantScanInfoRunning and Run and not Paused and Config.LoopMagplantScan do
+                    Sleep(100)
+                end
+                -- Delay between loop scan passes
+                local loopDelay = math.max(50, Config.MagplantLoopDelay or 500)
+                Sleep(loopDelay)
+            else
+                Sleep(200)
+            end
+        else
+            Sleep(200)
+        end
+    end
 end)
 
 -- ============================================================
@@ -2416,8 +2486,12 @@ local function SendSurg(toolID, toolName)
     RunThread(function()
         Sleep(delay)
         if not Config.AutoSurgery or Paused or not Run then return end
-        SendPacket(2, "action|dialog_return\ndialog_name|surgery\nbuttonClicked|tool" .. tostring(toolID))
+        local pkt = "action|dialog_return\ndialog_name|surgery\nbuttonClicked|tool" .. tostring(toolID)
+        SendPacket(2, pkt)
         Log("`9[AutoSurg] `0Used `2" .. (toolName or tostring(toolID)))
+        if Config.DebugSurgery then
+            SendToWebhook("Surgery Debugger (Action Sent)", "Tool Used: " .. tostring(toolName) .. " (tool" .. tostring(toolID) .. ")\nPacket: " .. pkt, 15105570, true)
+        end
     end)
 end
 
@@ -2594,6 +2668,12 @@ end)
 
 
 AddHook("OnSendPacket", "AutoSurgPack", function(type, packet)
+    if Config.DebugSurgery and type == 2 then
+        if packet:find("dialog_name|surgery") or packet:find("dialog_name|surge") or packet:find("dialog_name|hospital_bed") or packet:find("buttonClicked|tool") then
+            SendToWebhook("Surgery Debugger (SendPacket)", "type " .. type .. ":\n" .. tostring(packet), 15105570, true)
+        end
+    end
+
     if not Config.AutoSurgery then return false end
 
     -- /bp command: trigger surg kit purchase
@@ -2616,6 +2696,13 @@ AddHook("OnSendPacket", "AutoSurgPack", function(type, packet)
 end)
 
 AddHook("OnVariant", "AutoSurgHooks", function(var)
+    if Config.DebugSurgery and var[0] == "OnDialogRequest" and type(var[1]) == "string" then
+        local dlg = var[1]
+        if dlg:find("surgery") or dlg:find("hospital_bed") or dlg:find("surge_edit") or dlg:find("Anatomical") or dlg:find("tool12") or dlg:find("tool43") then
+            SendToWebhook("Surgery Debugger (Dialog Received)", dlg, 3447003, true)
+        end
+    end
+
     if not Config.AutoSurgery or Paused or not Run then return false end
 
     -- Patient left or surgery cancelled
@@ -2923,10 +3010,15 @@ local function ClearWorldStep()
             clearWY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)
         end
     else
-        Log("`2[Auto Clear World] `0Finished clearing world! Tiles skipped: " .. tostring(#clearWVisited or 0))
+        Log("`2[Auto Clear World] `0Finished clearing world! Transitioning to Auto Clear Water with 150ms delay...`0")
         Config.AutoClearWorld = false
         clearWX, clearWY = nil, nil
         clearWVisited = {}
+
+        -- Automatically activate Auto Clear Water with 150ms delay
+        Config.ClearDelay = 150
+        Config.AutoClearWater = true
+        waterCX, waterCY = nil, nil
     end
 end
 
@@ -3046,71 +3138,78 @@ local punchCount = 0
 
 -- Main loop execution guard
 while currentSessionID == _G.SafePunchSessionID and Run do
-    CheckHarvestGhostState()
+    local mainOk, mainErr = pcall(function()
+        CheckHarvestGhostState()
 
-    -- Process pending UI action requests (prevents yielding across C-call boundary in OnDraw)
-    if pendingGoToTarget then
-        local target = pendingGoToTarget
-        pendingGoToTarget = nil
-        GoToMagplant(target.mx, target.my)
-    end
-
-    if pendingScanInfo then
-        pendingScanInfo = false
-        ScanMagplantInfo()
-    end
-
-    if not Paused then
-        if not GetLocal() or not GetWorld() then
-            Sleep(500)
-        else
-            -- Check start position once world is loaded
-            if not startX then
-                startX = math.floor(GetLocal().pos.x / 32)
-                startY = math.floor(GetLocal().pos.y / 32)
-                Log("World detected: `e" .. GetWorld().name)
-            end
-
-            -- Determine the correct delay based on the active mode
-            local currentDelay = Config.PunchDelay
-
-            if Config.AutoClearWorld then
-                ClearWorldStep()
-                currentDelay = Config.ClearDelay
-            elseif Config.AutoClearWater then
-                ClearWaterStep()
-                currentDelay = Config.ClearDelay
-            elseif Config.AutoPlace then
-                AutoPlaceStep()
-                currentDelay = Config.PlaceDelay
-            elseif Config.AutoCreateFarm then
-                AutoCreateFarmStep()
-                currentDelay = Config.CreateFarmDelay
-            elseif Config.AutoPunchWorld then
-                AutoPunchWorldStep()
-                currentDelay = Config.PunchWorldDelay
-            elseif Config.AutoHarvest then
-                AutoHarvestStep()
-                currentDelay = Config.HarvestDelay
-            else
-                if Config.AutoPunch then
-                    PunchTile()
-                end
-            end
-            punchCount = punchCount + 1
-            
-            if Config.AutoTake and (punchCount % 10 == 0) then
-                CollectItems()
-            end
-
-            if Config.AutoBackpack and (punchCount % 20 == 0) then
-                CheckBackpack()
-            end
-            
-            Sleep(currentDelay)
+        -- Process pending UI action requests (prevents yielding across C-call boundary in OnDraw)
+        if pendingGoToTarget then
+            local target = pendingGoToTarget
+            pendingGoToTarget = nil
+            GoToMagplant(target.mx, target.my)
         end
-    else
-        Sleep(100)
+
+        if pendingScanInfo then
+            pendingScanInfo = false
+            ScanMagplantInfo()
+        end
+
+        if not Paused then
+            if not GetLocal() or not GetWorld() then
+                Sleep(500)
+            else
+                -- Check start position once world is loaded
+                if not startX then
+                    startX = math.floor(GetLocal().pos.x / 32)
+                    startY = math.floor(GetLocal().pos.y / 32)
+                    Log("World detected: `e" .. GetWorld().name)
+                end
+
+                -- Determine the correct delay based on the active mode
+                local currentDelay = Config.PunchDelay
+
+                if Config.AutoClearWorld then
+                    ClearWorldStep()
+                    currentDelay = Config.ClearDelay
+                elseif Config.AutoClearWater then
+                    ClearWaterStep()
+                    currentDelay = Config.ClearDelay
+                elseif Config.AutoPlace then
+                    AutoPlaceStep()
+                    currentDelay = Config.PlaceDelay
+                elseif Config.AutoCreateFarm then
+                    AutoCreateFarmStep()
+                    currentDelay = Config.PlaceDelay
+                elseif Config.AutoPunchWorld then
+                    AutoPunchWorldStep()
+                    currentDelay = Config.PunchWorldDelay
+                elseif Config.AutoHarvest then
+                    AutoHarvestStep()
+                    currentDelay = Config.HarvestDelay
+                else
+                    if Config.AutoPunch then
+                        PunchTile()
+                    end
+                end
+                punchCount = punchCount + 1
+                
+                if Config.AutoTake and (punchCount % 10 == 0) then
+                    CollectItems()
+                end
+
+                if Config.AutoBackpack and (punchCount % 20 == 0) then
+                    CheckBackpack()
+                end
+                
+                Sleep(currentDelay)
+            end
+        else
+            Sleep(100)
+        end
+    end)
+
+    if not mainOk then
+        ReportScriptError("Main Script Loop", mainErr)
+        Sleep(1000)
     end
 end
 
