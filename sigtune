@@ -882,6 +882,17 @@ local function IsInTakeList(id)
     return false
 end
 
+local failedObjectPickups = {}
+
+local function GetObjectKey(obj)
+    if not obj then return "" end
+    if obj.oid then return tostring(obj.oid) end
+    local px = (obj.pos and obj.pos.x) or 0
+    local py = (obj.pos and obj.pos.y) or 0
+    local id = obj.id or 0
+    return px .. "_" .. py .. "_" .. id
+end
+
 -- Helper function to calculate distance
 local function GetDistance(x1, y1, x2, y2)
     return math.sqrt((x2 - x1)^2 + (y2 - y1)^2)
@@ -896,37 +907,41 @@ local function CollectItems()
     local localPos = GetLocal().pos
 
     for _, obj in pairs(objs) do
-        local shouldTake = not Config.UseTakeList
-        if Config.UseTakeList and IsInTakeList(obj.id) then
-            shouldTake = true
-        end
-        if shouldTake then
-            local dx = localPos.x - obj.pos.x
-            local dy = localPos.y - obj.pos.y
-            obj.distSq = dx * dx + dy * dy
-            table.insert(validObjs, obj)
+        local key = GetObjectKey(obj)
+        local fails = failedObjectPickups[key] or 0
+        if fails < 3 then
+            local shouldTake = not Config.UseTakeList
+            if Config.UseTakeList and IsInTakeList(obj.id) then
+                shouldTake = true
+            end
+            if shouldTake then
+                local dx = localPos.x - obj.pos.x
+                local dy = localPos.y - obj.pos.y
+                obj.distSq = dx * dx + dy * dy
+                obj.key = key
+                table.insert(validObjs, obj)
+            end
         end
     end
+
+    if #validObjs == 0 then return end
 
     -- Sort by squared distance to player (closest first)
     table.sort(validObjs, function(a, b) return a.distSq < b.distSq end)
 
     local moved = false
     for _, obj in ipairs(validObjs) do
-        -- Abort immediately if a stranger enters while we are collecting
         if Paused then break end
 
         local objX = math.floor(obj.pos.x / 32)
         local objY = math.floor(obj.pos.y / 32)
         
-        -- Only move if it's not on our exact current tile
         local currPos = GetLocal().pos
         local currX = math.floor(currPos.x / 32)
         local currY = math.floor(currPos.y / 32)
         
         if currX ~= objX or currY ~= objY then
             if Config.TeleportToItems then
-                -- 0ms delay pathing (extremely fast walking, acts like teleport to server)
                 FindPath(objX, objY, 0)
                 Sleep(50)
             else
@@ -936,40 +951,57 @@ local function CollectItems()
             moved = true
         end
 
+        -- Check if item was successfully picked up
+        local postObjs = GetObjectList()
+        local stillExists = false
+        if postObjs then
+            for _, pObj in pairs(postObjs) do
+                if GetObjectKey(pObj) == obj.key then
+                    stillExists = true
+                    break
+                end
+            end
+        end
+
+        if stillExists then
+            failedObjectPickups[obj.key] = (failedObjectPickups[obj.key] or 0) + 1
+            if failedObjectPickups[obj.key] >= 3 then
+                Log("`4[Auto Take] Item at (" .. objX .. ", " .. objY .. ") uncollectable — skipping.`0")
+            end
+        end
+
         -- After picking up each item, check if backpack needs stashing
         if Config.AutoBackpack then
             CheckBackpack()
         end
     end
 
-    if moved and startX and startY then
-        -- Return to original position
-        if Config.TeleportToItems then
-            FindPath(startX, startY, 0)
-            Sleep(50)
-        else
-            FindPath(startX, startY, 100)
-            Sleep(300)
-        end
+    if moved and startX and startY and not Config.TeleportToItems then
+        FindPath(startX, startY, 100)
+        Sleep(200)
     end
 end
 
 local function CheckAutoClearWorldCleanup()
     if not autoClearWorldCleanupState then return end
 
-    -- Check remaining floating items in world
+    -- Check remaining collectable floating items in world
     local objs = GetObjectList()
     local remainingItems = 0
     if objs then
         for _, obj in pairs(objs) do
-            local shouldTake = not Config.UseTakeList or IsInTakeList(obj.id)
-            if shouldTake then
-                remainingItems = remainingItems + 1
+            local key = GetObjectKey(obj)
+            local fails = failedObjectPickups[key] or 0
+            if fails < 3 then
+                local shouldTake = not Config.UseTakeList or IsInTakeList(obj.id)
+                if shouldTake then
+                    remainingItems = remainingItems + 1
+                end
             end
         end
     end
 
-    -- If no remaining floating items left to collect
+    -- If no remaining valid floating items left to collect
     if remainingItems == 0 then
         -- Perform final backpack stash check
         CheckBackpack()
@@ -979,6 +1011,7 @@ local function CheckAutoClearWorldCleanup()
         Config.AutoTake        = false
         Config.AutoBackpack    = false
         Config.TeleportToItems = false
+        failedObjectPickups    = {}
 
         -- Send respawn packet and log completion
         SendPacket(2, "action|respawn")
