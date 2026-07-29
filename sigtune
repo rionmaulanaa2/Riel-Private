@@ -1,5 +1,5 @@
 -- ============================================================
--- AUTO PUNCH SAFE (v2.09): Punch tile (92, 26) using item ID 18
+-- AUTO PUNCH SAFE (v2.10): Punch tile (92, 26) using item ID 18
 -- Auto PAUSES when a non-whitelisted player is detected.
 -- Auto RESUMES when all non-whitelisted players leave.
 -- Whitelisted players are ignored — punch keeps going.
@@ -305,10 +305,34 @@ local function CheckHarvestGhostState()
     end
 end
 
+local ALL_HOOK_IDS = {
+    "DebugPacketLogger",
+    "DebugPacketRawLogger",
+    "DebugVariantLogger",
+    "GhostPlayerCleanupSend",
+    "GhostPlayerCleanupVariant",
+    "ModDevDetector",
+    "SafePunchUI",
+    "SafePunchUIToggle",
+    "SafePunchControl",
+    "AutoSurgPack",
+    "AutoSurgHooks",
+    "RecordPacketsHook",
+    "RecordRawHook"
+}
+
+local function RemoveHooks()
+    if type(RemoveHook) == "function" then
+        for _, id in ipairs(ALL_HOOK_IDS) do
+            pcall(RemoveHook, id)
+        end
+    end
+end
+
 _G.SafePunchCleanup = function()
     Run = false
     Paused = false
-    pcall(RemoveHooks)
+    RemoveHooks()
     LogToConsole("`0[`2SafePunch`0] `4Previous script instance and threads terminated cleanly.`0")
 end
 
@@ -1732,7 +1756,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v2.09", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v2.10", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -1743,7 +1767,24 @@ local function ShowUI()
         if ImGui.Button("Kill Threads") then
             _G.SafePunchSessionID = (_G.SafePunchSessionID or 0) + 1
             currentSessionID = _G.SafePunchSessionID
-            Log("`4[Kill Threads] `0Terminated all background threads cleanly! Script & UI remain active.`0")
+
+            Config.LoopMagplantScan = false
+            Config.AutoJoinRunning  = false
+            debugWebhookQueue       = {}
+
+            RemoveHooks()
+
+            AddHook("OnDraw", "SafePunchUI", ShowUI)
+            AddHook("OnSendPacket", "SafePunchUIToggle", function(type, packet)
+                if type == 3 and packet:find("action|input\n|text|/ui") then
+                    guiOpen = not guiOpen
+                    Log("`9[UI] Toggle window visibility -> " .. tostring(guiOpen))
+                    return true
+                end
+                return false
+            end)
+
+            Log("`4[Kill Threads] `0Terminated all background loops & cleared duplicate hooks! Script & UI active.`0")
         end
         ImGui.SameLine()
         if ImGui.Button("Get Server Info") then
@@ -3361,7 +3402,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-local SCRIPT_VERSION = "v2.09"
+local SCRIPT_VERSION = "v2.10"
 
 Log("`2SafePunch " .. SCRIPT_VERSION .. " loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
