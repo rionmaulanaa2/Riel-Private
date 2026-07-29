@@ -1,5 +1,5 @@
 -- ============================================================
--- AUTO PUNCH SAFE (v2.07): Punch tile (92, 26) using item ID 18
+-- AUTO PUNCH SAFE (v2.08): Punch tile (92, 26) using item ID 18
 -- Auto PAUSES when a non-whitelisted player is detected.
 -- Auto RESUMES when all non-whitelisted players leave.
 -- Whitelisted players are ignored — punch keeps going.
@@ -254,12 +254,33 @@ local function Log(msg)
     LogToConsole("`0[`2SafePunch`0] `9" .. tostring(msg))
 end
 
+local function SafeGetTile(x, y)
+    if not GetTile then return { fg = 0, bg = 0, flags = 0 } end
+    local ok, tile = pcall(GetTile, x, y)
+    if ok and type(tile) == "table" then
+        return tile
+    end
+    return { fg = 0, bg = 0, flags = 0 }
+end
+
 local function ReportScriptError(errSource, errMessage)
     local errText = "`4[Script Error] " .. tostring(errSource) .. ": " .. tostring(errMessage) .. "`0"
     Log(errText)
-    if SendToWebhook then
+    if Config.DebugWebhookURL and Config.DebugWebhookURL ~= "" and MakeRequest then
         local desc = "Source: **" .. tostring(errSource) .. "**\nError: ```\n" .. tostring(errMessage) .. "\n```"
-        SendToWebhook("Script Error Alert", desc, 16711680, true)
+        local escDesc = desc:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("\r", ""):gsub("\n", "\\n")
+        local world   = GetWorld and GetWorld() or nil
+        local local_  = GetLocal and GetLocal() or nil
+        local worldName  = world  and world.name  or "Unknown"
+        local playerName = local_ and local_.name or "Unknown"
+        local body = '{"embeds":[{"title":"Script Error Alert","description":"' .. escDesc ..
+                     '","color":16711680,"footer":{"text":"Player: ' .. playerName ..
+                     ' | World: ' .. worldName .. '"}}]}'
+        RunThread(function()
+            pcall(function()
+                MakeRequest(Config.DebugWebhookURL, "POST", {["Content-Type"]="application/json"}, body)
+            end)
+        end)
     end
 end
 
@@ -1630,8 +1651,8 @@ local function AutoHarvestStep()
             py   = harvestY
         })
 
-        local tile = GetTile(targetX, harvestY)
-        if not tile or (tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID) then
+        local tile = SafeGetTile(targetX, harvestY)
+        if not tile or tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID then
             SendPacketRaw(false, {
                 type  = 3,
                 value = 18,
@@ -1699,7 +1720,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v2.07", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v2.08", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -3322,7 +3343,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-local SCRIPT_VERSION = "v2.07"
+local SCRIPT_VERSION = "v2.08"
 
 Log("`2SafePunch " .. SCRIPT_VERSION .. " loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
