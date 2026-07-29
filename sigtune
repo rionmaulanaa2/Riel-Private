@@ -1,5 +1,5 @@
 -- ============================================================
--- AUTO PUNCH SAFE (v2.12): Punch tile (92, 26) using item ID 18
+-- AUTO PUNCH SAFE (v2.13): Punch tile (92, 26) using item ID 18
 -- Auto PAUSES when a non-whitelisted player is detected.
 -- Auto RESUMES when all non-whitelisted players leave.
 -- Whitelisted players are ignored — punch keeps going.
@@ -1820,7 +1820,7 @@ local function ShowUI()
         local local_ = GetLocal()
 
         -- Always render window safely without auto-closing when paused
-        if ImGui.Begin("SafePunch v2.12", true) then
+        if ImGui.Begin("SafePunch v2.13", true) then
 
         -- Status bar
         local statusTxt = Paused and "`4STATUS: PAUSED (stranger in world)`0" or "`2STATUS: RUNNING`0"
@@ -3469,7 +3469,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-local SCRIPT_VERSION = "v2.12"
+local SCRIPT_VERSION = "v2.13"
 
 Log("`2SafePunch " .. SCRIPT_VERSION .. " loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
