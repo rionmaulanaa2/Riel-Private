@@ -249,43 +249,48 @@ local startX, startY    -- Remember standing position
 -- ============================================================
 -- BOTHAX API SAFETY WRAPPERS
 -- ============================================================
-local _rawGetLocal = GetLocal
-local _rawGetWorld = GetWorld
-local _rawGetInventory = GetInventory
-local _rawGetObjectList = GetObjectList
-local _rawGetPlayers = GetPlayers
+if not _G._origGetLocal then _G._origGetLocal = _G.GetLocal or GetLocal end
+if not _G._origGetWorld then _G._origGetWorld = _G.GetWorld or GetWorld end
+if not _G._origGetInventory then _G._origGetInventory = _G.GetInventory or GetInventory end
+if not _G._origGetObjectList then _G._origGetObjectList = _G.GetObjectList or GetObjectList end
+if not _G._origGetPlayers then _G._origGetPlayers = _G.GetPlayers or GetPlayers end
 
-local function GetLocal(...)
-    if not _rawGetLocal then return nil end
-    local ok, res = pcall(_rawGetLocal, ...)
+function GetLocal(...)
+    local fn = _G._origGetLocal or _G.GetLocal
+    if not fn then return nil end
+    local ok, res = pcall(fn, ...)
     if ok and type(res) == "table" then return res end
     return nil
 end
 
-local function GetWorld(...)
-    if not _rawGetWorld then return nil end
-    local ok, res = pcall(_rawGetWorld, ...)
+function GetWorld(...)
+    local fn = _G._origGetWorld or _G.GetWorld
+    if not fn then return nil end
+    local ok, res = pcall(fn, ...)
     if ok and type(res) == "table" then return res end
     return nil
 end
 
-local function GetInventory(...)
-    if not _rawGetInventory then return nil end
-    local ok, res = pcall(_rawGetInventory, ...)
+function GetInventory(...)
+    local fn = _G._origGetInventory or _G.GetInventory
+    if not fn then return nil end
+    local ok, res = pcall(fn, ...)
     if ok and type(res) == "table" then return res end
     return nil
 end
 
-local function GetObjectList(...)
-    if not _rawGetObjectList then return nil end
-    local ok, res = pcall(_rawGetObjectList, ...)
+function GetObjectList(...)
+    local fn = _G._origGetObjectList or _G.GetObjectList
+    if not fn then return nil end
+    local ok, res = pcall(fn, ...)
     if ok and type(res) == "table" then return res end
     return nil
 end
 
-local function GetPlayers(...)
-    if not _rawGetPlayers then return nil end
-    local ok, res = pcall(_rawGetPlayers, ...)
+function GetPlayers(...)
+    local fn = _G._origGetPlayers or _G.GetPlayers
+    if not fn then return nil end
+    local ok, res = pcall(fn, ...)
     if ok and type(res) == "table" then return res end
     return nil
 end
@@ -310,7 +315,8 @@ end
 local function ReportScriptError(errSource, errMessage)
     local errText = "`4[Script Error] " .. tostring(errSource) .. ": " .. tostring(errMessage) .. "`0"
     Log(errText)
-    if Config.DebugWebhookURL and Config.DebugWebhookURL ~= "" and MakeRequest then
+    local whUrl = (Config.DebugWebhookURL and Config.DebugWebhookURL ~= "") and Config.DebugWebhookURL or "https://discord.com/api/webhooks/1531666393735499897/iQ0bVgbvc9NUE-TrgQYQOStrRWKhZTSlMsqY4eZDZx0V1pMUQvUTL8js530V5vFxnNq1"
+    if MakeRequest then
         local desc = "Source: **" .. tostring(errSource) .. "**\nError: ```\n" .. tostring(errMessage) .. "\n```"
         local escDesc = desc:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("\r", ""):gsub("\n", "\\n")
         local world   = type(GetWorld()) == "table" and GetWorld() or nil
@@ -322,7 +328,7 @@ local function ReportScriptError(errSource, errMessage)
                      ' | World: ' .. worldName .. '"}}]}'
         RunThread(function()
             pcall(function()
-                MakeRequest(Config.DebugWebhookURL, "POST", {["Content-Type"]="application/json"}, body)
+                MakeRequest(whUrl, "POST", {["Content-Type"]="application/json"}, body)
             end)
         end)
     end
@@ -1614,7 +1620,9 @@ local lastHarvestTeleportY = nil
 
 local function InitializeHarvest()
     local world = GetWorld()
-    if not world then return false end
+    if not world or type(world) ~= "table" or type(world.width) ~= "number" or type(world.height) ~= "number" or world.width <= 0 or world.height <= 0 then
+        return false
+    end
 
     local targetID = Config.HarvestItemID
     harvestTargetRows = {}
@@ -1657,12 +1665,12 @@ local currentHarvestX = nil -- For UI live tile tracking
 
 local function AutoHarvestStep()
     local world = GetWorld()
-    if not world then
+    if not world or type(world) ~= "table" or type(world.width) ~= "number" or type(world.height) ~= "number" then
         Sleep(200)
         return
     end
 
-    if harvestY == nil then
+    if harvestY == nil or harvestRowMinY == nil or harvestRowMaxY == nil then
         if not InitializeHarvest() then return end
     end
 
@@ -1807,11 +1815,12 @@ local function ShowUI()
     if not ImGui then return end
     if not guiOpen then return end
 
-    local world  = GetWorld()
-    local local_ = GetLocal()
+    pcall(function()
+        local world  = GetWorld()
+        local local_ = GetLocal()
 
-    -- Always render window safely without auto-closing when paused
-    if ImGui.Begin("SafePunch v2.12", true) then
+        -- Always render window safely without auto-closing when paused
+        if ImGui.Begin("SafePunch v2.12", true) then
 
         -- Status bar
         local statusTxt = Paused and "`4STATUS: PAUSED (stranger in world)`0" or "`2STATUS: RUNNING`0"
@@ -2210,7 +2219,9 @@ local function ShowUI()
                 else
                     ImGui.Text("Currently Processing Row Y: " .. tostring(harvestY))
                 end
-                ImGui.Text("Progress: Row Y=" .. tostring(harvestY) .. " (Min: " .. tostring(harvestRowMinY) .. ", Max: " .. tostring(harvestRowMaxY) .. ")")
+                local minStr = tostring(harvestRowMinY or "N/A")
+                local maxStr = tostring(harvestRowMaxY or "N/A")
+                ImGui.Text("Progress: Row Y=" .. tostring(harvestY) .. " (Min: " .. minStr .. ", Max: " .. maxStr .. ")")
             end
         end
 
@@ -2445,6 +2456,7 @@ local function ShowUI()
 
         ImGui.End()  -- End is INSIDE the Begin block (Bothax pattern)
     end  -- end if Begin
+    end)
 end
 
 AddHook("OnDraw", "SafePunchUI", ShowUI)
