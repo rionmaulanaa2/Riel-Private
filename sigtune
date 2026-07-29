@@ -1,5 +1,5 @@
 -- ============================================================
--- AUTO PUNCH SAFE (v2.08): Punch tile (92, 26) using item ID 18
+-- AUTO PUNCH SAFE (v2.09): Punch tile (92, 26) using item ID 18
 -- Auto PAUSES when a non-whitelisted player is detected.
 -- Auto RESUMES when all non-whitelisted players leave.
 -- Whitelisted players are ignored — punch keeps going.
@@ -837,10 +837,16 @@ end
 -- Helper function to check inventory count of an item
 local function GetItemCount(id)
     local inv = GetInventory()
-    if not inv then return 0 end
+    if not inv or type(inv) ~= "table" then return 0 end
     for _, itm in pairs(inv) do
-        if itm.id == id then
-            return itm.amount
+        if type(itm) == "table" then
+            local itmId = tonumber(itm.id or itm.itemid or itm.itemID or 0)
+            local itmAmount = tonumber(itm.amount or itm.count or itm.itemCount or 0)
+            if itmId == tonumber(id) then
+                return itmAmount
+            end
+        elseif type(itm) == "number" and itm == tonumber(id) then
+            return 1
         end
     end
     return 0
@@ -913,25 +919,29 @@ end
 -- Collect floating items and return to start position
 local function CollectItems()
     local objs = GetObjectList()
-    if not objs then return end
+    if not objs or type(objs) ~= "table" then return end
 
     local validObjs = {}
-    local localPos = GetLocal().pos
+    local local_ = GetLocal()
+    local localPos = (local_ and type(local_.pos) == "table") and local_.pos or nil
+    if not localPos then return end
 
     for _, obj in pairs(objs) do
-        local key = GetObjectKey(obj)
-        local fails = failedObjectPickups[key] or 0
-        if fails < 3 then
-            local shouldTake = not Config.UseTakeList
-            if Config.UseTakeList and IsInTakeList(obj.id) then
-                shouldTake = true
-            end
-            if shouldTake then
-                local dx = localPos.x - obj.pos.x
-                local dy = localPos.y - obj.pos.y
-                obj.distSq = dx * dx + dy * dy
-                obj.key = key
-                table.insert(validObjs, obj)
+        if type(obj) == "table" and type(obj.pos) == "table" then
+            local key = GetObjectKey(obj)
+            local fails = failedObjectPickups[key] or 0
+            if fails < 3 then
+                local shouldTake = not Config.UseTakeList
+                if Config.UseTakeList and IsInTakeList(obj.id) then
+                    shouldTake = true
+                end
+                if shouldTake then
+                    local dx = localPos.x - obj.pos.x
+                    local dy = localPos.y - obj.pos.y
+                    obj.distSq = dx * dx + dy * dy
+                    obj.key = key
+                    table.insert(validObjs, obj)
+                end
             end
         end
     end
@@ -1608,15 +1618,17 @@ local function AutoHarvestStep()
         return
     end
 
-    -- Fast-forward harvestXIndex over tiles that exist and are confirmed empty
-    while xList and harvestXIndex <= #xList do
+    -- Fast-forward harvestXIndex over tiles that exist and are confirmed empty (max 15 per tick for smoothness)
+    local skippedCount = 0
+    while xList and harvestXIndex <= #xList and skippedCount < 15 do
         local tx = xList[harvestXIndex]
-        local tile = GetTile(tx, harvestY)
+        local tile = SafeGetTile(tx, harvestY)
         -- If tile is nil (unloaded/faraway) or tile contains target item, process it!
-        if not tile or (tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID) then
+        if not tile or tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID then
             break
         end
         harvestXIndex = harvestXIndex + 1 -- Only skip if tile is confirmed empty
+        skippedCount = skippedCount + 1
     end
 
     -- Check again if harvestXIndex exceeded xList after fast-forwarding
@@ -1720,7 +1732,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v2.08", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v2.09", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -1728,6 +1740,12 @@ local function ShowUI()
         ImGui.Text("World: " .. (world and world.name or "N/A") .. "  |  Player: " .. (local_ and local_.name or "N/A"))
         ImGui.Separator()
 
+        if ImGui.Button("Kill Threads") then
+            _G.SafePunchSessionID = (_G.SafePunchSessionID or 0) + 1
+            currentSessionID = _G.SafePunchSessionID
+            Log("`4[Kill Threads] `0Terminated all background threads cleanly! Script & UI remain active.`0")
+        end
+        ImGui.SameLine()
         if ImGui.Button("Get Server Info") then
             local client = type(GetClient) == "function" and GetClient() or {}
             
@@ -3343,7 +3361,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-local SCRIPT_VERSION = "v2.08"
+local SCRIPT_VERSION = "v2.09"
 
 Log("`2SafePunch " .. SCRIPT_VERSION .. " loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
