@@ -1,5 +1,5 @@
 -- ============================================================
--- AUTO PUNCH SAFE (v2.00): Punch tile (92, 26) using item ID 18
+-- AUTO PUNCH SAFE (v2.03): Punch tile (92, 26) using item ID 18
 -- Auto PAUSES when a non-whitelisted player is detected.
 -- Auto RESUMES when all non-whitelisted players leave.
 -- Whitelisted players are ignored — punch keeps going.
@@ -60,7 +60,7 @@ local Config = {
     DebugSendPacket      = false,
     DebugSendPacketRaw   = false,
     DebugVariant         = false,
-    DebugWebhookURL  = "https://discord.com/api/webhooks/1529551010459029565/Nsz5X3y8ibL0jdWeDWX1jLiTPXfb_yA9FVFLuUTY6ns-ZNdBUmBKhmwQfwe5pIdW4N4n",    -- Your Discord webhook URL
+    DebugWebhookURL  = "https://discord.com/api/webhooks/1531666393735499897/iQ0bVgbvc9NUE-TrgQYQOStrRWKhZTSlMsqY4eZDZx0V1pMUQvUTL8js530V5vFxnNq1",    -- Your Discord webhook URL
     DebugRateLimit   = 2000,  -- Min ms between webhook messages
 
     -- Whitelisted User IDs: players with these UIDs will NOT trigger a pause.
@@ -1566,7 +1566,10 @@ end
 
 local function AutoHarvestStep()
     local world = GetWorld()
-    if not world then return end
+    if not world or not GetTile(0, 0) then
+        Sleep(200)
+        return
+    end
 
     if harvestY == nil then
         if not InitializeHarvest() then return end
@@ -1615,19 +1618,21 @@ local function AutoHarvestStep()
         end
     end
 
-    -- Teleport player to x=0 of current row if row changed
+    -- Row Progress & Anti-Move Position Lock: Enforce player position at X=0, Y=harvestY
     if lastHarvestTeleportY ~= harvestY then
         lastHarvestTeleportY = harvestY
-        SendPacketRaw(false, {
-            type = 0,
-            x    = 0,
-            y    = harvestY * 32,
-            px   = 0,
-            py   = 0
-        })
-        Log("`2[Auto Harvest] Teleported to X=0 row Y: " .. harvestY)
-        Sleep(150)
+        local range = math.max(1, harvestRowMaxY - harvestRowMinY)
+        local progress = math.floor((math.abs(harvestY - harvestRowMinY) / range) * 100)
+        Log("`2[Auto Harvest] `0Harvesting Row Y: `b" .. harvestY .. "/" .. harvestRowMaxY .. " `0(" .. progress .. "%) `9[Locked at X=0]`0")
     end
+
+    SendPacketRaw(false, {
+        type = 0,
+        x    = 0,
+        y    = harvestY * 32,
+        px   = 0,
+        py   = harvestY
+    })
 
     local xList = harvestTargetRows[harvestY]
     local targetX = xList and xList[harvestXIndex]
@@ -1641,7 +1646,7 @@ local function AutoHarvestStep()
                 value = 18,
                 px    = targetX,
                 py    = harvestY,
-                x     = targetX * 32,
+                x     = 0,
                 y     = harvestY * 32
             })
         end
@@ -1706,7 +1711,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v2.00", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v2.03", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -3324,9 +3329,16 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-Log("`2SafePunch v2.00 loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
+local SCRIPT_VERSION = "v2.03"
+
+Log("`2SafePunch " .. SCRIPT_VERSION .. " loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
 Log("Type `4/stop`9 to stop the script.")
+
+-- Send startup notification to Discord Webhook
+if SendToWebhook then
+    SendToWebhook("Script Started", "script start version " .. SCRIPT_VERSION, 3447003, true)
+end
 
 local punchCount = 0
 
