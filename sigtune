@@ -247,6 +247,50 @@ local lastPlayers  = {}  -- Track previous player list (netid -> name)
 local startX, startY    -- Remember standing position
 
 -- ============================================================
+-- BOTHAX API SAFETY WRAPPERS
+-- ============================================================
+local _rawGetLocal = GetLocal
+local _rawGetWorld = GetWorld
+local _rawGetInventory = GetInventory
+local _rawGetObjectList = GetObjectList
+local _rawGetPlayers = GetPlayers
+
+local function GetLocal(...)
+    if not _rawGetLocal then return nil end
+    local ok, res = pcall(_rawGetLocal, ...)
+    if ok and type(res) == "table" then return res end
+    return nil
+end
+
+local function GetWorld(...)
+    if not _rawGetWorld then return nil end
+    local ok, res = pcall(_rawGetWorld, ...)
+    if ok and type(res) == "table" then return res end
+    return nil
+end
+
+local function GetInventory(...)
+    if not _rawGetInventory then return nil end
+    local ok, res = pcall(_rawGetInventory, ...)
+    if ok and type(res) == "table" then return res end
+    return nil
+end
+
+local function GetObjectList(...)
+    if not _rawGetObjectList then return nil end
+    local ok, res = pcall(_rawGetObjectList, ...)
+    if ok and type(res) == "table" then return res end
+    return nil
+end
+
+local function GetPlayers(...)
+    if not _rawGetPlayers then return nil end
+    local ok, res = pcall(_rawGetPlayers, ...)
+    if ok and type(res) == "table" then return res end
+    return nil
+end
+
+-- ============================================================
 -- UTILITIES & LOGGING
 -- ============================================================
 
