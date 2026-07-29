@@ -1,5 +1,5 @@
 -- ============================================================
--- AUTO PUNCH SAFE (v2.03): Punch tile (92, 26) using item ID 18
+-- AUTO PUNCH SAFE (v2.04): Punch tile (92, 26) using item ID 18
 -- Auto PAUSES when a non-whitelisted player is detected.
 -- Auto RESUMES when all non-whitelisted players leave.
 -- Whitelisted players are ignored — punch keeps going.
@@ -246,6 +246,23 @@ local Paused       = false
 local lastPlayers  = {}  -- Track previous player list (netid -> name)
 local startX, startY    -- Remember standing position
 
+-- ============================================================
+-- UTILITIES & LOGGING
+-- ============================================================
+
+local function Log(msg)
+    LogToConsole("`0[`2SafePunch`0] `9" .. tostring(msg))
+end
+
+local function ReportScriptError(errSource, errMessage)
+    local errText = "`4[Script Error] " .. tostring(errSource) .. ": " .. tostring(errMessage) .. "`0"
+    Log(errText)
+    if SendToWebhook then
+        local desc = "Source: **" .. tostring(errSource) .. "**\nError: ```\n" .. tostring(errMessage) .. "\n```"
+        SendToWebhook("Script Error Alert", desc, 16711680, true)
+    end
+end
+
 local modDetected  = false   -- True if a mod/dev was detected invisibly
 local whitelistInput = ""   -- UI text input buffer for adding whitelist UIDs
 local manualGrowID = ""     -- UI text input buffer for manual account creation
@@ -272,23 +289,6 @@ _G.SafePunchCleanup = function()
     Paused = false
     pcall(RemoveHooks)
     LogToConsole("`0[`2SafePunch`0] `4Previous script instance and threads terminated cleanly.`0")
-end
-
--- ============================================================
--- UTILITIES
--- ============================================================
-
-local function Log(msg)
-    LogToConsole("`0[`2SafePunch`0] `9" .. tostring(msg))
-end
-
-local function ReportScriptError(errSource, errMessage)
-    local errText = "`4[Script Error] " .. tostring(errSource) .. ": " .. tostring(errMessage) .. "`0"
-    Log(errText)
-    if SendToWebhook then
-        local desc = "Source: **" .. tostring(errSource) .. "**\nError: ```\n" .. tostring(errMessage) .. "\n```"
-        SendToWebhook("Script Error Alert", desc, 16711680, true)
-    end
 end
 
 local function SafeRunThread(fn)
@@ -1711,7 +1711,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v2.03", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v2.04", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -3329,7 +3329,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-local SCRIPT_VERSION = "v2.03"
+local SCRIPT_VERSION = "v2.04"
 
 Log("`2SafePunch " .. SCRIPT_VERSION .. " loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
