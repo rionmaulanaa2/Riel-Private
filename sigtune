@@ -1,5 +1,5 @@
 -- ============================================================
--- AUTO PUNCH SAFE (v2.06): Punch tile (92, 26) using item ID 18
+-- AUTO PUNCH SAFE (v2.07): Punch tile (92, 26) using item ID 18
 -- Auto PAUSES when a non-whitelisted player is detected.
 -- Auto RESUMES when all non-whitelisted players leave.
 -- Whitelisted players are ignored — punch keeps going.
@@ -1542,6 +1542,8 @@ local function InitializeHarvest()
     return true
 end
 
+local currentHarvestX = nil -- For UI live tile tracking
+
 local function AutoHarvestStep()
     local world = GetWorld()
     if not world or not GetTile(0, 0) then
@@ -1559,6 +1561,7 @@ local function AutoHarvestStep()
             Log("`2[Auto Harvest] `0Finished harvesting all target items!")
             Config.AutoHarvest = false
             harvestY = nil
+            currentHarvestX = nil
             return
         end
     else
@@ -1566,6 +1569,7 @@ local function AutoHarvestStep()
             Log("`2[Auto Harvest] `0Finished harvesting all target items!")
             Config.AutoHarvest = false
             harvestY = nil
+            currentHarvestX = nil
             return
         end
     end
@@ -1605,24 +1609,27 @@ local function AutoHarvestStep()
         return
     end
 
-    -- Log row progress & enforce anti-move position lock at X=0, Y=harvestY
+    -- Log row progress on row change
     if lastHarvestTeleportY ~= harvestY then
         lastHarvestTeleportY = harvestY
         local range = math.max(1, harvestRowMaxY - harvestRowMinY)
         local progress = math.floor((math.abs(harvestY - harvestRowMinY) / range) * 100)
-        Log("`2[Auto Harvest] `0Harvesting Row Y: `b" .. harvestY .. "/" .. harvestRowMaxY .. " `0(" .. progress .. "%) `9[Locked at X=0]`0")
+        Log("`2[Auto Harvest] `0Harvesting Row Y: `b" .. harvestY .. "/" .. harvestRowMaxY .. " `0(" .. progress .. "%)`0")
     end
-
-    SendPacketRaw(false, {
-        type = 0,
-        x    = 0,
-        y    = harvestY * 32,
-        px   = 0,
-        py   = harvestY
-    })
 
     local targetX = xList[harvestXIndex]
     if targetX then
+        currentHarvestX = targetX
+
+        -- Teleport player position to target tile coordinate for valid 0-tile harvest range
+        SendPacketRaw(false, {
+            type = 0,
+            x    = targetX * 32,
+            y    = harvestY * 32,
+            px   = targetX,
+            py   = harvestY
+        })
+
         local tile = GetTile(targetX, harvestY)
         if not tile or (tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID) then
             SendPacketRaw(false, {
@@ -1630,7 +1637,7 @@ local function AutoHarvestStep()
                 value = 18,
                 px    = targetX,
                 py    = harvestY,
-                x     = 0,
+                x     = targetX * 32,
                 y     = harvestY * 32
             })
         end
@@ -1692,7 +1699,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v2.06", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v2.07", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -2061,6 +2068,11 @@ local function ShowUI()
             end
 
             if harvestY ~= nil then
+                if currentHarvestX ~= nil then
+                    ImGui.TextColored(0.2, 0.9, 0.3, 1.0, "Currently Harvesting Tile: X=" .. tostring(currentHarvestX) .. ", Y=" .. tostring(harvestY))
+                else
+                    ImGui.Text("Currently Processing Row Y: " .. tostring(harvestY))
+                end
                 ImGui.Text("Progress: Row Y=" .. tostring(harvestY) .. " (Min: " .. tostring(harvestRowMinY) .. ", Max: " .. tostring(harvestRowMaxY) .. ")")
             end
         end
@@ -3310,7 +3322,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-local SCRIPT_VERSION = "v2.06"
+local SCRIPT_VERSION = "v2.07"
 
 Log("`2SafePunch " .. SCRIPT_VERSION .. " loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
