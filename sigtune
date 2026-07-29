@@ -1,5 +1,5 @@
 -- ============================================================
--- AUTO PUNCH SAFE (v2.05): Punch tile (92, 26) using item ID 18
+-- AUTO PUNCH SAFE (v2.06): Punch tile (92, 26) using item ID 18
 -- Auto PAUSES when a non-whitelisted player is detected.
 -- Auto RESUMES when all non-whitelisted players leave.
 -- Whitelisted players are ignored — punch keeps going.
@@ -1507,45 +1507,23 @@ local function InitializeHarvest()
 
     local targetID = Config.HarvestItemID
     harvestTargetRows = {}
-    local minY, maxY = nil, nil
+    local minY = 0
+    local maxY = world.height - 1
 
-    -- Fast 2D scan using robust GetTile(x, y)
+    -- Map ALL valid X positions (0 to world.width - 1) for every row Y
     for y = 0, world.height - 1 do
+        harvestTargetRows[y] = {}
         for x = 0, world.width - 1 do
-            local tile = GetTile(x, y)
-            if tile and (tile.fg == targetID or tile.bg == targetID) then
-                local isValidX = false
-                if Config.HarvestStep == 3 then
-                    if x == 0 or x == 1 or ((x - 1) % 3 == 0) then
-                        isValidX = true
-                    end
-                else
-                    isValidX = true
-                end
-
-                if isValidX then
-                    if not harvestTargetRows[y] then
-                        harvestTargetRows[y] = {}
-                    end
-                    table.insert(harvestTargetRows[y], x)
-
-                    if minY == nil or y < minY then minY = y end
-                    if maxY == nil or y > maxY then maxY = y end
+            local isValidX = true
+            if Config.HarvestStep == 3 then
+                if not (x == 0 or x == 1 or ((x - 1) % 3 == 0)) then
+                    isValidX = false
                 end
             end
+            if isValidX then
+                table.insert(harvestTargetRows[y], x)
+            end
         end
-    end
-
-    if not minY or not maxY then
-        Log("`4[Auto Harvest] Target Item ID (" .. tostring(Config.HarvestItemID) .. ") not found in world!`0")
-        Config.AutoHarvest = false
-        harvestY = nil
-        return false
-    end
-
-    -- Sort X coordinates ascending per row
-    for y, xList in pairs(harvestTargetRows) do
-        table.sort(xList)
     end
 
     harvestRowMinY = minY
@@ -1560,7 +1538,7 @@ local function InitializeHarvest()
     harvestXIndex = 1
     lastHarvestTeleportY = nil
 
-    Log("`9[Auto Harvest] `0Initialized! Target ID: " .. Config.HarvestItemID .. ", Range Y: " .. minY .. " -> " .. maxY .. ", Dir: " .. Config.HarvestDirection .. ", Step: " .. Config.HarvestStep .. " far")
+    Log("`9[Auto Harvest] `0Initialized! Row Range Y: " .. minY .. " -> " .. maxY .. ", Dir: " .. Config.HarvestDirection .. ", Step: " .. Config.HarvestStep .. " far (Full Row 0 to " .. (world.width - 1) .. " X)")
     return true
 end
 
@@ -1592,53 +1570,42 @@ local function AutoHarvestStep()
         end
     end
 
-    -- Fast-forward harvestXIndex to next active target on row harvestY
     local xList = harvestTargetRows[harvestY]
 
+    -- If all X coordinates for row harvestY have been processed, move to next Y row
+    if not xList or harvestXIndex > #xList then
+        harvestXIndex = 1
+        if Config.HarvestDirection == "top" then
+            harvestY = harvestY + 1
+        else
+            harvestY = harvestY - 1
+        end
+        return
+    end
+
+    -- Fast-forward harvestXIndex over tiles that exist and are confirmed empty
     while xList and harvestXIndex <= #xList do
         local tx = xList[harvestXIndex]
         local tile = GetTile(tx, harvestY)
-        -- If tile is nil (loading) or contains target ID, stop skipping and target it!
+        -- If tile is nil (unloaded/faraway) or tile contains target item, process it!
         if not tile or (tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID) then
             break
         end
-        harvestXIndex = harvestXIndex + 1 -- Only skip if tile is confirmed empty/harvested
+        harvestXIndex = harvestXIndex + 1 -- Only skip if tile is confirmed empty
     end
 
-    -- If harvestXIndex exceeded xList, verify if row harvestY still has any unharvested targets
+    -- Check again if harvestXIndex exceeded xList after fast-forwarding
     if not xList or harvestXIndex > #xList then
-        local rowHasTargets = false
-        local freshXList = {}
-        for x = 0, world.width - 1 do
-            local tile = GetTile(x, harvestY)
-            if tile and (tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID) then
-                local isValidX = true
-                if Config.HarvestStep == 3 and not (x == 0 or x == 1 or ((x - 1) % 3 == 0)) then
-                    isValidX = false
-                end
-                if isValidX then
-                    table.insert(freshXList, x)
-                    rowHasTargets = true
-                end
-            end
-        end
-
-        if rowHasTargets then
-            harvestTargetRows[harvestY] = freshXList
-            harvestXIndex = 1
+        harvestXIndex = 1
+        if Config.HarvestDirection == "top" then
+            harvestY = harvestY + 1
         else
-            -- Row harvestY is 100% clean! Move to next Y row
-            harvestXIndex = 1
-            if Config.HarvestDirection == "top" then
-                harvestY = harvestY + 1
-            else
-                harvestY = harvestY - 1
-            end
-            return
+            harvestY = harvestY - 1
         end
+        return
     end
 
-    -- Row Progress & Anti-Move Position Lock: Enforce player position at X=0, Y=harvestY
+    -- Log row progress & enforce anti-move position lock at X=0, Y=harvestY
     if lastHarvestTeleportY ~= harvestY then
         lastHarvestTeleportY = harvestY
         local range = math.max(1, harvestRowMaxY - harvestRowMinY)
@@ -1654,9 +1621,7 @@ local function AutoHarvestStep()
         py   = harvestY
     })
 
-    xList = harvestTargetRows[harvestY]
-    local targetX = xList and xList[harvestXIndex]
-
+    local targetX = xList[harvestXIndex]
     if targetX then
         local tile = GetTile(targetX, harvestY)
         if not tile or (tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID) then
@@ -1727,7 +1692,7 @@ local function ShowUI()
 
     -- Match sb imgui.lua pattern exactly:
     -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v2.05", guiOpen) then
+    if guiOpen and ImGui.Begin("SafePunch v2.06", guiOpen) then
 
         -- Status bar
         local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
@@ -3345,7 +3310,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-local SCRIPT_VERSION = "v2.05"
+local SCRIPT_VERSION = "v2.06"
 
 Log("`2SafePunch " .. SCRIPT_VERSION .. " loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
