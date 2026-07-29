@@ -1,5 +1,5 @@
 -- ============================================================
--- AUTO PUNCH SAFE (v2.10): Punch tile (92, 26) using item ID 18
+-- AUTO PUNCH SAFE (v2.12): Punch tile (92, 26) using item ID 18
 -- Auto PAUSES when a non-whitelisted player is detected.
 -- Auto RESUMES when all non-whitelisted players leave.
 -- Whitelisted players are ignored — punch keeps going.
@@ -292,6 +292,7 @@ local pendingGoToTarget = nil -- Deferred Go pathfinding target {mx, my} to avoi
 local pendingScanInfo   = false -- Deferred ScanMagplantInfo request
 local autoHarvestGhostState = false -- Tracks ghost state for Auto Harvest toggle
 local autoClearWorldCleanupState = false -- Tracks final item collect & stash cleanup for Auto Clear World
+local blockingWaterDropDialog   = false -- True while auto-water-drop dialog is being suppressed (scoped here so all hooks and functions share the same variable)
 
 local function CheckHarvestGhostState()
     if Config.AutoHarvest and not autoHarvestGhostState then
@@ -1113,7 +1114,9 @@ local function AutoCreateFarmStep()
 
     local targetX, targetY = nil, nil
 
+    local _cFarmScan = 0
     while true do
+        _cFarmScan = _cFarmScan + 1
         if Config.CreateFarmDirection == "top" and farmWY >= world.height then break end
         if Config.CreateFarmDirection == "bottom" and farmWY < 0 then break end
 
@@ -1133,8 +1136,8 @@ local function AutoCreateFarmStep()
             local isPlayerPos = (pX == farmWX and pY == farmWY)
 
             if not isPlayerPos then
-                local tile = GetTile(farmWX, farmWY)
-                if tile and tile.fg == 0 then
+                local tile = SafeGetTile(farmWX, farmWY)
+                if tile.fg == 0 then
                     targetX = farmWX
                     targetY = farmWY
                     break
@@ -1147,6 +1150,7 @@ local function AutoCreateFarmStep()
             farmWX = 0
             farmWY = Config.CreateFarmDirection == "top" and (farmWY + 1) or (farmWY - 1)
         end
+        if _cFarmScan >= 500 then return end  -- scan limit: resume next tick
     end
 
     if targetX and targetY then
@@ -1168,7 +1172,7 @@ local function AutoCreateFarmStep()
             end
         end
 
-        while GetTile(targetX, targetY).fg == 0 do
+        while SafeGetTile(targetX, targetY).fg == 0 do
             if not Run or Paused or not Config.AutoCreateFarm then return end
             SendPacketRaw(false, {
                 type  = 3,
@@ -1202,7 +1206,9 @@ local function AutoPlaceStep()
 
     local targetX, targetY = nil, nil
 
+    local _placeScan = 0
     while true do
+        _placeScan = _placeScan + 1
         if Config.PlaceDirection == "top" and placeY >= world.height then break end
         if Config.PlaceDirection == "bottom" and placeY < 0 then break end
 
@@ -1213,8 +1219,8 @@ local function AutoPlaceStep()
         local isPlayerPos = (pX == placeX and pY == placeY)
 
         if not isPlayerPos then
-            local tile = GetTile(placeX, placeY)
-            if tile and tile.fg == 0 then
+            local tile = SafeGetTile(placeX, placeY)
+            if tile.fg == 0 then
                 targetX = placeX
                 targetY = placeY
                 break
@@ -1226,6 +1232,7 @@ local function AutoPlaceStep()
             placeX = 0
             placeY = Config.PlaceDirection == "top" and (placeY + 1) or (placeY - 1)
         end
+        if _placeScan >= 500 then return end  -- scan limit: resume next tick
     end
 
     if targetX and targetY then
@@ -1247,7 +1254,7 @@ local function AutoPlaceStep()
             end
         end
 
-        while GetTile(targetX, targetY).fg == 0 do
+        while SafeGetTile(targetX, targetY).fg == 0 do
             if not Run or Paused or not Config.AutoPlace then return end
             SendPacketRaw(false, {
                 type  = 3,
@@ -1309,8 +1316,7 @@ local function GoToMagplant(mx, my)
 
     local function isWalkable(x, y)
         if x < 0 or x >= world.width or y < 0 or y >= world.height then return false end
-        local t = GetTile(x, y)
-        if not t then return true end
+        local t = SafeGetTile(x, y)
         if t.fg == 0 then return true end
         return false
     end
@@ -1370,7 +1376,7 @@ function ScanMagplants()
     
     for x = 0, world.width - 1 do
         for y = 0, world.height - 1 do
-            local fg = GetTile(x, y).fg
+            local fg = SafeGetTile(x, y).fg
             if fg == 5638 or fg == 5930 then
                 local kind = (fg == 5930) and "Legendary" or "Normal"
                 table.insert(MagplantsList, {x = x, y = y, itemID = nil, amount = nil, kind = kind, active = false})
@@ -1490,12 +1496,14 @@ local function AutoPunchWorldStep()
 
     local targetX, targetY = nil, nil
 
+    local _punchScan = 0
     while true do
+        _punchScan = _punchScan + 1
         if Config.PunchDirection == "top" and punchWY >= world.height then break end
         if Config.PunchDirection == "bottom" and punchWY < 0 then break end
 
-        local realTile = GetTile(punchWX, punchWY)
-        if realTile and realTile.fg == Config.PunchWorldTarget then
+        local realTile = SafeGetTile(punchWX, punchWY)
+        if realTile.fg == Config.PunchWorldTarget then
             targetX = punchWX
             targetY = punchWY
             break
@@ -1506,6 +1514,7 @@ local function AutoPunchWorldStep()
             punchWX = 0
             punchWY = Config.PunchDirection == "top" and (punchWY + 1) or (punchWY - 1)
         end
+        if _punchScan >= 500 then return end  -- scan limit: resume next tick
     end
 
     if targetX and targetY then
@@ -1522,7 +1531,7 @@ local function AutoPunchWorldStep()
             Sleep(200)
         end
         -- Match exactly the method from clearworldandwaterputlgrid.lua but without retries
-        while GetTile(targetX, targetY).fg == Config.PunchWorldTarget do
+        while SafeGetTile(targetX, targetY).fg == Config.PunchWorldTarget do
             if not Run or Paused or not Config.AutoPunchWorld then return end
             SendPacketRaw(false, {
                 type  = 3,
@@ -1601,7 +1610,7 @@ local currentHarvestX = nil -- For UI live tile tracking
 
 local function AutoHarvestStep()
     local world = GetWorld()
-    if not world or not GetTile(0, 0) then
+    if not world then
         Sleep(200)
         return
     end
@@ -1642,16 +1651,16 @@ local function AutoHarvestStep()
         return
     end
 
-    -- Fast-forward harvestXIndex over tiles that exist and are confirmed empty (max 15 per tick for smoothness)
+    -- Fast-forward harvestXIndex over confirmed-empty tiles (max 15 per tick to stay smooth)
     local skippedCount = 0
     while xList and harvestXIndex <= #xList and skippedCount < 15 do
         local tx = xList[harvestXIndex]
         local tile = SafeGetTile(tx, harvestY)
-        -- If tile is nil (unloaded/faraway) or tile contains target item, process it!
-        if not tile or tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID then
+        -- Stop skipping if the tile holds the harvest target
+        if tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID then
             break
         end
-        harvestXIndex = harvestXIndex + 1 -- Only skip if tile is confirmed empty
+        harvestXIndex = harvestXIndex + 1 -- Tile is empty — skip it
         skippedCount = skippedCount + 1
     end
 
@@ -1688,7 +1697,7 @@ local function AutoHarvestStep()
         })
 
         local tile = SafeGetTile(targetX, harvestY)
-        if not tile or tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID then
+        if tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID then
             SendPacketRaw(false, {
                 type  = 3,
                 value = 18,
@@ -1754,12 +1763,11 @@ local function ShowUI()
     local world  = GetWorld()
     local local_ = GetLocal()
 
-    -- Match sb imgui.lua pattern exactly:
-    -- ImGui.End() must be INSIDE the if block
-    if guiOpen and ImGui.Begin("SafePunch v2.10", guiOpen) then
+    -- Always render window safely without auto-closing when paused
+    if ImGui.Begin("SafePunch v2.12", true) then
 
         -- Status bar
-        local statusTxt = Paused and "STATUS: PAUSED (stranger in world)" or "STATUS: RUNNING"
+        local statusTxt = Paused and "`4STATUS: PAUSED (stranger in world)`0" or "`2STATUS: RUNNING`0"
         ImGui.Text(statusTxt)
         ImGui.Text("World: " .. (world and world.name or "N/A") .. "  |  Player: " .. (local_ and local_.name or "N/A"))
         ImGui.Separator()
@@ -2492,7 +2500,7 @@ end)
 -- AUTO JOIN WORLD THREAD
 -- ============================================================
 RunThread(function()
-    while true do
+    while currentSessionID == _G.SafePunchSessionID do
         if Run and Config.AutoJoin and Config.JoinWorld ~= "" then
             local world = GetWorld()
             -- Attempt to join if we are not already in the target world
@@ -3054,12 +3062,10 @@ local function FindWorldLockTile()
 
     for y = 0, world.height - 1 do
         for x = 0, world.width - 1 do
-            local tile = GetTile(x, y)
-            if tile then
-                local fg = tile.fg or 0
-                if fg == 242 or fg == 202 or fg == 204 or fg == 206 or fg == 4994 or fg == 1796 or fg == 7188 then
-                    return x, y
-                end
+            local tile = SafeGetTile(x, y)
+            local fg = tile.fg or 0
+            if fg == 242 or fg == 202 or fg == 204 or fg == 206 or fg == 4994 or fg == 1796 or fg == 7188 then
+                return x, y
             end
         end
     end
@@ -3129,7 +3135,7 @@ end
 
 local function ClearWorldStep()
     local world = GetWorld()
-    if not world or not GetTile(0, 0) then
+    if not world then
         Sleep(200)
         return
     end
@@ -3153,18 +3159,18 @@ local function ClearWorldStep()
         return
     end
 
-    -- Find next active tile in world
+    -- Find next active tile in world (limit to 400 iterations per tick to prevent freeze)
     local targetX, targetY = nil, nil
     local passes = 0
-    local maxPasses = world.width * world.height
+    local maxPasses = 400
 
     while passes < maxPasses do
         if Config.ClearDirection == "top" and clearWY >= world.height then break end
         if Config.ClearDirection == "bottom" and clearWY < 0 then break end
 
         local key = clearWX * 10000 + clearWY
-        local cell = GetTile(clearWX, clearWY)
-        if cell and not clearWVisited[key] then
+        local cell = SafeGetTile(clearWX, clearWY)
+        if not clearWVisited[key] then
             local skipFg = Config.ClearIgnoreBlocks[cell.fg]
             local skipBg = Config.ClearIgnoreBlocks[cell.bg]
             if (cell.fg ~= 0 or cell.bg ~= 0) and not skipFg and not skipBg then
@@ -3225,15 +3231,13 @@ local function ClearWorldStep()
         if tx < world.width then
             local key = tx * 10000 + targetY
             if not clearWVisited[key] then
-                local cell = GetTile(tx, targetY)
-                if cell then
-                    local skipFg = Config.ClearIgnoreBlocks[cell.fg]
-                    local skipBg = Config.ClearIgnoreBlocks[cell.bg]
-                    if (cell.fg ~= 0 or cell.bg ~= 0) and not skipFg and not skipBg then
-                        table.insert(multiTargetList, tx)
-                    else
-                        clearWVisited[key] = true
-                    end
+                local cell = SafeGetTile(tx, targetY)
+                local skipFg = Config.ClearIgnoreBlocks[cell.fg]
+                local skipBg = Config.ClearIgnoreBlocks[cell.bg]
+                if (cell.fg ~= 0 or cell.bg ~= 0) and not skipFg and not skipBg then
+                    table.insert(multiTargetList, tx)
+                else
+                    clearWVisited[key] = true
                 end
             end
         end
@@ -3257,8 +3261,8 @@ local function ClearWorldStep()
 
         -- Check which of the 5 tiles were destroyed
         for _, tx in ipairs(multiTargetList) do
-            local cell = GetTile(tx, targetY)
-            if not cell or (cell.fg == 0 and cell.bg == 0) or
+            local cell = SafeGetTile(tx, targetY)
+            if (cell.fg == 0 and cell.bg == 0) or
                Config.ClearIgnoreBlocks[cell.fg] or Config.ClearIgnoreBlocks[cell.bg] then
                 clearWVisited[tx * 10000 + targetY] = true
             end
@@ -3315,7 +3319,6 @@ local function InitializeClearWater()
     Log("`9[Clear Water] `0Initialized. Scanning for water tiles with Sponge ID: " .. tostring(Config.ClearSpongeID))
 end
 
-local blockingWaterDropDialog = false
 
 local function CheckWaterDrop()
     if GetItemCount(822) >= 200 then
@@ -3340,13 +3343,15 @@ local function ClearWaterStep()
 
     local targetX, targetY = nil, nil
 
-    -- Scan for next water tile
-    while true do
+    -- Scan for next water tile (limit to 500 iterations per tick)
+    local _waterScan = 0
+    while _waterScan < 500 do
+        _waterScan = _waterScan + 1
         if Config.ClearDirection == "top"    and waterCY >= world.height then break end
         if Config.ClearDirection == "bottom" and waterCY < 0             then break end
 
-        local cell = GetTile(waterCX, waterCY)
-        if cell and IsWaterTile(cell) then
+        local cell = SafeGetTile(waterCX, waterCY)
+        if IsWaterTile(cell) then
             targetX = waterCX
             targetY = waterCY
             break
@@ -3364,8 +3369,8 @@ local function ClearWaterStep()
         local hits = 0
         repeat
             if not Run or Paused or not Config.AutoClearWater then return end
-            local t = GetTile(targetX, targetY)
-            if not t or not IsWaterTile(t) then break end
+            local t = SafeGetTile(targetX, targetY)
+            if not IsWaterTile(t) then break end
             SendPacketRaw(false, {
                 type  = 3,
                 value = Config.ClearSpongeID,
@@ -3402,7 +3407,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-local SCRIPT_VERSION = "v2.10"
+local SCRIPT_VERSION = "v2.12"
 
 Log("`2SafePunch " .. SCRIPT_VERSION .. " loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
