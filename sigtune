@@ -1,5 +1,5 @@
 -- ============================================================
--- AUTO PUNCH SAFE (v2.17): Punch tile (92, 26) using item ID 18
+-- AUTO PUNCH SAFE (v2.18): Punch tile (92, 26) using item ID 18
 -- Auto PAUSES when a non-whitelisted player is detected.
 -- Auto RESUMES when all non-whitelisted players leave.
 -- Whitelisted players are ignored — punch keeps going.
@@ -713,53 +713,130 @@ end
 
 
 -- ============================================================
--- GHOST PLAYER PATCH (Fixes GetPlayerList caching bug)
+-- RELIABLE EVENT-DRIVEN PLAYER TRACKER
 -- ============================================================
--- forceLeft: netid -> true, means this player has been confirmed gone
--- We reset it each time WE enter a new world (OnSendPacket join_request)
-local forceLeft = {}
-local lastPlayersRef = {} -- for name resolving on leave
+-- Instead of polling GetPlayerList() (which is stale/cached in Bothax),
+-- we build our own live set from OnSpawn (enter) and OnRemove/console (leave).
+-- This prevents the "resume stuck" bug when strangers leave.
 
--- Bug fix: Use correct PascalCase hook names per Bothax API docs
--- 'OnSendPacket'  fires when WE send a packet (client -> server)
--- 'OnProcessTankUpdate' fires when server sends us a tank update packet
+local forceLeft     = {}  -- netid -> true: confirmed gone
+local lastPlayersRef = {} -- netid -> {name, userid}: for name-lookup on leave
+local livePlayers   = {}  -- netid -> {name, userid}: event-driven truth
 
--- Reset forceLeft when we ourselves join a new world
+-- Strip Bothax color codes (e.g. "`4", "`0") from a string
+local function StripColors(s)
+    if not s then return "" end
+    return tostring(s):gsub("`[0-9a-zA-Z]", "")
+end
+
+-- Reset all tracking when we join a new world
 AddHook("OnSendPacket", "GhostPlayerCleanupSend", function(type, packet)
     if type == 3 and packet:find("action|join_request") then
-        forceLeft = {}
+        forceLeft    = {}
         lastPlayersRef = {}
-        Log("`9[GhostPatch] World change detected - clearing player cache.`0")
+        livePlayers  = {}
+        Log("`9[PlayerTrack] World change - player tracking reset.`0")
     end
     return false
 end)
 
--- Detect when server sends OnRemove or OnConsoleMessage to evict a player's avatar
+-- OnSpawn: a player entered the world
 AddHook("OnVariant", "GhostPlayerCleanupVariant", function(var)
+    if var[0] == "OnSpawn" then
+        local spawnData = tostring(var[1] or "")
+        -- Skip our own spawn packet
+        if spawnData:find("local|1") then return false end
+
+        local netid  = tonumber(spawnData:match("netID|(%d+)"))
+        local userid = tonumber(spawnData:match("userID|(%d+)"))
+        local name   = StripColors(spawnData:match("name|([^\n]+)") or "")
+
+        if netid and not forceLeft[netid] then
+            local local_ = GetLocal()
+            -- Don't add ourselves
+            if local_ and (local_.netid == netid or (local_.userid and tonumber(local_.userid) == userid)) then
+                return false
+            end
+            livePlayers[netid]   = { name = name, userid = userid }
+            lastPlayersRef[netid] = { name = name, userid = userid }
+            Log("`9[PlayerTrack] `0Spawned: `e" .. name .. "`0 (netid " .. netid .. ")")
+        end
+    end
+
+    -- OnRemove: player entity was removed from world
     if var[0] == "OnRemove" then
         local netid = tonumber(var[1])
         if netid then
-            forceLeft[netid] = true
-            Log("`9[GhostPatch] Player entity removed (netid " .. tostring(netid) .. ").`0")
+            local info = livePlayers[netid] or lastPlayersRef[netid]
+            local name = info and info.name or "(netid " .. tostring(netid) .. ")"
+            livePlayers[netid]  = nil
+            forceLeft[netid]    = true
+            Log("`9[PlayerTrack] `0Removed: `e" .. name .. "`0 (netid " .. netid .. ")")
         end
     end
-    
+
+    -- OnConsoleMessage fallback: "X left," or "X left the world"
     if var[0] == "OnConsoleMessage" and type(var[1]) == "string" then
         local msg = var[1]
         if msg:find("left,") or msg:find("left the world") then
-            local nameStr = msg:match("`w([^`]+) left,") or msg:match("`w([^`]+) left")
+            -- Strip color codes from message before matching
+            local cleanMsg = StripColors(msg)
+            local nameStr  = cleanMsg:match("(.+) left,") or cleanMsg:match("(.+) left the world")
             if nameStr then
+                nameStr = nameStr:match("^%s*(.-)%s*$") -- trim whitespace
                 for netid, info in pairs(lastPlayersRef) do
-                    if info.name == nameStr then
-                        forceLeft[netid] = true
-                        Log("`9[GhostPatch] Forced evict player: " .. nameStr .. "`0")
+                    local cleanName = StripColors(info.name)
+                    if cleanName == nameStr or cleanName:lower() == nameStr:lower() then
+                        livePlayers[netid] = nil
+                        forceLeft[netid]   = true
+                        Log("`9[PlayerTrack] `0Console evict: `e" .. nameStr .. "`0 (netid " .. netid .. ")")
                     end
                 end
             end
         end
     end
+
     return false
 end)
+
+-- Build current "other players" using livePlayers (event-driven) merged with
+-- GetPlayerList() as a supplement for any stragglers not yet caught by OnSpawn.
+local function GetOtherPlayers()
+    local local_ = GetLocal()
+    if not local_ then return {} end
+
+    -- Supplement livePlayers with GetPlayerList() to catch any that spawned before script loaded
+    local list = GetPlayerList()
+    if list then
+        for _, p in pairs(list) do
+            if p and p.netid and not forceLeft[p.netid] then
+                local isLocal = false
+                if p.netid == local_.netid then isLocal = true end
+                if p.userid and local_.userid and tonumber(p.userid) == tonumber(local_.userid) then isLocal = true end
+                if p.name and local_.name and p.name == local_.name then isLocal = true end
+                if not isLocal then
+                    -- Only add if not already tracked
+                    if not livePlayers[p.netid] then
+                        livePlayers[p.netid]    = { name = p.name, userid = p.userid }
+                        lastPlayersRef[p.netid] = { name = p.name, userid = p.userid }
+                    end
+                end
+            end
+        end
+    end
+
+    -- Return a snapshot of livePlayers, excluding forceLeft
+    local result = {}
+    for netid, info in pairs(livePlayers) do
+        if not forceLeft[netid] then
+            result[netid] = info
+        else
+            -- Clean up evicted players from livePlayers
+            livePlayers[netid] = nil
+        end
+    end
+    return result
+end
 
 -- ============================================================
 -- MOD / DEVELOPER DETECTION (invisible entry)
@@ -1886,7 +1963,7 @@ local function ShowUI()
         -- NOTE: Do NOT pass a second arg (closable=true) to ImGui.Begin.
         -- That causes the window to vanish when the engine flips its open state.
         -- We control window visibility purely via the guiOpen variable.
-        if ImGui.Begin("SafePunch v2.17") then
+        if ImGui.Begin("SafePunch v2.18") then
 
         -- Status bar: always shown, color changes on pause
         if Paused then
@@ -3669,7 +3746,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-local SCRIPT_VERSION = "v2.17"
+local SCRIPT_VERSION = "v2.18"
 
 Log("`2SafePunch " .. SCRIPT_VERSION .. " loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
