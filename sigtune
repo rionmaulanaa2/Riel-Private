@@ -312,6 +312,24 @@ local function SafeGetTile(x, y)
     return { fg = 0, bg = 0, flags = 0 }
 end
 
+local function FindWorldLockTile()
+    local world = GetWorld()
+    if not world or type(world) ~= "table" or type(world.width) ~= "number" or type(world.height) ~= "number" then
+        return nil, nil
+    end
+
+    for y = 0, world.height - 1 do
+        for x = 0, world.width - 1 do
+            local tile = SafeGetTile(x, y)
+            local fg = tile.fg or 0
+            if fg == 242 or fg == 202 or fg == 204 or fg == 206 or fg == 4994 or fg == 1796 or fg == 7188 then
+                return x, y
+            end
+        end
+    end
+    return nil, nil
+end
+
 local function ReportScriptError(errSource, errMessage)
     local errText = "`4[Script Error] " .. tostring(errSource) .. ": " .. tostring(errMessage) .. "`0"
     Log(errText)
@@ -3164,21 +3182,6 @@ local function BuildClearGrid()
     return true
 end
 
-local function FindWorldLockTile()
-    local world = GetWorld()
-    if not world then return nil, nil end
-
-    for y = 0, world.height - 1 do
-        for x = 0, world.width - 1 do
-            local tile = SafeGetTile(x, y)
-            local fg = tile.fg or 0
-            if fg == 242 or fg == 202 or fg == 204 or fg == 206 or fg == 4994 or fg == 1796 or fg == 7188 then
-                return x, y
-            end
-        end
-    end
-    return nil, nil
-end
 
 local function ConfigureWorldLockDrop()
     local lx, ly = FindWorldLockTile()
