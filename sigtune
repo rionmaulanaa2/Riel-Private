@@ -1,9 +1,9 @@
 -- ============================================================
--- AUTO PUNCH SAFE (v2.14): Punch tile (92, 26) using item ID 18
+-- AUTO PUNCH SAFE (v2.17): Punch tile (92, 26) using item ID 18
 -- Auto PAUSES when a non-whitelisted player is detected.
 -- Auto RESUMES when all non-whitelisted players leave.
 -- Whitelisted players are ignored — punch keeps going.
--- Auto COLLECTS floating items (optional)..
+-- Auto COLLECTS floating items (optional).
 -- ============================================================
 
 -- Configuration
@@ -101,27 +101,42 @@ local Config = {
     DebugSurgery      = false, -- If true, sends all surgery packets & dialogs to Discord Webhook
     SurgeryDelay      = 700,   -- ms delay between each surgery packet sent
     SurgeryTotal      = 0,
-    RecordName        = "MyRecord",
-    PlaybackFile      = "MyRecord",
+    RecordName           = "MyRecord",
+    PlaybackFile         = "MyRecord",
+    RecordType2          = true,  -- Record text/dialog return packets (type 2)
+    RecordType3          = true,  -- Record action/punch/place packets (type 3)
+    RecordRaw            = true,  -- Record non-movement raw tank packets
+    RecordMovement       = false, -- Record movement position raw packets (type 0)
+    PlaybackLoops        = 1,     -- Number of times to loop playback
+    PlaybackInfinite     = false, -- If true, loop continuously until stopped
+    PlaybackLoopDelay    = 500,   -- Delay in ms between each loop iteration
     ClearDirection    = "top",
     ClearDelay        = 50,
     ClearSpongeID     = 822,
     ClearIgnoreBlocks = {
-        [6]     = true,  -- White Door
+        [6]     = true,  -- Main Door / White Door
         [8]     = true,  -- Bedrock
-        [202]   = true,
-        [242]   = true,  -- Main Door
-        [1796]  = true,
-        [4992]  = true,
-        [5260]  = true,
+        [202]   = true,  -- Small Lock
+        [204]   = true,  -- Big Lock
+        [206]   = true,  -- Huge Lock
+        [242]   = true,  -- World Lock
+        [1796]  = true,  -- Builder's Lock
+        [2408]  = true,  -- Diamond Lock
+        [2978]  = true,  -- Display Block / Lock
+        [4992]  = true,  -- Special Lock
+        [4994]  = true,  -- Emerald Lock
+        [5260]  = true,  -- Skull Lock
         [5638]  = true,  -- Magplant
+        [5814]  = true,  -- Ruby Lock
         [5930]  = true,  -- Legendary Magplant 5000
-        [6948]  = true,
-        [6950]  = true,
-        [7188]  = true,  -- Laser Grid
+        [6948]  = true,  -- Special Lock
+        [6950]  = true,  -- Special Lock
+        [7188]  = true,  -- Laser Grid / Ancestral Lock
         [8470]  = true,  -- Chemical Combiner
-        [10266] = true,
-        [11550] = true,
+        [9640]  = true,  -- Master Lock
+        [10266] = true,  -- Special Lock
+        [11550] = true,  -- Blue Gem Lock
+        [11586] = true,  -- Robotic Lock
         [21220] = true,  -- Legendary Chemical Combiner
     },
 }
@@ -310,6 +325,17 @@ local function SafeGetTile(x, y)
         return tile
     end
     return { fg = 0, bg = 0, flags = 0 }
+end
+
+local function IsIgnoredClearBlock(id)
+    if not id or id == 0 then return false end
+    if id == 8 or id == 6 then return true end -- Bedrock (8), Door (6)
+    if Config.ClearIgnoreBlocks and Config.ClearIgnoreBlocks[id] then return true end
+    -- Fallback safety check for all lock IDs
+    if id == 202 or id == 204 or id == 206 or id == 242 or id == 1796 or id == 2408 or id == 4994 or id == 5814 or id == 9640 or id == 11550 or id == 11586 then
+        return true
+    end
+    return false
 end
 
 local function FindWorldLockTile()
@@ -1860,7 +1886,7 @@ local function ShowUI()
         -- NOTE: Do NOT pass a second arg (closable=true) to ImGui.Begin.
         -- That causes the window to vanish when the engine flips its open state.
         -- We control window visibility purely via the guiOpen variable.
-        if ImGui.Begin("SafePunch v2.14") then
+        if ImGui.Begin("SafePunch v2.17") then
 
         -- Status bar: always shown, color changes on pause
         if Paused then
@@ -1980,16 +2006,24 @@ local function ShowUI()
 
         -- RECORD & PLAY
         if ImGui.CollapsingHeader("Record & Play") then
+            ImGui.Text("`9-- Packet Selection Filters --`0")
+            ConfigCheckbox("Record Type 2 (Dialogs / Actions / Text)", "RecordType2")
+            ConfigCheckbox("Record Type 3 (Action / Punch / Place)", "RecordType3")
+            ConfigCheckbox("Record Raw Tank Packets (Other)", "RecordRaw")
+            ConfigCheckbox("Record Movement Position Packets (Type 0)", "RecordMovement")
+
+            ImGui.Separator()
+
             local cRec, vRec = ImGui.InputText("Recording Name", Config.RecordName, 64)
             if cRec then Config.RecordName = vRec end
-            
+
             if isRecording then
                 if ImGui.Button("STOP RECORDING") then
                     isRecording = false
                     Log("`4Recording stopped. " .. #recordData .. " packets captured.")
                     SaveRecording(Config.RecordName)
                 end
-                ImGui.Text("`4Recording in progress... Packets: " .. #recordData)
+                ImGui.Text("`4Recording in progress... Packets captured: " .. #recordData)
             else
                 if ImGui.Button("START RECORDING") then
                     recordData = {}
@@ -1998,24 +2032,81 @@ local function ShowUI()
                     Log("`2Recording started...")
                 end
             end
-            
+
             ImGui.Separator()
-            
+
+            ImGui.Text("`9-- Playback Settings --`0")
             local cPlay, vPlay = ImGui.InputText("Playback File", Config.PlaybackFile, 64)
             if cPlay then Config.PlaybackFile = vPlay end
-            
+
+            local cLoop, vLoop = ImGui.InputInt("Loop Count", Config.PlaybackLoops or 1)
+            if cLoop then Config.PlaybackLoops = math.max(1, vLoop) end
+
+            ConfigCheckbox("Infinite Loop", "PlaybackInfinite")
+
+            local cLDelay, vLDelay = ImGui.InputInt("Delay Between Loops (ms)", Config.PlaybackLoopDelay or 500)
+            if cLDelay then Config.PlaybackLoopDelay = math.max(0, vLDelay) end
+
             if ImGui.Button("LOAD FILE") then
                 LoadRecording(Config.PlaybackFile)
             end
-            
+
             ImGui.SameLine()
             if isPlaying then
                 if ImGui.Button("STOP PLAYBACK") then
                     isPlaying = false
+                    Log("`4Stopping playback...`0")
                 end
             else
                 if ImGui.Button("PLAY RECORDING") then
                     StartPlayback()
+                end
+            end
+
+            if #recordData > 0 then
+                ImGui.Separator()
+                ImGui.Text("`9-- Packet Inspector & Editor (" .. #recordData .. " Packets) --`0")
+                if ImGui.Button("SAVE EDITED RECORDING") then
+                    SaveRecording(Config.PlaybackFile)
+                end
+                ImGui.SameLine()
+                if ImGui.Button("Clear All Packets") then
+                    recordData = {}
+                    Log("`4Cleared all recorded packets.`0")
+                end
+
+                local removeIndex = nil
+                local maxShow = math.min(#recordData, 100)
+                for i = 1, maxShow do
+                    local pkt = recordData[i]
+                    if pkt then
+                        if ImGui.Button("X##del" .. i) then
+                            removeIndex = i
+                        end
+                        ImGui.SameLine()
+                        
+                        local label = "#" .. i .. " (+" .. (pkt.delay or 0) .. "ms): "
+                        if pkt.data:sub(1,3) == "STR" then
+                            local t, content = pkt.data:match("^STR|(%d+)|(.+)$")
+                            local brief = content and (content:sub(1, 35):gsub("\n", " ")) or "Text Packet"
+                            label = label .. "`2[STR T" .. (t or "?") .. "] `0" .. brief
+                        elseif pkt.data:sub(1,3) == "RAW" then
+                            local t, v, px, py = pkt.data:match("^RAW|(%d+)|(%d+)|(%-?%d+)|(%-?%d+)")
+                            label = label .. "`9[RAW T" .. (t or "?") .. " V" .. (v or "?") .. "] `0Tile: (" .. (px or 0) .. ", " .. (py or 0) .. ")"
+                        else
+                            label = label .. pkt.data:sub(1, 35)
+                        end
+                        ImGui.Text(label)
+                    end
+                end
+
+                if removeIndex then
+                    table.remove(recordData, removeIndex)
+                    Log("`4Removed packet #" .. removeIndex .. " from recording list.`0")
+                end
+
+                if #recordData > 100 then
+                    ImGui.Text("`e... and " .. (#recordData - 100) .. " more packets.`0")
                 end
             end
         end
@@ -3094,39 +3185,84 @@ function StartPlayback()
     end
     isPlaying = true
     RunThread(function()
-        Log("`2Playback started...")
-        for _, pkt in ipairs(recordData) do
-            if not isPlaying or not Run or Paused then break end
-            if pkt.delay > 0 then
-                Sleep(pkt.delay)
+        local maxLoops = Config.PlaybackInfinite and math.huge or math.max(1, Config.PlaybackLoops or 1)
+        local currentLoop = 0
+        Log("`2Playback started! Loops: " .. (Config.PlaybackInfinite and "Infinite" or maxLoops) .. " | Loop Delay: " .. (Config.PlaybackLoopDelay or 500) .. "ms")
+
+        while isPlaying and Run and not Paused do
+            currentLoop = currentLoop + 1
+            if not Config.PlaybackInfinite and currentLoop > maxLoops then
+                break
             end
-            
-            -- Parse data
-            if pkt.data:sub(1,3) == "RAW" then
-                local t, v, px, py, rx, ry = pkt.data:match("^RAW|(%d+)|(%d+)|(%-?%d+)|(%-?%d+)|(%-?%d+)|(%-?%d+)$")
-                if t then
-                    SendPacketRaw(false, {
-                        type = tonumber(t),
-                        value = tonumber(v),
-                        px = tonumber(px),
-                        py = tonumber(py),
-                        x = tonumber(rx),
-                        y = tonumber(ry)
-                    })
+
+            if maxLoops > 1 or Config.PlaybackInfinite then
+                Log("`9[Playback] `0Running loop `b" .. currentLoop .. "`0/" .. (Config.PlaybackInfinite and "∞" or maxLoops))
+            end
+
+            for _, pkt in ipairs(recordData) do
+                if not isPlaying or not Run or Paused then break end
+
+                -- Check packet type filters before sending
+                local shouldSend = true
+                if pkt.data:sub(1,3) == "RAW" then
+                    local t = tonumber(pkt.data:match("^RAW|(%d+)"))
+                    if t == 0 and not Config.RecordMovement then
+                        shouldSend = false
+                    elseif t ~= 0 and not Config.RecordRaw then
+                        shouldSend = false
+                    end
+                elseif pkt.data:sub(1,3) == "STR" then
+                    local typStr = tonumber(pkt.data:match("^STR|(%d+)"))
+                    if typStr == 2 and not Config.RecordType2 then
+                        shouldSend = false
+                    elseif typStr == 3 and not Config.RecordType3 then
+                        shouldSend = false
+                    end
                 end
-            elseif pkt.data:sub(1,3) == "STR" then
-                local typStr, content = pkt.data:match("^STR|(%d+)|(.+)$")
-                if typStr and content then
-                    -- Unescape newlines
-                    content = content:gsub("\n", "\n")
-                    SendPacket(tonumber(typStr), content)
+
+                if shouldSend then
+                    if pkt.delay > 0 then
+                        Sleep(pkt.delay)
+                    end
+
+                    -- Parse & Send
+                    if pkt.data:sub(1,3) == "RAW" then
+                        local t, v, px, py, rx, ry = pkt.data:match("^RAW|(%d+)|(%d+)|(%-?%d+)|(%-?%d+)|(%-?%d+)|(%-?%d+)$")
+                        if t then
+                            SendPacketRaw(false, {
+                                type = tonumber(t),
+                                value = tonumber(v),
+                                px = tonumber(px),
+                                py = tonumber(py),
+                                x = tonumber(rx),
+                                y = tonumber(ry)
+                            })
+                        end
+                    elseif pkt.data:sub(1,3) == "STR" then
+                        local typStr, content = pkt.data:match("^STR|(%d+)|(.+)$")
+                        if typStr and content then
+                            content = content:gsub("\\n", "\n")
+                            SendPacket(tonumber(typStr), content)
+                        end
+                    end
+                end
+            end
+
+            -- Loop Delay between iterations
+            if isPlaying and Run and not Paused then
+                if Config.PlaybackInfinite or currentLoop < maxLoops then
+                    local delayMs = Config.PlaybackLoopDelay or 500
+                    if delayMs > 0 then
+                        Sleep(delayMs)
+                    end
                 end
             end
         end
+
         if isPlaying then
-            Log("`2Playback finished.")
+            Log("`2Playback finished (" .. currentLoop .. " loop(s) completed).")
         else
-            Log("`4Playback stopped.")
+            Log("`4Playback stopped by user.")
         end
         isPlaying = false
     end)
@@ -3134,17 +3270,21 @@ end
 
 AddHook("OnSendPacket", "RecordPacketsHook", function(type, packet)
     if isRecording then
+        -- Check filters
+        if type == 2 and not Config.RecordType2 then return false end
+        if type == 3 and not Config.RecordType3 then return false end
+
         -- Ignore normal chat logs, but KEEP user commands (like /bp, /ui, etc)
         if packet:find("action|input\n|text|") and not packet:find("action|input\n|text|/") then return false end
-        
+
         local now = os.clock()
         local delay = 0
         if lastPacketTime > 0 then
             delay = math.floor((now - lastPacketTime) * 1000)
         end
         lastPacketTime = now
-        
-        local safeStr = packet:gsub("\n", "\n")
+
+        local safeStr = packet:gsub("\n", "\\n")
         table.insert(recordData, {delay = delay, data = "STR|" .. type .. "|" .. safeStr})
     end
     return false
@@ -3152,14 +3292,18 @@ end)
 
 AddHook("OnSendPacketRaw", "RecordRawHook", function(packet)
     if isRecording and packet then
+        local pType = packet.type or 0
+        if pType == 0 and not Config.RecordMovement then return false end
+        if pType ~= 0 and not Config.RecordRaw then return false end
+
         local now = os.clock()
         local delay = 0
         if lastPacketTime > 0 then
             delay = math.floor((now - lastPacketTime) * 1000)
         end
         lastPacketTime = now
-        
-        local rawStr = string.format("RAW|%d|%d|%d|%d|%d|%d", packet.type or 0, packet.value or 0, packet.px or 0, packet.py or 0, packet.x or 0, packet.y or 0)
+
+        local rawStr = string.format("RAW|%d|%d|%d|%d|%d|%d", pType, packet.value or 0, packet.px or 0, packet.py or 0, packet.x or 0, packet.y or 0)
         table.insert(recordData, {delay = delay, data = rawStr})
     end
     return false
@@ -3290,12 +3434,15 @@ local function ClearWorldStep()
         local key = clearWX * 10000 + clearWY
         local cell = SafeGetTile(clearWX, clearWY)
         if not clearWVisited[key] then
-            local skipFg = Config.ClearIgnoreBlocks[cell.fg]
-            local skipBg = Config.ClearIgnoreBlocks[cell.bg]
+            local skipFg = IsIgnoredClearBlock(cell.fg)
+            local skipBg = IsIgnoredClearBlock(cell.bg)
             if (cell.fg ~= 0 or cell.bg ~= 0) and not skipFg and not skipBg then
                 targetX = clearWX
                 targetY = clearWY
                 break
+            else
+                -- Immediately mark Bedrock, Locks, Doors, Air, and ignored blocks as visited so we never hit them
+                clearWVisited[key] = true
             end
         end
 
@@ -3351,8 +3498,8 @@ local function ClearWorldStep()
             local key = tx * 10000 + targetY
             if not clearWVisited[key] then
                 local cell = SafeGetTile(tx, targetY)
-                local skipFg = Config.ClearIgnoreBlocks[cell.fg]
-                local skipBg = Config.ClearIgnoreBlocks[cell.bg]
+                local skipFg = IsIgnoredClearBlock(cell.fg)
+                local skipBg = IsIgnoredClearBlock(cell.bg)
                 if (cell.fg ~= 0 or cell.bg ~= 0) and not skipFg and not skipBg then
                     table.insert(multiTargetList, tx)
                 else
@@ -3381,8 +3528,7 @@ local function ClearWorldStep()
         -- Check which of the 5 tiles were destroyed
         for _, tx in ipairs(multiTargetList) do
             local cell = SafeGetTile(tx, targetY)
-            if (cell.fg == 0 and cell.bg == 0) or
-               Config.ClearIgnoreBlocks[cell.fg] or Config.ClearIgnoreBlocks[cell.bg] then
+            if (cell.fg == 0 and cell.bg == 0) or IsIgnoredClearBlock(cell.fg) or IsIgnoredClearBlock(cell.bg) then
                 clearWVisited[tx * 10000 + targetY] = true
             end
         end
@@ -3402,11 +3548,8 @@ local waterCX, waterCY = nil, nil
 local function IsWaterTile(cell)
     if not cell then return false end
 
-    -- Skip water on bedrock (ID 8) or any ignored block ID
-    if cell.fg == 8 or cell.bg == 8 then return false end
-    if Config.ClearIgnoreBlocks and (Config.ClearIgnoreBlocks[cell.fg] or Config.ClearIgnoreBlocks[cell.bg]) then
-        return false
-    end
+    -- Skip water on bedrock (ID 8) or any ignored block ID / lock
+    if cell.fg == 8 or cell.bg == 8 or IsIgnoredClearBlock(cell.fg) or IsIgnoredClearBlock(cell.bg) then return false end
 
     -- Direct property check (if exposed by Bothax API)
     if cell.water == true or cell.water == 1 then return true end
@@ -3526,7 +3669,7 @@ end
 -- MAIN PUNCH LOOP
 -- ============================================================
 
-local SCRIPT_VERSION = "v2.14"
+local SCRIPT_VERSION = "v2.17"
 
 Log("`2SafePunch " .. SCRIPT_VERSION .. " loaded!`0 Target tile: (" .. Config.TileX .. ", " .. Config.TileY .. ")")
 Log("Punching with ItemID: " .. Config.ItemID)
