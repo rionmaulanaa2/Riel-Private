@@ -773,11 +773,12 @@ AddHook("OnVariant", "ModDevDetector", function(var)
 
         if isMod or isDev or isInvis then
             local role = isDev and "`4[DEVELOPER]" or (isMod and "`6[MODERATOR]" or "`b[INVISIBLE STAFF]")
-            Log("`4[MOD DETECTED] `0" .. role .. " detected: `e" .. name .. "`0 (UID: `b" .. userid .. "`0). Pausing all features.")
+            Log("`4[MOD DETECTED] `0" .. role .. " detected: `e" .. name .. "`0 (UID: `b" .. userid .. "`0). Pausing all features. UI stays open.")
             ReportScriptError("Security Detector", role .. " detected entering world: " .. name .. "! All features paused.")
             PauseAllFeatures("ALL FEATURES PAUSED! " .. role .. "`0 detected entering world: `e" .. name)
             modDetected = true
-            Run = false
+            -- NOTE: We do NOT set Run = false here. This would kill the UI.
+            -- Features are already stopped via Paused = true. UI remains visible.
         end
     end
     
@@ -1856,12 +1857,17 @@ local function ShowUI()
             cachedPlayerName = (l and type(l) == "table" and l.name) and tostring(l.name) or "N/A"
         end
 
-        -- Always render window safely without auto-closing when paused
-        if ImGui.Begin("SafePunch v2.13", true) then
+        -- NOTE: Do NOT pass a second arg (closable=true) to ImGui.Begin.
+        -- That causes the window to vanish when the engine flips its open state.
+        -- We control window visibility purely via the guiOpen variable.
+        if ImGui.Begin("SafePunch v2.13") then
 
-        -- Status bar
-        local statusTxt = Paused and "`4STATUS: PAUSED (stranger in world)`0" or "`2STATUS: RUNNING`0"
-        ImGui.Text(statusTxt)
+        -- Status bar: always shown, color changes on pause
+        if Paused then
+            ImGui.Text("`4!! PAUSED - STRANGER / MOD DETECTED IN WORLD !!`0")
+        else
+            ImGui.Text("`2STATUS: RUNNING`0")
+        end
         ImGui.Text("World: " .. cachedWorldName .. "  |  Player: " .. cachedPlayerName)
         ImGui.Separator()
 
@@ -1892,6 +1898,7 @@ local function ShowUI()
             RunThread(function()
                 local lx, ly = FindWorldLockTile()
                 if lx and ly then
+                    -- 1. Send wrench packet (type 3, value 32) to open the lock edit dialog
                     SendPacketRaw(false, {
                         type  = 3,
                         value = 32,
@@ -1900,10 +1907,11 @@ local function ShowUI()
                         x     = lx * 32,
                         y     = ly * 32
                     })
-                    Sleep(150)
+                    Sleep(250) -- Wait for dialog to open on server
+                    -- 2. Send dialog return payload with checkbox_drop=1
                     local pkt = "action|dialog_return\ndialog_name|lock_edit\ntilex|" .. lx .. "|\ntiley|" .. ly .. "|\ncheckbox_public|0\ncheckbox_vending|0\ncheckbox_magplant|0\ncheckbox_vip|0\ncheckbox_sbox|0\ncheckbox_dbox|0\ncheckbox_drop|1\ncheckbox_cheater|0\ncheckbox_dghost|0\ncheckbox_disable_music|0\ntempo|100\ncheckbox_disable_music_render|0\ncheckbox_set_as_home_world|0\nminimum_entry_level|1\n"
                     SendPacket(2, pkt)
-                    Log("`2[Lock Edit] `0World Lock found at (" .. lx .. ", " .. ly .. ") -> Sent Allow Drop packet!`0")
+                    Log("`2[Lock Edit] `0Wrenched World Lock at (" .. lx .. ", " .. ly .. ") & opened/configured Allow Drop (checkbox_drop=1)!`0")
                 else
                     Log("`4[Lock Edit Error] `0No World Lock detected in world.`0")
                 end
