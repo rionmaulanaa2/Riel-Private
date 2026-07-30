@@ -3,7 +3,7 @@
 -- Auto PAUSES when a non-whitelisted player is detected.
 -- Auto RESUMES when all non-whitelisted players leave.
 -- Whitelisted players are ignored — punch keeps going.
--- Auto COLLECTS floating items (optional).
+-- Auto COLLECTS floating items (optional)..
 -- ============================================================
 
 -- Configuration
