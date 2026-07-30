@@ -909,9 +909,9 @@ local function PunchTile()
     })
 end
 
--- Helper function to check inventory count of an item
-local function GetItemCount(id)
-    local inv = GetInventory()
+-- Helper function to check inventory count of an item using optional pre-fetched inventory table
+local function GetItemCount(id, preFetchedInv)
+    local inv = preFetchedInv or GetInventory()
     if not inv or type(inv) ~= "table" then return 0 end
     for _, itm in pairs(inv) do
         if type(itm) == "table" then
@@ -927,17 +927,31 @@ local function GetItemCount(id)
     return 0
 end
 
--- Check inventory and stash to backpack if needed
+-- Check inventory and stash to backpack if needed (Optimized single-pass)
 local failedStashCounts = {}
 
 local function CheckBackpack()
     if not Config.AutoBackpack or Paused or not Run then return end
 
     local inv = GetInventory()
-    if not inv then return end
+    if not inv or type(inv) ~= "table" then return end
+
+    -- Create single-pass item count lookup table (reduces 37 C-API calls to 1)
+    local counts = {}
+    for _, itm in pairs(inv) do
+        if type(itm) == "table" then
+            local itmId = tonumber(itm.id or itm.itemid or itm.itemID or 0)
+            local itmAmount = tonumber(itm.amount or itm.count or itm.itemCount or 0)
+            if itmId and itmId > 0 then
+                counts[itmId] = (counts[itmId] or 0) + itmAmount
+            end
+        elseif type(itm) == "number" then
+            counts[itm] = (counts[itm] or 0) + 1
+        end
+    end
 
     for _, id in ipairs(Config.BackpackList) do
-        local count = GetItemCount(id)
+        local count = counts[id] or 0
         if count >= Config.AutoBackpackLimit then
             local failedTimes = failedStashCounts[id] or 0
             if failedTimes < 3 then
@@ -991,10 +1005,10 @@ local function GetDistance(x1, y1, x2, y2)
     return math.sqrt((x2 - x1)^2 + (y2 - y1)^2)
 end
 
--- Collect floating items and return to start position
+--- Collect floating items and return to start position
 local function CollectItems()
     local objs = GetObjectList()
-    if not objs or type(objs) ~= "table" then return end
+    if not objs or type(objs) ~= "table" or next(objs) == nil then return end
 
     local validObjs = {}
     local local_ = GetLocal()
@@ -1706,26 +1720,33 @@ local function AutoHarvestStep()
         return
     end
 
-    -- Fast-forward harvestXIndex over confirmed-empty tiles (max 15 per tick to stay smooth)
-    local skippedCount = 0
-    while xList and harvestXIndex <= #xList and skippedCount < 15 do
+    -- Fast-forward harvestXIndex over confirmed-empty tiles (up to 100 per tick for instant skipping)
+    local targetX = nil
+    local targetTile = nil
+    local maxSkips = 100
+    local skipped = 0
+
+    while harvestXIndex <= #xList and skipped < maxSkips do
         local tx = xList[harvestXIndex]
         local tile = SafeGetTile(tx, harvestY)
-        -- Stop skipping if the tile holds the harvest target
         if tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID then
+            targetX = tx
+            targetTile = tile
             break
         end
-        harvestXIndex = harvestXIndex + 1 -- Tile is empty — skip it
-        skippedCount = skippedCount + 1
+        harvestXIndex = harvestXIndex + 1 -- Tile is empty — skip instantly
+        skipped = skipped + 1
     end
 
-    -- Check again if harvestXIndex exceeded xList after fast-forwarding
-    if not xList or harvestXIndex > #xList then
-        harvestXIndex = 1
-        if Config.HarvestDirection == "top" then
-            harvestY = harvestY + 1
-        else
-            harvestY = harvestY - 1
+    -- If no target found in this tick's scan range, advance row if at end, and return next tick
+    if not targetX or not targetTile then
+        if harvestXIndex > #xList then
+            harvestXIndex = 1
+            if Config.HarvestDirection == "top" then
+                harvestY = harvestY + 1
+            else
+                harvestY = harvestY - 1
+            end
         end
         return
     end
@@ -1738,39 +1759,27 @@ local function AutoHarvestStep()
         Log("`2[Auto Harvest] `0Harvesting Row Y: `b" .. harvestY .. "/" .. harvestRowMaxY .. " `0(" .. progress .. "%)`0")
     end
 
-    local targetX = xList[harvestXIndex]
-    if targetX then
-        currentHarvestX = targetX
+    currentHarvestX = targetX
 
-        -- Teleport player position to target tile coordinate for valid 0-tile harvest range
-        SendPacketRaw(false, {
-            type = 0,
-            x    = targetX * 32,
-            y    = harvestY * 32,
-            px   = targetX,
-            py   = harvestY
-        })
+    -- Only send movement and punch packets when an actual harvest target exists at coordinate
+    SendPacketRaw(false, {
+        type = 0,
+        x    = targetX * 32,
+        y    = harvestY * 32,
+        px   = targetX,
+        py   = harvestY
+    })
 
-        local tile = SafeGetTile(targetX, harvestY)
-        if tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID then
-            SendPacketRaw(false, {
-                type  = 3,
-                value = 18,
-                px    = targetX,
-                py    = harvestY,
-                x     = targetX * 32,
-                y     = harvestY * 32
-            })
-        end
-        harvestXIndex = harvestXIndex + 1
-    else
-        harvestXIndex = 1
-        if Config.HarvestDirection == "top" then
-            harvestY = harvestY + 1
-        else
-            harvestY = harvestY - 1
-        end
-    end
+    SendPacketRaw(false, {
+        type  = 3,
+        value = 18,
+        px    = targetX,
+        py    = harvestY,
+        x     = targetX * 32,
+        y     = harvestY * 32
+    })
+
+    harvestXIndex = harvestXIndex + 1
 end
 
 
@@ -1810,14 +1819,24 @@ local function CreateRandomAccount()
 end
 
 local guiOpen = true
+local lastUIInfoCheck = 0
+local cachedWorldName = "N/A"
+local cachedPlayerName = "N/A"
 
 local function ShowUI()
     if not ImGui then return end
     if not guiOpen then return end
 
     pcall(function()
-        local world  = GetWorld()
-        local local_ = GetLocal()
+        -- Throttle API calls to 2Hz (saves 120 C-API queries/sec on render loop)
+        local now = os.clock()
+        if now - lastUIInfoCheck > 0.5 then
+            lastUIInfoCheck = now
+            local w = GetWorld()
+            local l = GetLocal()
+            cachedWorldName = (w and type(w) == "table" and w.name) and tostring(w.name) or "N/A"
+            cachedPlayerName = (l and type(l) == "table" and l.name) and tostring(l.name) or "N/A"
+        end
 
         -- Always render window safely without auto-closing when paused
         if ImGui.Begin("SafePunch v2.13", true) then
@@ -1825,9 +1844,7 @@ local function ShowUI()
         -- Status bar
         local statusTxt = Paused and "`4STATUS: PAUSED (stranger in world)`0" or "`2STATUS: RUNNING`0"
         ImGui.Text(statusTxt)
-        local wName = (world and type(world) == "table" and world.name) and tostring(world.name) or "N/A"
-        local pName = (local_ and type(local_) == "table" and local_.name) and tostring(local_.name) or "N/A"
-        ImGui.Text("World: " .. wName .. "  |  Player: " .. pName)
+        ImGui.Text("World: " .. cachedWorldName .. "  |  Player: " .. cachedPlayerName)
         ImGui.Separator()
 
         if ImGui.Button("Kill Threads") then
@@ -1852,6 +1869,35 @@ local function ShowUI()
 
             Log("`4[Kill Threads] `0Terminated all background loops & cleared duplicate hooks! Script & UI active.`0")
         end
+
+        if ImGui.Button("Block Pickup on World") then
+            RunThread(function()
+                local lx, ly = FindWorldLockTile()
+                if lx and ly then
+                    SendPacketRaw(false, {
+                        type  = 3,
+                        value = 32,
+                        px    = lx,
+                        py    = ly,
+                        x     = lx * 32,
+                        y     = ly * 32
+                    })
+                    Sleep(150)
+                    local pkt = "action|dialog_return\ndialog_name|lock_edit\ntilex|" .. lx .. "|\ntiley|" .. ly .. "|\ncheckbox_public|0\ncheckbox_vending|0\ncheckbox_magplant|0\ncheckbox_vip|0\ncheckbox_sbox|0\ncheckbox_dbox|0\ncheckbox_drop|1\ncheckbox_cheater|0\ncheckbox_dghost|0\ncheckbox_disable_music|0\ntempo|100\ncheckbox_disable_music_render|0\ncheckbox_set_as_home_world|0\nminimum_entry_level|1\n"
+                    SendPacket(2, pkt)
+                    Log("`2[Lock Edit] `0World Lock found at (" .. lx .. ", " .. ly .. ") -> Sent Allow Drop packet!`0")
+                else
+                    Log("`4[Lock Edit Error] `0No World Lock detected in world.`0")
+                end
+            end)
+        end
+
+        if ImGui.Button("Instant Upgrade x8") then
+            local pkt = "action|dialog_return\ndialog_name|upgrade_gems_bonus\npF9ObTfunNhwuxFmsYOh|q5wYFiXHQkOSgI2GxXsjxh|\nDjJF2IlMmGcUOtn7uhbyv2I|GUGS6vOqBZhvl3zWLHjhy|\nZ1uerOtYnmpFzG06QwEWKxTI|W01P7IbNJyXnZ75SSc0RJ8ISu|\nWleCqjANtZBh8BLN42rH5aVfH1F|t7b3oCYJZsq9s0R5kptwPlXQxPb|\n"
+            SendPacket(2, pkt)
+            Log("`2[Upgrade x8] `0Sent instant upgrade gems bonus packet!`0")
+        end
+
         ImGui.SameLine()
         if ImGui.Button("Get Server Info") then
             local client = type(GetClient) == "function" and GetClient() or {}
