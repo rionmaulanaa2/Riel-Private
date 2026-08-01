@@ -209,7 +209,7 @@ end
 
 local function StripColorCodes(str)
     if type(str) ~= "string" then return tostring(str or "") end
-    return (str:gsub("`%w", ""):gsub("``", ""))
+    return str:gsub("`%w", ""):gsub("``", "")
 end
 
 local function GetItemNameByID(id)
@@ -943,7 +943,7 @@ local function ClearWaterStep()
         if Config.ClearDirection == "top" and waterCY >= world.height then break end
         if Config.ClearDirection == "bottom" and waterCY < 0 then break end
         local cell = SafeGetTile(waterCX, waterCY)
-        if IsWaterTile(cell) then targetX = waterCX targetY = waterCY break end
+        if IsWaterTile(cell) then targetX = waterCX; targetY = waterCY; break end
         waterCX = waterCX + 1
         if waterCX >= world.width then
             waterCX = 0
@@ -1038,9 +1038,9 @@ local function AutoHarvestStep()
         if not InitializeHarvest() then return end
     end
     if Config.HarvestDirection == "top" then
-        if harvestY > harvestRowMaxY then Log("`2[Auto Harvest] `0Finished!") Config.AutoHarvest = false harvestY = nil currentHarvestX = nil return end
+        if harvestY > harvestRowMaxY then Log("`2[Auto Harvest] `0Finished!"); Config.AutoHarvest = false; harvestY = nil; currentHarvestX = nil; return end
     else
-        if harvestY < harvestRowMinY then Log("`2[Auto Harvest] `0Finished!") Config.AutoHarvest = false harvestY = nil currentHarvestX = nil return end
+        if harvestY < harvestRowMinY then Log("`2[Auto Harvest] `0Finished!"); Config.AutoHarvest = false; harvestY = nil; currentHarvestX = nil; return end
     end
     local xList = harvestTargetRows[harvestY]
     if not xList or harvestXIndex > #xList then
@@ -1053,7 +1053,7 @@ local function AutoHarvestStep()
     while harvestXIndex <= #xList and skipped < maxSkips do
         local tx = xList[harvestXIndex]
         local tile = SafeGetTile(tx, harvestY)
-        if tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID then targetX = tx targetTile = tile break end
+        if tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID then targetX = tx; targetTile = tile; break end
         harvestXIndex = harvestXIndex + 1
         skipped = skipped + 1
     end
@@ -1101,7 +1101,7 @@ local function AutoPlaceStep()
         local pY = (local_ and type(local_) == "table" and type(local_.pos) == "table") and math.floor(local_.pos.y / 32) or nil
         if not (pX == placeX and pY == placeY) then
             local tile = SafeGetTile(placeX, placeY)
-            if tile.fg == 0 then targetX = placeX targetY = placeY break end
+            if tile.fg == 0 then targetX = placeX; targetY = placeY; break end
         end
         placeX = placeX + 1
         if placeX >= world.width then
@@ -1111,7 +1111,7 @@ local function AutoPlaceStep()
         if _placeScan >= 500 then return end
     end
     if targetX and targetY then
-        if GetItemCount(Config.PlaceItemID) == 0 then Log("`4[Auto Place] `0Out of items! Stopping.") Config.AutoPlace = false return end
+        if GetItemCount(Config.PlaceItemID) == 0 then Log("`4[Auto Place] `0Out of items! Stopping."); Config.AutoPlace = false; return end
         while SafeGetTile(targetX, targetY).fg == 0 do
             if not Run or Paused or not Config.AutoPlace then return end
             SendPacketRaw(false, {type = 3, value = Config.PlaceItemID, px = targetX, py = targetY, x = targetX * 32, y = targetY * 32})
