@@ -106,7 +106,10 @@ local currentSessionID = _G.SigtuneSessionID
 
 if _G.SigtuneCleanup then pcall(_G.SigtuneCleanup) end
 
-local Run = true, Paused = false, lastPlayers = {}, startX, startY
+local Run = true
+local Paused = false
+local lastPlayers = {}
+local startX, startY
 
 -- API Wrappers
 if not _G._origGetLocal then _G._origGetLocal = _G.GetLocal or GetLocal end
