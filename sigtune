@@ -117,18 +117,65 @@ if not _G._origGetWorld then _G._origGetWorld = _G.GetWorld or GetWorld end
 if not _G._origGetInventory then _G._origGetInventory = _G.GetInventory or GetInventory end
 if not _G._origGetObjectList then _G._origGetObjectList = _G.GetObjectList or GetObjectList end
 
-function GetLocal(...) local fn = _G._origGetLocal or _G.GetLocal; if not fn then return nil end; local ok, res = pcall(fn, ...); if ok and type(res) == "table" then return res end; return nil end
-function GetWorld(...) local fn = _G._origGetWorld or _G.GetWorld; if not fn then return nil end; local ok, res = pcall(fn, ...); if ok and type(res) == "table" then return res end; return nil end
-function GetInventory(...) local fn = _G._origGetInventory or _G.GetInventory; if not fn then return nil end; local ok, res = pcall(fn, ...); if ok and type(res) == "table" then return res end; return nil end
-function GetObjectList(...) local fn = _G._origGetObjectList or _G.GetObjectList; if not fn then return nil end; local ok, res = pcall(fn, ...); if ok and type(res) == "table" then return res end; return nil end
+function GetLocal(...)
+    local fn = _G._origGetLocal or _G.GetLocal
+    if not fn then return nil end
+    local ok, res = pcall(fn, ...)
+    if ok and type(res) == "table" then return res end
+    return nil
+end
 
-local function Log(msg) LogToConsole("`0[`2Sigtune`0] `9" .. tostring(msg)) end
-local function SafeGetTile(x, y) if not GetTile then return {fg=0,bg=0,flags=0} end; local ok, tile = pcall(GetTile, x, y); if ok and type(tile) == "table" then return tile end; return {fg=0,bg=0,flags=0} end
-local function IsIgnoredClearBlock(id) if not id or id == 0 then return false end; if id == 8 or id == 6 then return true end; if Config.ClearIgnoreBlocks and Config.ClearIgnoreBlocks[id] then return true end; return false end
+function GetWorld(...)
+    local fn = _G._origGetWorld or _G.GetWorld
+    if not fn then return nil end
+    local ok, res = pcall(fn, ...)
+    if ok and type(res) == "table" then return res end
+    return nil
+end
 
-local modDetected = false, whitelistInput = "", manualGrowID = ""
-local waitingForBackpackItem = nil, pendingGoToTarget = nil, pendingScanInfo = false
-local autoHarvestGhostState = false, autoClearWorldCleanupState = false, blockingWaterDropDialog = false
+function GetInventory(...)
+    local fn = _G._origGetInventory or _G.GetInventory
+    if not fn then return nil end
+    local ok, res = pcall(fn, ...)
+    if ok and type(res) == "table" then return res end
+    return nil
+end
+
+function GetObjectList(...)
+    local fn = _G._origGetObjectList or _G.GetObjectList
+    if not fn then return nil end
+    local ok, res = pcall(fn, ...)
+    if ok and type(res) == "table" then return res end
+    return nil
+end
+
+local function Log(msg)
+    LogToConsole("`0[`2Sigtune`0] `9" .. tostring(msg))
+end
+
+local function SafeGetTile(x, y)
+    if not GetTile then return {fg=0,bg=0,flags=0} end
+    local ok, tile = pcall(GetTile, x, y)
+    if ok and type(tile) == "table" then return tile end
+    return {fg=0,bg=0,flags=0}
+end
+
+local function IsIgnoredClearBlock(id)
+    if not id or id == 0 then return false end
+    if id == 8 or id == 6 then return true end
+    if Config.ClearIgnoreBlocks and Config.ClearIgnoreBlocks[id] then return true end
+    return false
+end
+
+local modDetected = false
+local whitelistInput = ""
+local manualGrowID = ""
+local waitingForBackpackItem = nil
+local pendingGoToTarget = nil
+local pendingScanInfo = false
+local autoHarvestGhostState = false
+local autoClearWorldCleanupState = false
+local blockingWaterDropDialog = false
 
 local ALL_HOOK_IDS = {
     "DebugPacketLogger", "DebugPacketRawLogger", "DebugVariantLogger",
@@ -138,34 +185,129 @@ local ALL_HOOK_IDS = {
     "GhostPlayerCleanupSend", "GhostPlayerCleanupVariant"
 }
 
-local function RemoveHooks() if type(RemoveHook) == "function" then for _, id in ipairs(ALL_HOOK_IDS) do pcall(RemoveHook, id) end end end
-_G.SigtuneCleanup = function() Run = false; Paused = false; RemoveHooks(); LogToConsole("`0[`2Sigtune`0] `4Cleanup complete.`0") end
+local function RemoveHooks()
+    if type(RemoveHook) == "function" then
+        for _, id in ipairs(ALL_HOOK_IDS) do
+            pcall(RemoveHook, id)
+        end
+    end
+end
 
-local function SafeRunThread(fn) RunThread(function() local ok, err = pcall(fn); if not ok then Log("`4[Error] `0" .. tostring(err)) end end) end
-local function StripColorCodes(str) if type(str) ~= "string" then return tostring(str or "") end; return (str:gsub("`%w", ""):gsub("``", "")) end
-local function GetItemNameByID(id) if not id or tonumber(id) == 0 then return "Empty" end; id = tonumber(id); if GetItemInfo then local ok, info = pcall(GetItemInfo, id); if ok and info and info.name then return info.name end end; return "Item #" .. tostring(id) end
+_G.SigtuneCleanup = function()
+    Run = false
+    Paused = false
+    RemoveHooks()
+    LogToConsole("`0[`2Sigtune`0] `4Cleanup complete.`0")
+end
+
+local function SafeRunThread(fn)
+    RunThread(function()
+        local ok, err = pcall(fn)
+        if not ok then Log("`4[Error] `0" .. tostring(err)) end
+    end)
+end
+
+local function StripColorCodes(str)
+    if type(str) ~= "string" then return tostring(str or "") end
+    return (str:gsub("`%w", ""):gsub("``", ""))
+end
+
+local function GetItemNameByID(id)
+    if not id or tonumber(id) == 0 then return "Empty" end
+    id = tonumber(id)
+    if GetItemInfo then
+        local ok, info = pcall(GetItemInfo, id)
+        if ok and info and info.name then return info.name end
+    end
+    return "Item #" .. tostring(id)
+end
 
 -- Webhook Queue
 local debugWebhookQueue = {}
-local function GetTimeStr() local t = ""; pcall(function() if os and os.date then t = " " .. os.date("[%H:%M:%S]") end end); return t end
+local function GetTimeStr()
+    local t = ""
+    pcall(function()
+        if os and os.date then
+            t = " " .. os.date("[%H:%M:%S]")
+        end
+    end)
+    return t
+end
+
 local function SendToWebhook(title, description, color, ignoreConfig)
     if not ignoreConfig and not (Config.DebugSendPacket or Config.DebugSendPacketRaw or Config.DebugVariant) then return end
     if Config.DebugWebhookURL == "" or not MakeRequest then return end
-    local function esc(s) s = tostring(s); s = s:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("\r", ""):gsub("\n", "\\n"):gsub("\t", " "); return s end
-    local world = GetWorld and GetWorld() or nil; local local_ = GetLocal and GetLocal() or nil
-    local worldName = world and world.name or "Unknown"; local playerName = local_ and local_.name or "Unknown"
-    title = esc(title or "Debug"); description = esc(description or ""); color = tonumber(color) or 16776960
+    local function esc(s)
+        s = tostring(s)
+        s = s:gsub("\\", "\\\\")
+        s = s:gsub('"', '\\"')
+        s = s:gsub("\r", "")
+        s = s:gsub("\n", "\\n")
+        s = s:gsub("\t", " ")
+        return s
+    end
+    local world = GetWorld and GetWorld() or nil
+    local local_ = GetLocal and GetLocal() or nil
+    local worldName = world and world.name or "Unknown"
+    local playerName = local_ and local_.name or "Unknown"
+    title = esc(title or "Debug")
+    description = esc(description or "")
+    color = tonumber(color) or 16776960
     if #description > 1900 then description = description:sub(1, 1900) end
     local body = '{"embeds":[{"title":"' .. title .. '","description":"' .. description .. '","color":' .. tostring(color) .. ',"footer":{"text":"Player: ' .. esc(playerName) .. ' | World: ' .. esc(worldName) .. '"}}]}'
     if #debugWebhookQueue >= 300 then table.remove(debugWebhookQueue, 1) end
     table.insert(debugWebhookQueue, {url = Config.DebugWebhookURL, body = body, ignoreConfig = ignoreConfig})
 end
-RunThread(function() while currentSessionID == _G.SigtuneSessionID do if #debugWebhookQueue > 0 then local job = table.remove(debugWebhookQueue, 1); if job and job.url and job.url ~= "" then pcall(function() MakeRequest(job.url, "POST", {["Content-Type"]="application/json"}, job.body) end); local cooldown = (job.ignoreConfig and 500) or math.max(500, Config.DebugRateLimit or 2000); Sleep(cooldown) else Sleep(100) end else Sleep(200) end end end)
+
+RunThread(function()
+    while currentSessionID == _G.SigtuneSessionID do
+        if #debugWebhookQueue > 0 then
+            local job = table.remove(debugWebhookQueue, 1)
+            if job and job.url and job.url ~= "" then
+                pcall(function()
+                    MakeRequest(job.url, "POST", {["Content-Type"]="application/json"}, job.body)
+                end)
+                local cooldown = (job.ignoreConfig and 500) or math.max(500, Config.DebugRateLimit or 2000)
+                Sleep(cooldown)
+            else
+                Sleep(100)
+            end
+        else
+            Sleep(200)
+        end
+    end
+end)
 
 -- Packet Debug Hooks
-AddHook("OnSendPacket", "DebugPacketLogger", function(type, data) if not Config.DebugSendPacket then return false end; if type == 2 or type == 3 then local out = "SendPacket" .. GetTimeStr() .. "\ntype " .. type .. ": " .. tostring(data); SendToWebhook("Packet Debug", out, 16776960) end; return false end)
-AddHook("OnSendPacketRaw", "DebugPacketRawLogger", function(packet) if not Config.DebugSendPacketRaw then return false end; if type(packet) == "table" then local out = "SendPacketRaw" .. GetTimeStr() .. "\ntype: " .. tostring(packet.type or 0) .. "\nvalue: " .. tostring(packet.value or 0) .. "\ntilex, tiley: " .. tostring(packet.px or 0) .. " " .. tostring(packet.py or 0); SendToWebhook("Packet Debug", out, 16776960) end; return false end)
-AddHook("OnVariant", "DebugVariantLogger", function(var) if not Config.DebugVariant then return false end; if type(var) == "table" then local out = "Variant" .. GetTimeStr() .. "\n"; for k, v in pairs(var) do out = out .. tostring(k) .. ": " .. tostring(v) .. "\n" end; SendToWebhook("Packet Debug", out, 16776960) end; return false end)
+AddHook("OnSendPacket", "DebugPacketLogger", function(type, data)
+    if not Config.DebugSendPacket then return false end
+    if type == 2 or type == 3 then
+        local out = "SendPacket" .. GetTimeStr() .. "\ntype " .. type .. ": " .. tostring(data)
+        SendToWebhook("Packet Debug", out, 16776960)
+    end
+    return false
+end)
+
+AddHook("OnSendPacketRaw", "DebugPacketRawLogger", function(packet)
+    if not Config.DebugSendPacketRaw then return false end
+    if type(packet) == "table" then
+        local out = "SendPacketRaw" .. GetTimeStr() .. "\ntype: " .. tostring(packet.type or 0) .. "\nvalue: " .. tostring(packet.value or 0) .. "\ntilex, tiley: " .. tostring(packet.px or 0) .. " " .. tostring(packet.py or 0)
+        SendToWebhook("Packet Debug", out, 16776960)
+    end
+    return false
+end)
+
+AddHook("OnVariant", "DebugVariantLogger", function(var)
+    if not Config.DebugVariant then return false end
+    if type(var) == "table" then
+        local out = "Variant" .. GetTimeStr() .. "\n"
+        for k, v in pairs(var) do
+            out = out .. tostring(k) .. ": " .. tostring(v) .. "\n"
+        end
+        SendToWebhook("Packet Debug", out, 16776960)
+    end
+    return false
+end)
 
 -- ==========================================================================
 -- *** THE KEY FIX: SINGLE UNIFIED GetOtherPlayers() ***
@@ -174,14 +316,23 @@ AddHook("OnVariant", "DebugVariantLogger", function(var) if not Config.DebugVari
 -- The original had TWO functions - the second overwrote the first and ignored forceLeft!
 -- ==========================================================================
 
-local forceLeft = {}, lastPlayersRef = {}, livePlayers = {}, playerJoinTime = {}
+local forceLeft = {}
+local lastPlayersRef = {}
+local livePlayers = {}
+local playerJoinTime = {}
 
-local function StripColors(s) if not s then return "" end; return tostring(s):gsub("`[0-9a-zA-Z]", "") end
+local function StripColors(s)
+    if not s then return "" end
+    return tostring(s):gsub("`[0-9a-zA-Z]", "")
+end
 
 -- Reset tracking on world change
 AddHook("OnSendPacket", "PlayerTrackerSend", function(type, packet)
     if type == 3 and packet:find("action|join_request") then
-        forceLeft = {}; lastPlayersRef = {}; livePlayers = {}; playerJoinTime = {}
+        forceLeft = {}
+        lastPlayersRef = {}
+        livePlayers = {}
+        playerJoinTime = {}
         Log("`9[PlayerTrack] `0World change - reset tracking.")
     end
     return false
@@ -192,7 +343,7 @@ AddHook("OnVariant", "PlayerTrackerVariant", function(var)
     -- OnSpawn: player joined
     if var[0] == "OnSpawn" then
         local spawnData = tostring(var[1] or "")
-        if spawnData:find("local|1") then return false end -- Skip self
+        if spawnData:find("local|1") then return false end
         local netid = tonumber(spawnData:match("netID|(%d+)"))
         local userid = tonumber(spawnData:match("userID|(%d+)"))
         local name = StripColors(spawnData:match("name|([^\n]+)") or "")
@@ -211,7 +362,8 @@ AddHook("OnVariant", "PlayerTrackerVariant", function(var)
         if netid then
             local info = livePlayers[netid] or lastPlayersRef[netid]
             local name = info and info.name or "(netid " .. tostring(netid) .. ")"
-            livePlayers[netid] = nil; forceLeft[netid] = true
+            livePlayers[netid] = nil
+            forceLeft[netid] = true
             Log("`9[PlayerTrack] `0Left: `e" .. name .. "`0 (netid " .. netid .. ")")
         end
     end
@@ -226,7 +378,8 @@ AddHook("OnVariant", "PlayerTrackerVariant", function(var)
                 for netid, info in pairs(lastPlayersRef) do
                     local cleanName = StripColors(info.name)
                     if cleanName == nameStr or cleanName:lower() == nameStr:lower() then
-                        livePlayers[netid] = nil; forceLeft[netid] = true
+                        livePlayers[netid] = nil
+                        forceLeft[netid] = true
                         Log("`9[PlayerTrack] `0Console evict: `e" .. nameStr .. "`0")
                     end
                 end
@@ -256,7 +409,11 @@ function GetOtherPlayers()
     end
     local result = {}
     for netid, info in pairs(livePlayers) do
-        if not forceLeft[netid] then result[netid] = info else livePlayers[netid] = nil end
+        if not forceLeft[netid] then
+            result[netid] = info
+        else
+            livePlayers[netid] = nil
+        end
     end
     return result
 end
@@ -290,14 +447,21 @@ AddHook("OnVariant", "ModDevDetector", function(var)
         if (dlg:find("MAGPLANT") or dlg:find("itemsucker_block")) and magplantScanInfoRunning then return true end
         if var[1]:find("backpack_menu") then
             if waitingForBackpackItem then
-                local dialog = var[1]; local itemIDStr = tostring(waitingForBackpackItem)
+                local dialog = var[1]
+                local itemIDStr = tostring(waitingForBackpackItem)
                 local slot = dialog:match("add_button_with_icon|(%d+)|[^|]*|frame|" .. itemIDStr .. "|")
                 if slot then
                     SendPacket(2, "action|dialog_return\ndialog_name|backpack_menu\nbuttonClicked|" .. slot)
                     Log("`2Resupplied item `b" .. itemIDStr .. "`2 from slot `b" .. slot .. "`0")
-                else Log("`4Item `b" .. itemIDStr .. "`4 not found in backpack!`0"); Config.AutoPlace = false end
-                waitingForBackpackItem = nil; return true
-            elseif (Config.AutoBackpack or Config.AutoMagplant) and Run and not Paused then return true end
+                else
+                    Log("`4Item `b" .. itemIDStr .. "`4 not found in backpack!`0")
+                    Config.AutoPlace = false
+                end
+                waitingForBackpackItem = nil
+                return true
+            elseif (Config.AutoBackpack or Config.AutoMagplant) and Run and not Paused then
+                return true
+            end
         end
     end
     return false
@@ -307,38 +471,70 @@ end)
 local function IsWhitelisted(userid)
     local local_ = GetLocal()
     if local_ and local_.userid and tonumber(local_.userid) == tonumber(userid) then return true end
-    for _, uid in ipairs(Config.Whitelist) do if tonumber(uid) == tonumber(userid) then return true end end
+    for _, uid in ipairs(Config.Whitelist) do
+        if tonumber(uid) == tonumber(userid) then return true end
+    end
     return false
 end
 
 local function SavePreviousConfig()
     if Paused then return end
     local hasActive = false
-    for k, v in pairs(Config) do if type(v) == "boolean" and v == true and k ~= "DebugSendPacket" and k ~= "DebugSendPacketRaw" and k ~= "DebugVariant" then hasActive = true; break end end
-    if hasActive then PreviousConfig = {}; for k, v in pairs(Config) do if type(v) == "boolean" then PreviousConfig[k] = v end end end
+    for k, v in pairs(Config) do
+        if type(v) == "boolean" and v == true and k ~= "DebugSendPacket" and k ~= "DebugSendPacketRaw" and k ~= "DebugVariant" then
+            hasActive = true
+            break
+        end
+    end
+    if hasActive then
+        PreviousConfig = {}
+        for k, v in pairs(Config) do
+            if type(v) == "boolean" then PreviousConfig[k] = v end
+        end
+    end
 end
 
 local function PauseAllFeatures(reason)
     if not Paused then
-        SavePreviousConfig(); Paused = true
+        SavePreviousConfig()
+        Paused = true
         Log("`4[PAUSE] `0" .. (reason or "Stranger in world!"))
-        Config.AutoPunch = false; Config.AutoPunchAntiMove = false; Config.AutoPlace = false
-        Config.AutoCreateFarm = false; Config.AutoPunchWorld = false; Config.PunchWorldHarvestMode = false
-        Config.AutoHarvest = false; Config.AutoClearWorld = false; Config.AutoClearWater = false
-        Config.ClearWorldTeleportRow = false; Config.AutoSurgery = false; Config.DebugSurgery = false
-        Config.AutoTake = false; Config.AutoBackpack = false; Config.AutoMagplant = false
-        Config.LoopMagplantScan = false; Config.AutoJoinRunning = false; Config.AutoJoin = false
+        Config.AutoPunch = false
+        Config.AutoPunchAntiMove = false
+        Config.AutoPlace = false
+        Config.AutoCreateFarm = false
+        Config.AutoPunchWorld = false
+        Config.PunchWorldHarvestMode = false
+        Config.AutoHarvest = false
+        Config.AutoClearWorld = false
+        Config.AutoClearWater = false
+        Config.ClearWorldTeleportRow = false
+        Config.AutoSurgery = false
+        Config.DebugSurgery = false
+        Config.AutoTake = false
+        Config.AutoBackpack = false
+        Config.AutoMagplant = false
+        Config.LoopMagplantScan = false
+        Config.AutoJoinRunning = false
+        Config.AutoJoin = false
     end
 end
 
 local function ResumeAllFeatures()
     if Paused then
         Paused = false
-        if not Run then Run = true; Log("`2[RESUME] `0Re-enabling script run loop.") end
+        if not Run then
+            Run = true
+            Log("`2[RESUME] `0Re-enabling script run loop.")
+        end
         Log("`2[RESUME] `0No strangers in world! Resuming previously active features...")
         local countResumed = 0
         for k, v in pairs(PreviousConfig) do
-            if type(v) == "boolean" and v == true then Config[k] = true; countResumed = countResumed + 1; Log("`9 -> Resumed: `2" .. tostring(k) .. "`0") end
+            if type(v) == "boolean" and v == true then
+                Config[k] = true
+                countResumed = countResumed + 1
+                Log("`9 -> Resumed: `2" .. tostring(k) .. "`0")
+            end
         end
         if countResumed == 0 then Log("`e[RESUME] `0No features were active prior to pause.") end
     end
@@ -347,7 +543,9 @@ end
 local function ConfigCheckbox(label, key)
     local displayVal = Paused and (PreviousConfig[key] or false) or Config[key]
     local c, v = ImGui.Checkbox(label, displayVal)
-    if c then if Paused then PreviousConfig[key] = v else Config[key] = v end end
+    if c then
+        if Paused then PreviousConfig[key] = v else Config[key] = v end
+    end
     return c, v
 end
 
@@ -389,17 +587,40 @@ local function CheckBackpack()
                 local newCount = GetItemCount(id)
                 if newCount >= count then
                     failedStashCounts[id] = (failedStashCounts[id] or 0) + 1
-                    if failedStashCounts[id] >= 3 then Log("`4[Auto Backpack] `0Storage full for ID `b" .. tostring(id) .. "`4! Disabling.`0"); Config.AutoBackpack = false; return end
-                else failedStashCounts[id] = 0; Log("`2[Auto Backpack] `0Stashed ID `b" .. tostring(id) .. "`2. Remaining: " .. newCount) end
+                    if failedStashCounts[id] >= 3 then
+                        Log("`4[Auto Backpack] `0Storage full for ID `b" .. tostring(id) .. "`4! Disabling.`0")
+                        Config.AutoBackpack = false
+                        return
+                    end
+                else
+                    failedStashCounts[id] = 0
+                    Log("`2[Auto Backpack] `0Stashed ID `b" .. tostring(id) .. "`2. Remaining: " .. newCount)
+                end
             end
         end
     end
 end
 
-local function IsInTakeList(id) for _, listId in ipairs(Config.TakeList) do if listId == id then return true end end return false end
+local function IsInTakeList(id)
+    for _, listId in ipairs(Config.TakeList) do
+        if listId == id then return true end
+    end
+    return false
+end
+
 local failedObjectPickups = {}
-local function GetObjectKey(obj) if not obj then return "" end; if obj.oid then return tostring(obj.oid) end; local px = (obj.pos and obj.pos.x) or 0; local py = (obj.pos and obj.pos.y) or 0; return px .. "_" .. py .. "_" .. (obj.id or 0) end
-local function GetDistance(x1, y1, x2, y2) return math.sqrt((x2 - x1)^2 + (y2 - y1)^2) end
+
+local function GetObjectKey(obj)
+    if not obj then return "" end
+    if obj.oid then return tostring(obj.oid) end
+    local px = (obj.pos and obj.pos.x) or 0
+    local py = (obj.pos and obj.pos.y) or 0
+    return px .. "_" .. py .. "_" .. (obj.id or 0)
+end
+
+local function GetDistance(x1, y1, x2, y2)
+    return math.sqrt((x2 - x1)^2 + (y2 - y1)^2)
+end
 
 local function CollectItems()
     local objs = GetObjectList()
@@ -416,8 +637,10 @@ local function CollectItems()
                 local shouldTake = not Config.UseTakeList
                 if Config.UseTakeList and IsInTakeList(obj.id) then shouldTake = true end
                 if shouldTake then
-                    local dx = localPos.x - obj.pos.x; local dy = localPos.y - obj.pos.y
-                    obj.distSq = dx * dx + dy * dy; obj.key = key
+                    local dx = localPos.x - obj.pos.x
+                    local dy = localPos.y - obj.pos.y
+                    obj.distSq = dx * dx + dy * dy
+                    obj.key = key
                     table.insert(validObjs, obj)
                 end
             end
@@ -428,50 +651,88 @@ local function CollectItems()
     local moved = false
     for _, obj in ipairs(validObjs) do
         if Paused then break end
-        local objX = math.floor(obj.pos.x / 32); local objY = math.floor(obj.pos.y / 32)
+        local objX = math.floor(obj.pos.x / 32)
+        local objY = math.floor(obj.pos.y / 32)
         local l = GetLocal()
         if l and type(l) == "table" and type(l.pos) == "table" then
-            local currPos = l.pos; local currX = math.floor(currPos.x / 32); local currY = math.floor(currPos.y / 32)
+            local currPos = l.pos
+            local currX = math.floor(currPos.x / 32)
+            local currY = math.floor(currPos.y / 32)
             if currX ~= objX or currY ~= objY then
-                if Config.TeleportToItems then FindPath(objX, objY, 0); Sleep(50) else FindPath(objX, objY, 100); Sleep(200) end
+                if Config.TeleportToItems then
+                    FindPath(objX, objY, 0)
+                    Sleep(50)
+                else
+                    FindPath(objX, objY, 100)
+                    Sleep(200)
+                end
                 moved = true
             end
         end
-        local postObjs = GetObjectList(); local stillExists = false
-        if postObjs then for _, pObj in pairs(postObjs) do if GetObjectKey(pObj) == obj.key then stillExists = true; break end end end
-        if stillExists then failedObjectPickups[obj.key] = (failedObjectPickups[obj.key] or 0) + 1
+        local postObjs = GetObjectList()
+        local stillExists = false
+        if postObjs then
+            for _, pObj in pairs(postObjs) do
+                if GetObjectKey(pObj) == obj.key then stillExists = true break end
+            end
+        end
+        if stillExists then
+            failedObjectPickups[obj.key] = (failedObjectPickups[obj.key] or 0) + 1
             if failedObjectPickups[obj.key] >= 3 then Log("`4[Auto Take] `0Item uncollectable - skipping.") end
         end
         if Config.AutoBackpack then CheckBackpack() end
     end
-    if moved and startX and startY and not Config.TeleportToItems then FindPath(startX, startY, 100); Sleep(200) end
+    if moved and startX and startY and not Config.TeleportToItems then
+        FindPath(startX, startY, 100)
+        Sleep(200)
+    end
 end
 
 -- Punch Tile
 local punchSavedLocX, punchSavedLocY = nil, nil
+
 local function PunchTile()
     if Config.AutoPunchAntiMove then
         local local_ = GetLocal()
         if local_ and type(local_) == "table" and type(local_.pos) == "table" then
-            if punchSavedLocX == nil then punchSavedLocX = local_.pos.x; punchSavedLocY = local_.pos.y
-            else local dx = math.abs(local_.pos.x - punchSavedLocX); local dy = math.abs(local_.pos.y - punchSavedLocY)
-                if dx > 1 or dy > 1 then SendPacketRaw(false, {type = 0, x = punchSavedLocX, y = punchSavedLocY, px = 0, py = 0}) end
+            if punchSavedLocX == nil then
+                punchSavedLocX = local_.pos.x
+                punchSavedLocY = local_.pos.y
+            else
+                local dx = math.abs(local_.pos.x - punchSavedLocX)
+                local dy = math.abs(local_.pos.y - punchSavedLocY)
+                if dx > 1 or dy > 1 then
+                    SendPacketRaw(false, {type = 0, x = punchSavedLocX, y = punchSavedLocY, px = 0, py = 0})
+                end
             end
         end
-    else punchSavedLocX = nil; punchSavedLocY = nil end
+    else
+        punchSavedLocX = nil
+        punchSavedLocY = nil
+    end
     SendPacketRaw(false, {type = 3, value = Config.ItemID, px = Config.TileX, py = Config.TileY, x = Config.TileX * 32, y = Config.TileY * 32})
 end
 
 -- Magplant
 MagplantsList = {}
 local currentMagplantIndex = 1
-local magplantScanInfoRunning = false, magplantDialogReceived = false
+local magplantScanInfoRunning = false
+local magplantDialogReceived = false
 
 function ScanMagplants()
-    MagplantsList = {}; currentMagplantIndex = 1
+    MagplantsList = {}
+    currentMagplantIndex = 1
     local world = GetWorld()
     if not world then return end
-    for x = 0, world.width - 1 do for y = 0, world.height - 1 do local fg = SafeGetTile(x, y).fg; if fg == 5638 or fg == 5930 then local kind = (fg == 5930) and "Legendary" or "Normal"; table.insert(MagplantsList, {x = x, y = y, itemID = nil, amount = nil, kind = kind, active = false}) end end end
+    for x = 0, world.width - 1 do
+        for y = 0, world.height - 1 do
+            local fg = SafeGetTile(x, y).fg
+            if fg == 5638 or fg == 5930 then
+                local kind = (fg == 5930) and "Legendary" or "Normal"
+                table.insert(MagplantsList, {x = x, y = y, itemID = nil, amount = nil, kind = kind, active = false})
+            end
+        end
+    end
     Log("`2[Auto Magplant] `0Scanned `b" .. #MagplantsList .. "`0 magplants.")
     if #MagplantsList == 0 then Config.AutoMagplant = false end
 end
@@ -489,7 +750,10 @@ function ScanMagplantInfo()
             magplantDialogReceived = false
             SendPacketRaw(false, {type = 3, value = 32, px = m.x, py = m.y, x = m.x * 32, y = m.y * 32, state = 16})
             local waited = 0
-            while not magplantDialogReceived and waited < 2000 do Sleep(100); waited = waited + 100 end
+            while not magplantDialogReceived and waited < 2000 do
+                Sleep(100)
+                waited = waited + 100
+            end
             if not magplantDialogReceived then Log("`4[Magplant Scan] `0No dialog from (" .. m.x .. "," .. m.y .. ")") end
             Sleep(Config.MagplantScanDelay or 100)
         end
@@ -520,7 +784,8 @@ end
 
 -- Clear World
 local clearWX, clearWY = nil, nil
-local clearWVisited = {}, lastClearRowY = nil
+local clearWVisited = {}
+local lastClearRowY = nil
 
 local function ConfigureWorldLockDrop()
     local lx, ly = FindWorldLockTile()
@@ -530,7 +795,9 @@ local function ConfigureWorldLockDrop()
         local pkt = "action|dialog_return\ndialog_name|lock_edit\ntilex|" .. lx .. "|\ntiley|" .. ly .. "|\ncheckbox_public|0\ncheckbox_drop|1\n"
         SendPacket(2, pkt)
         Log("`2[Clear World] `0World Lock configured (Allow Drop)!")
-        Sleep(200); SendPacket(2, "action|respawn"); Sleep(2000)
+        Sleep(200)
+        SendPacket(2, "action|respawn")
+        Sleep(2000)
         if Config.ClearWorldTeleportRow then
             SendPacketRaw(false, {type = 0, x = 0, y = 0, px = 0, py = 0})
         end
@@ -542,18 +809,22 @@ local function InitializeClear()
     if not world then return end
     ConfigureWorldLockDrop()
     clearWY = Config.ClearDirection == "top" and 0 or (world.height - 1)
-    clearWX = 0; clearWVisited = {}; lastClearRowY = nil
+    clearWX = 0
+    clearWVisited = {}
+    lastClearRowY = nil
     Log("`9[Clear World] `0Initialized. Direction: " .. Config.ClearDirection)
 end
 
 local function ClearWorldStep()
     local world = GetWorld()
-    if not world then Sleep(200); return end
+    if not world then Sleep(200) return end
     if clearWX == nil then InitializeClear() end
     if (Config.ClearDirection == "top" and clearWY >= world.height) or (Config.ClearDirection == "bottom" and clearWY < 0) then
         Log("`2[Clear World] `0Finished! Transitioning to water clear...")
-        Config.AutoClearWorld = false; clearWX, clearWY = nil, nil
-        Config.AutoClearWater = true; return
+        Config.AutoClearWorld = false
+        clearWX, clearWY = nil, nil
+        Config.AutoClearWater = true
+        return
     end
     local targetX, targetY = nil, nil
     local passes, maxPasses = 0, 400
@@ -566,16 +837,29 @@ local function ClearWorldStep()
             local skipFg = IsIgnoredClearBlock(cell.fg)
             local skipBg = IsIgnoredClearBlock(cell.bg)
             if (cell.fg ~= 0 or cell.bg ~= 0) and not skipFg and not skipBg then
-                targetX = clearWX; targetY = clearWY; break
-            else clearWVisited[key] = true end
+                targetX = clearWX
+                targetY = clearWY
+                break
+            else
+                clearWVisited[key] = true
+            end
         end
         clearWX = clearWX + 1
-        if clearWX >= world.width then clearWX = 0; clearWY = Config.ClearDirection == "top" and (clearWY + 1) or (clearWY - 1) end
+        if clearWX >= world.width then
+            clearWX = 0
+            clearWY = Config.ClearDirection == "top" and (clearWY + 1) or (clearWY - 1)
+        end
         passes = passes + 1
     end
     if not targetX or not targetY then return end
-    if lastClearRowY ~= targetY then lastClearRowY = targetY; local pct = math.floor((targetY / math.max(1, world.height - 1)) * 100); Log("`2[Clear World] `0Clearing Y: `b" .. targetY .. "`0/" .. (world.height - 1) .. " (" .. pct .. "%)") end
-    if Config.ClearWorldTeleportRow then SendPacketRaw(false, {type = 0, x = 0, y = targetY * 32, px = 0, py = targetY}) end
+    if lastClearRowY ~= targetY then
+        lastClearRowY = targetY
+        local pct = math.floor((targetY / math.max(1, world.height - 1)) * 100)
+        Log("`2[Clear World] `0Clearing Y: `b" .. targetY .. "`0/" .. (world.height - 1) .. " (" .. pct .. "%)")
+    end
+    if Config.ClearWorldTeleportRow then
+        SendPacketRaw(false, {type = 0, x = 0, y = targetY * 32, px = 0, py = targetY})
+    end
     local multiTargetList = {}
     for dx = 0, 4 do
         local tx = targetX + dx
@@ -585,7 +869,9 @@ local function ClearWorldStep()
                 local cell = SafeGetTile(tx, targetY)
                 if not IsIgnoredClearBlock(cell.fg) and not IsIgnoredClearBlock(cell.bg) and (cell.fg ~= 0 or cell.bg ~= 0) then
                     table.insert(multiTargetList, tx)
-                else clearWVisited[key] = true end
+                else
+                    clearWVisited[key] = true
+                end
             end
         end
     end
@@ -597,30 +883,41 @@ local function ClearWorldStep()
         Sleep(Config.ClearDelay)
         for _, tx in ipairs(multiTargetList) do
             local cell = SafeGetTile(tx, targetY)
-            if (cell.fg == 0 and cell.bg == 0) or IsIgnoredClearBlock(cell.fg) or IsIgnoredClearBlock(cell.bg) then clearWVisited[tx * 10000 + targetY] = true end
+            if (cell.fg == 0 and cell.bg == 0) or IsIgnoredClearBlock(cell.fg) or IsIgnoredClearBlock(cell.bg) then
+                clearWVisited[tx * 10000 + targetY] = true
+            end
         end
     else
         clearWVisited[targetX * 10000 + targetY] = true
         clearWX = targetX + 1
-        if clearWX >= world.width then clearWX = 0; clearWY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1) end
+        if clearWX >= world.width then
+            clearWX = 0
+            clearWY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)
+        end
     end
 end
 
 -- Clear Water
 local waterCX, waterCY = nil, nil
+
 local function IsWaterTile(cell)
     if not cell then return false end
     if cell.fg == 8 or IsIgnoredClearBlock(cell.fg) or IsIgnoredClearBlock(cell.bg) then return false end
     if cell.water == true or cell.water == 1 then return true end
-    if type(cell.flags) == "table" then if cell.flags.water == true or cell.flags.water == 1 then return true end end
-    if type(cell.flags) == "number" then if (cell.flags & 0x0040) ~= 0 or (cell.flags & 0x0080) ~= 0 or (cell.flags & 0x0200) ~= 0 then return true end end
+    if type(cell.flags) == "table" then
+        if cell.flags.water == true or cell.flags.water == 1 then return true end
+    end
+    if type(cell.flags) == "number" then
+        if (cell.flags & 0x0040) ~= 0 or (cell.flags & 0x0080) ~= 0 or (cell.flags & 0x0200) ~= 0 then return true end
+    end
     return false
 end
 
 local function InitializeClearWater()
     local world = GetWorld()
     if not world then return end
-    waterCY = Config.ClearDirection == "top" and 0 or (world.height - 1); waterCX = 0
+    waterCY = Config.ClearDirection == "top" and 0 or (world.height - 1)
+    waterCX = 0
     Log("`9[Clear Water] `0Initialized.")
 end
 
@@ -629,7 +926,8 @@ local function CheckWaterDrop()
         blockingWaterDropDialog = true
         SendPacket(2, "action|dialog_return\ndialog_name|drop_item\nitemID|822|\ncount|198\n")
         Log("`2[Clear Water] `0Dropped 198 water.")
-        Sleep(200); blockingWaterDropDialog = false
+        Sleep(200)
+        blockingWaterDropDialog = false
     end
 end
 
@@ -645,9 +943,12 @@ local function ClearWaterStep()
         if Config.ClearDirection == "top" and waterCY >= world.height then break end
         if Config.ClearDirection == "bottom" and waterCY < 0 then break end
         local cell = SafeGetTile(waterCX, waterCY)
-        if IsWaterTile(cell) then targetX = waterCX; targetY = waterCY; break end
+        if IsWaterTile(cell) then targetX = waterCX targetY = waterCY break end
         waterCX = waterCX + 1
-        if waterCX >= world.width then waterCX = 0; waterCY = Config.ClearDirection == "top" and (waterCY + 1) or (waterCY - 1) end
+        if waterCX >= world.width then
+            waterCX = 0
+            waterCY = Config.ClearDirection == "top" and (waterCY + 1) or (waterCY - 1)
+        end
     end
     if targetX and targetY then
         local hits = 0
@@ -656,14 +957,22 @@ local function ClearWaterStep()
             local t = SafeGetTile(targetX, targetY)
             if not IsWaterTile(t) then break end
             SendPacketRaw(false, {type = 3, value = Config.ClearSpongeID, px = targetX, py = targetY, x = targetX * 32, y = targetY * 32})
-            Sleep(Config.ClearDelay); hits = hits + 1
+            Sleep(Config.ClearDelay)
+            hits = hits + 1
         until hits >= 20
         waterCX = targetX + 1
-        if waterCX >= world.width then waterCX = 0; waterCY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1) end
+        if waterCX >= world.width then
+            waterCX = 0
+            waterCY = Config.ClearDirection == "top" and (targetY + 1) or (targetY - 1)
+        end
     else
         Log("`2[Clear Water] `0Finished! Enabling cleanup...")
-        Config.AutoClearWater = false; waterCX, waterCY = nil, nil
-        Config.AutoBackpack = true; Config.AutoTake = true; Config.TeleportToItems = true; autoClearWorldCleanupState = true
+        Config.AutoClearWater = false
+        waterCX, waterCY = nil, nil
+        Config.AutoBackpack = true
+        Config.AutoTake = true
+        Config.TeleportToItems = true
+        autoClearWorldCleanupState = true
     end
 end
 
@@ -673,51 +982,94 @@ local function CheckAutoClearWorldCleanup()
     local remainingItems = 0
     if objs then
         for _, obj in pairs(objs) do
-            local key = GetObjectKey(obj); local fails = failedObjectPickups[key] or 0
-            if fails < 3 then if not Config.UseTakeList or IsInTakeList(obj.id) then remainingItems = remainingItems + 1 end end
+            local key = GetObjectKey(obj)
+            local fails = failedObjectPickups[key] or 0
+            if fails < 3 then
+                if not Config.UseTakeList or IsInTakeList(obj.id) then remainingItems = remainingItems + 1 end
+            end
         end
     end
     if remainingItems == 0 then
-        CheckBackpack(); autoClearWorldCleanupState = false; Config.AutoTake = false; Config.AutoBackpack = false; Config.TeleportToItems = false; failedObjectPickups = {}
-        SendPacket(2, "action|respawn"); Log("`2Cleanup complete!`0"); Sleep(2000)
+        CheckBackpack()
+        autoClearWorldCleanupState = false
+        Config.AutoTake = false
+        Config.AutoBackpack = false
+        Config.TeleportToItems = false
+        failedObjectPickups = {}
+        SendPacket(2, "action|respawn")
+        Log("`2Cleanup complete!`0")
+        Sleep(2000)
     end
 end
 
 -- Auto Harvest
 local harvestY, harvestRowMinY, harvestRowMaxY, harvestXIndex = nil, nil, nil, 1
-local harvestTargetRows = {}, lastHarvestTeleportY = nil, currentHarvestX = nil
+local harvestTargetRows = {}
+local lastHarvestTeleportY = nil
+local currentHarvestX = nil
 
 local function InitializeHarvest()
     local world = GetWorld()
     if not world or type(world) ~= "table" or type(world.width) ~= "number" or type(world.height) ~= "number" or world.width <= 0 or world.height <= 0 then return false end
     harvestTargetRows = {}
-    for y = 0, world.height - 1 do harvestTargetRows[y] = {}; for x = 0, world.width - 1 do local isValidX = true; if Config.HarvestStep == 3 then if not (x == 0 or x == 1 or ((x - 1) % 3 == 0)) then isValidX = false end end; if isValidX then table.insert(harvestTargetRows[y], x) end end end
-    harvestRowMinY = 0; harvestRowMaxY = world.height - 1
+    for y = 0, world.height - 1 do
+        harvestTargetRows[y] = {}
+        for x = 0, world.width - 1 do
+            local isValidX = true
+            if Config.HarvestStep == 3 then
+                if not (x == 0 or x == 1 or ((x - 1) % 3 == 0)) then isValidX = false end
+            end
+            if isValidX then table.insert(harvestTargetRows[y], x) end
+        end
+    end
+    harvestRowMinY = 0
+    harvestRowMaxY = world.height - 1
     harvestY = Config.HarvestDirection == "top" and 0 or harvestRowMaxY
-    harvestXIndex = 1; lastHarvestTeleportY = nil
+    harvestXIndex = 1
+    lastHarvestTeleportY = nil
     Log("`9[Auto Harvest] `0Initialized! Dir: " .. Config.HarvestDirection .. ", Step: " .. Config.HarvestStep)
     return true
 end
 
 local function AutoHarvestStep()
     local world = GetWorld()
-    if not world or type(world) ~= "table" or type(world.width) ~= "number" or type(world.height) ~= "number" then Sleep(200); return end
-    if harvestY == nil or harvestRowMinY == nil or harvestRowMaxY == nil then if not InitializeHarvest() then return end end
-    if Config.HarvestDirection == "top" then if harvestY > harvestRowMaxY then Log("`2[Auto Harvest] `0Finished!"); Config.AutoHarvest = false; harvestY = nil; currentHarvestX = nil; return end
-    else if harvestY < harvestRowMinY then Log("`2[Auto Harvest] `0Finished!"); Config.AutoHarvest = false; harvestY = nil; currentHarvestX = nil; return end end
-    local xList = harvestTargetRows[harvestY]
-    if not xList or harvestXIndex > #xList then harvestXIndex = 1; harvestY = Config.HarvestDirection == "top" and (harvestY + 1) or (harvestY - 1); return end
-    local targetX, targetTile = nil, nil; local maxSkips, skipped = 100, 0
-    while harvestXIndex <= #xList and skipped < maxSkips do
-        local tx = xList[harvestXIndex]; local tile = SafeGetTile(tx, harvestY)
-        if tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID then targetX = tx; targetTile = tile; break end
-        harvestXIndex = harvestXIndex + 1; skipped = skipped + 1
+    if not world or type(world) ~= "table" or type(world.width) ~= "number" or type(world.height) ~= "number" then Sleep(200) return end
+    if harvestY == nil or harvestRowMinY == nil or harvestRowMaxY == nil then
+        if not InitializeHarvest() then return end
     end
-    if not targetX or not targetTile then
-        if harvestXIndex > #xList then harvestXIndex = 1; harvestY = Config.HarvestDirection == "top" and (harvestY + 1) or (harvestY - 1) end
+    if Config.HarvestDirection == "top" then
+        if harvestY > harvestRowMaxY then Log("`2[Auto Harvest] `0Finished!") Config.AutoHarvest = false harvestY = nil currentHarvestX = nil return end
+    else
+        if harvestY < harvestRowMinY then Log("`2[Auto Harvest] `0Finished!") Config.AutoHarvest = false harvestY = nil currentHarvestX = nil return end
+    end
+    local xList = harvestTargetRows[harvestY]
+    if not xList or harvestXIndex > #xList then
+        harvestXIndex = 1
+        harvestY = Config.HarvestDirection == "top" and (harvestY + 1) or (harvestY - 1)
         return
     end
-    if lastHarvestTeleportY ~= harvestY then lastHarvestTeleportY = harvestY; local range = math.max(1, harvestRowMaxY - harvestRowMinY); local progress = math.floor((math.abs(harvestY - harvestRowMinY) / range) * 100); Log("`2[Auto Harvest] `0Row Y: `b" .. harvestY .. "`0/" .. harvestRowMaxY .. " (" .. progress .. "%)") end
+    local targetX, targetTile = nil, nil
+    local maxSkips, skipped = 100, 0
+    while harvestXIndex <= #xList and skipped < maxSkips do
+        local tx = xList[harvestXIndex]
+        local tile = SafeGetTile(tx, harvestY)
+        if tile.fg == Config.HarvestItemID or tile.bg == Config.HarvestItemID then targetX = tx targetTile = tile break end
+        harvestXIndex = harvestXIndex + 1
+        skipped = skipped + 1
+    end
+    if not targetX or not targetTile then
+        if harvestXIndex > #xList then
+            harvestXIndex = 1
+            harvestY = Config.HarvestDirection == "top" and (harvestY + 1) or (harvestY - 1)
+        end
+        return
+    end
+    if lastHarvestTeleportY ~= harvestY then
+        lastHarvestTeleportY = harvestY
+        local range = math.max(1, harvestRowMaxY - harvestRowMinY)
+        local progress = math.floor((math.abs(harvestY - harvestRowMinY) / range) * 100)
+        Log("`2[Auto Harvest] `0Row Y: `b" .. harvestY .. "`0/" .. harvestRowMaxY .. " (" .. progress .. "%)")
+    end
     currentHarvestX = targetX
     SendPacketRaw(false, {type = 0, x = targetX * 32, y = harvestY * 32, px = targetX, py = harvestY})
     SendPacketRaw(false, {type = 3, value = 18, px = targetX, py = harvestY, x = targetX * 32, y = harvestY * 32})
@@ -726,45 +1078,90 @@ end
 
 -- Auto Place
 local placeX, placeY = nil, nil
-local function InitializePlace() local world = GetWorld(); if not world then return end; placeY = Config.PlaceDirection == "top" and 0 or (world.height - 1); placeX = 0 end
+
+local function InitializePlace()
+    local world = GetWorld()
+    if not world then return end
+    placeY = Config.PlaceDirection == "top" and 0 or (world.height - 1)
+    placeX = 0
+end
+
 local function AutoPlaceStep()
-    local world = GetWorld(); if not world then return end
+    local world = GetWorld()
+    if not world then return end
     if placeX == nil then InitializePlace() end
-    local targetX, targetY = nil, nil; local _placeScan = 0
+    local targetX, targetY = nil, nil
+    local _placeScan = 0
     while true do
         _placeScan = _placeScan + 1
         if Config.PlaceDirection == "top" and placeY >= world.height then break end
         if Config.PlaceDirection == "bottom" and placeY < 0 then break end
-        local local_ = GetLocal(); local pX = (local_ and type(local_) == "table" and type(local_.pos) == "table") and math.floor(local_.pos.x / 32) or nil; local pY = (local_ and type(local_.pos) == "table" and type(local_.pos) == "table") and math.floor(local_.pos.y / 32) or nil
-        if not (pX == placeX and pY == placeY) then local tile = SafeGetTile(placeX, placeY); if tile.fg == 0 then targetX = placeX; targetY = placeY; break end end
-        placeX = placeX + 1; if placeX >= world.width then placeX = 0; placeY = Config.PlaceDirection == "top" and (placeY + 1) or (placeY - 1) end
+        local local_ = GetLocal()
+        local pX = (local_ and type(local_) == "table" and type(local_.pos) == "table") and math.floor(local_.pos.x / 32) or nil
+        local pY = (local_ and type(local_) == "table" and type(local_.pos) == "table") and math.floor(local_.pos.y / 32) or nil
+        if not (pX == placeX and pY == placeY) then
+            local tile = SafeGetTile(placeX, placeY)
+            if tile.fg == 0 then targetX = placeX targetY = placeY break end
+        end
+        placeX = placeX + 1
+        if placeX >= world.width then
+            placeX = 0
+            placeY = Config.PlaceDirection == "top" and (placeY + 1) or (placeY - 1)
+        end
         if _placeScan >= 500 then return end
     end
     if targetX and targetY then
-        if GetItemCount(Config.PlaceItemID) == 0 then Log("`4[Auto Place] `0Out of items! Stopping."); Config.AutoPlace = false; return end
+        if GetItemCount(Config.PlaceItemID) == 0 then Log("`4[Auto Place] `0Out of items! Stopping.") Config.AutoPlace = false return end
         while SafeGetTile(targetX, targetY).fg == 0 do
             if not Run or Paused or not Config.AutoPlace then return end
             SendPacketRaw(false, {type = 3, value = Config.PlaceItemID, px = targetX, py = targetY, x = targetX * 32, y = targetY * 32})
             Sleep(Config.PlaceDelay)
         end
-        placeX = targetX + 1; if placeX >= world.width then placeX = 0; placeY = Config.PlaceDirection == "top" and (targetY + 1) or (targetY - 1) end
-    else Log("`2[Auto Place] `0Finished!"); Config.AutoPlace = false; placeX, placeY = nil, nil end
+        placeX = targetX + 1
+        if placeX >= world.width then
+            placeX = 0
+            placeY = Config.PlaceDirection == "top" and (targetY + 1) or (targetY - 1)
+        end
+    else
+        Log("`2[Auto Place] `0Finished!")
+        Config.AutoPlace = false
+        placeX, placeY = nil, nil
+    end
 end
 
 -- Player Watch Thread
 SafeRunThread(function()
     Log("Player watch thread started.")
     while currentSessionID == _G.SigtuneSessionID do
-        local world = GetWorld(); local local_ = GetLocal()
+        local world = GetWorld()
+        local local_ = GetLocal()
         if world and local_ then
             local current = GetOtherPlayers()
-            for netid, info in pairs(current) do if not lastPlayers[netid] then local tag = IsWhitelisted(info.userid) and "`a[WHITELIST]`0 " or "`4[STRANGER]`0 "; Log(tag .. "`e" .. tostring(info.name) .. "`0 (UID: `b" .. tostring(info.userid) .. "`0) joined.") end end
-            for netid, info in pairs(lastPlayers) do if not current[netid] then local tag = IsWhitelisted(info.userid) and "`a[WHITELIST]`0 " or "`4[STRANGER]`0 "; Log(tag .. "`e" .. tostring(info.name) .. "`0 left world.") end end
+            for netid, info in pairs(current) do
+                if not lastPlayers[netid] then
+                    local tag = IsWhitelisted(info.userid) and "`a[WHITELIST]`0 " or "`4[STRANGER]`0 "
+                    Log(tag .. "`e" .. tostring(info.name) .. "`0 (UID: `b" .. tostring(info.userid) .. "`0) joined.")
+                end
+            end
+            for netid, info in pairs(lastPlayers) do
+                if not current[netid] then
+                    local tag = IsWhitelisted(info.userid) and "`a[WHITELIST]`0 " or "`4[STRANGER]`0 "
+                    Log(tag .. "`e" .. tostring(info.name) .. "`0 left world.")
+                end
+            end
             lastPlayers = current
             local strangerCount, strangerNames = 0, {}
-            for _, info in pairs(current) do if not IsWhitelisted(info.userid) then strangerCount = strangerCount + 1; table.insert(strangerNames, info.name or "Stranger") end end
-            if strangerCount > 0 then if not Paused then PauseAllFeatures("Stranger (" .. table.concat(strangerNames, ", ") .. ") in world!") end
-            else if Paused and not modDetected then ResumeAllFeatures() end end
+            for _, info in pairs(current) do
+                if not IsWhitelisted(info.userid) then
+                    strangerCount = strangerCount + 1
+                    table.insert(strangerNames, info.name or "Stranger")
+                end
+            end
+            if strangerCount > 0 then
+                if not Paused then PauseAllFeatures("Stranger (" .. table.concat(strangerNames, ", ") .. ") in world!") end
+            else
+                if Paused and not modDetected then ResumeAllFeatures() end
+            end
         end
         Sleep(Config.CheckDelay or 1000)
     end
@@ -774,14 +1171,24 @@ end)
 RunThread(function()
     while currentSessionID == _G.SigtuneSessionID do
         if Run and Config.AutoJoin and Config.JoinWorld ~= "" then
-            local world = GetWorld(); local wName = (world and type(world) == "table" and world.name) and tostring(world.name):upper() or ""
-            if not world or wName ~= Config.JoinWorld:upper() then Log("`2Joining: `0" .. Config.JoinWorld); SendPacket(3, "action|join_request\nname|" .. Config.JoinWorld .. "|\ninvitedWorld|0"); Sleep(Config.JoinDelay) else Sleep(2000) end
-        else Sleep(1000) end
+            local world = GetWorld()
+            local wName = (world and type(world) == "table" and world.name) and tostring(world.name):upper() or ""
+            if not world or wName ~= Config.JoinWorld:upper() then
+                Log("`2Joining: `0" .. Config.JoinWorld)
+                SendPacket(3, "action|join_request\nname|" .. Config.JoinWorld .. "|\ninvitedWorld|0")
+                Sleep(Config.JoinDelay)
+            else
+                Sleep(2000)
+            end
+        else
+            Sleep(1000)
+        end
     end
 end)
 
 -- UI
 local guiOpen = true
+
 local function ShowUI()
     if not ImGui or not guiOpen then return end
     pcall(function()
@@ -790,7 +1197,8 @@ local function ShowUI()
             ImGui.Separator()
             local c, v = ConfigCheckbox("Enable Auto Punch", "AutoPunch")
             local cAM, vAM = ConfigCheckbox("Anti Move (Stay)", "AutoPunchAntiMove")
-            ImGui.InputInt("Tile X", Config.TileX); ImGui.InputInt("Tile Y", Config.TileY)
+            ImGui.InputInt("Tile X", Config.TileX)
+            ImGui.InputInt("Tile Y", Config.TileY)
             ImGui.InputInt("Punch Delay ms", Config.PunchDelay)
             ImGui.Separator()
             ConfigCheckbox("Auto Take Items", "AutoTake")
@@ -805,18 +1213,54 @@ local function ShowUI()
             ConfigCheckbox("Auto Harvest", "AutoHarvest")
             ImGui.InputInt("Harvest Item ID", Config.HarvestItemID)
             ImGui.Separator()
-            ImGui.Text("Whitelist UIDs:"); for i, uid in ipairs(Config.Whitelist) do ImGui.Text("[" .. i .. "] " .. tostring(uid)); ImGui.SameLine(); if ImGui.Button("X##" .. i) then table.remove(Config.Whitelist, i) end end
-            ImGui.InputText("##wl", whitelistInput, 32); ImGui.SameLine(); if ImGui.Button("Add UID") then local uid = tonumber(whitelistInput); if uid then table.insert(Config.Whitelist, uid); whitelistInput = "" end end
+            ImGui.Text("Whitelist UIDs:")
+            for i, uid in ipairs(Config.Whitelist) do
+                ImGui.Text("[" .. i .. "] " .. tostring(uid))
+                ImGui.SameLine()
+                if ImGui.Button("X##" .. i) then table.remove(Config.Whitelist, i) end
+            end
+            ImGui.InputText("##wl", whitelistInput, 32)
+            ImGui.SameLine()
+            if ImGui.Button("Add UID") then
+                local uid = tonumber(whitelistInput)
+                if uid then
+                    table.insert(Config.Whitelist, uid)
+                    whitelistInput = ""
+                end
+            end
             ImGui.Separator()
-            if modDetected then ImGui.Text("`4!! MOD/DEV DETECTED !!`0"); if ImGui.Button("Clear & Resume") then modDetected = false; Paused = false; Log("`2Mod alert cleared.`0") end end
+            if modDetected then
+                ImGui.Text("`4!! MOD/DEV DETECTED !!`0")
+                if ImGui.Button("Clear & Resume") then
+                    modDetected = false
+                    Paused = false
+                    Log("`2Mod alert cleared.`0")
+                end
+            end
             ImGui.End()
         end
     end)
 end
 
 AddHook("OnDraw", "SigtuneUI", ShowUI)
-AddHook("OnSendPacket", "SigtuneUIToggle", function(type, packet) if type == 2 and packet:find("action|input\n|text|/ui") then guiOpen = not guiOpen; Log(guiOpen and "`2UI opened." or "`4UI closed."); return true end return false end)
-AddHook("OnSendPacket", "SigtuneControl", function(type, packet) if type == 2 and packet:find("action|input\n|text|/stop") then Run = false; Paused = false; if _G.SigtuneCleanup then pcall(_G.SigtuneCleanup) end; Log("`4Script stopped by /stop.`0"); return true end return false end)
+AddHook("OnSendPacket", "SigtuneUIToggle", function(type, packet)
+    if type == 2 and packet:find("action|input\n|text|/ui") then
+        guiOpen = not guiOpen
+        Log(guiOpen and "`2UI opened." or "`4UI closed.")
+        return true
+    end
+    return false
+end)
+AddHook("OnSendPacket", "SigtuneControl", function(type, packet)
+    if type == 2 and packet:find("action|input\n|text|/stop") then
+        Run = false
+        Paused = false
+        if _G.SigtuneCleanup then pcall(_G.SigtuneCleanup) end
+        Log("`4Script stopped by /stop.`0")
+        return true
+    end
+    return false
+end)
 
 -- Main Loop
 Log("`2Sigtune v1.0 loaded!`0 Type `4/stop`9 to stop.")
@@ -824,27 +1268,66 @@ local punchCount = 0
 while currentSessionID == _G.SigtuneSessionID and Run do
     local mainOk, mainErr = pcall(function()
         CheckHarvestGhostState()
-        if pendingGoToTarget then local target = pendingGoToTarget; pendingGoToTarget = nil; if FindPath then FindPath(target.mx, target.my, 50) end end
-        if pendingScanInfo then pendingScanInfo = false; ScanMagplantInfo() end
+        if pendingGoToTarget then
+            local target = pendingGoToTarget
+            pendingGoToTarget = nil
+            if FindPath then FindPath(target.mx, target.my, 50) end
+        end
+        if pendingScanInfo then
+            pendingScanInfo = false
+            ScanMagplantInfo()
+        end
         if not Paused then
-            if not GetLocal() or not GetWorld() then Sleep(500)
+            if not GetLocal() or not GetWorld() then
+                Sleep(500)
             else
-                if not startX then local l = GetLocal(); local w = GetWorld(); if l and type(l.pos) == "table" and w then startX = math.floor(l.pos.x / 32); startY = math.floor(l.pos.y / 32); Log("World: `e" .. tostring(w.name or "Unknown")) end end
+                if not startX then
+                    local l = GetLocal()
+                    local w = GetWorld()
+                    if l and type(l.pos) == "table" and w then
+                        startX = math.floor(l.pos.x / 32)
+                        startY = math.floor(l.pos.y / 32)
+                        Log("World: `e" .. tostring(w.name or "Unknown"))
+                    end
+                end
                 local currentDelay = Config.PunchDelay
-                if autoClearWorldCleanupState then CollectItems(); CheckBackpack(); CheckAutoClearWorldCleanup(); currentDelay = 100
-                elseif Config.AutoClearWorld then ClearWorldStep(); currentDelay = Config.ClearDelay
-                elseif Config.AutoClearWater then ClearWaterStep(); currentDelay = Config.ClearDelay
-                elseif Config.AutoPlace then AutoPlaceStep(); currentDelay = Config.PlaceDelay
-                elseif Config.AutoHarvest then AutoHarvestStep(); currentDelay = Config.HarvestDelay
-                elseif Config.AutoPunchWorld then currentDelay = Config.PunchWorldDelay
-                elseif Config.AutoPunch then PunchTile() end
+                if autoClearWorldCleanupState then
+                    CollectItems()
+                    CheckBackpack()
+                    CheckAutoClearWorldCleanup()
+                    currentDelay = 100
+                elseif Config.AutoClearWorld then
+                    ClearWorldStep()
+                    currentDelay = Config.ClearDelay
+                elseif Config.AutoClearWater then
+                    ClearWaterStep()
+                    currentDelay = Config.ClearDelay
+                elseif Config.AutoPlace then
+                    AutoPlaceStep()
+                    currentDelay = Config.PlaceDelay
+                elseif Config.AutoHarvest then
+                    AutoHarvestStep()
+                    currentDelay = Config.HarvestDelay
+                elseif Config.AutoPunchWorld then
+                    currentDelay = Config.PunchWorldDelay
+                elseif Config.AutoPunch then
+                    PunchTile()
+                end
                 punchCount = punchCount + 1
                 if Config.AutoTake and (punchCount % 10 == 0) then CollectItems() end
                 if Config.AutoBackpack and (punchCount % 20 == 0) then CheckBackpack() end
                 Sleep(currentDelay)
             end
-        else Sleep(100) end
+        else
+            Sleep(100)
+        end
     end)
-    if not mainOk then Log("`4[Error] `0" .. tostring(mainErr)); Sleep(1000) end
+    if not mainOk then
+        Log("`4[Error] `0" .. tostring(mainErr))
+        Sleep(1000)
+    end
 end
-if _G.SigtuneSessionID == currentSessionID then pcall(RemoveHooks); Log("`4Sigtune exited. All hooks cleaned up.`0") end
+if _G.SigtuneSessionID == currentSessionID then
+    pcall(RemoveHooks)
+    Log("`4Sigtune exited. All hooks cleaned up.`0")
+end
