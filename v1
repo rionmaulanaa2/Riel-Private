@@ -1661,6 +1661,7 @@ V_ObjectiveSection:Toggle({
 -- ============================================================
 local autoRepairEnabled = false
 local currentRepairPoint = nil
+local repairSafeDistance = 25
 
 local function findClosestRepairPoint()
     local myChar = player.Character
@@ -1684,6 +1685,20 @@ local function findClosestRepairPoint()
     end
     return closestPoint
 end
+
+V_ObjectiveSection:Slider({
+    Title = "Proximity Safe Guard",
+    Description = "Cancel repair if Killer is within this distance (studs)",
+    Step = 1,
+    Value = {
+        Min = 25,
+        Max = 200,
+        Default = 25,
+    },
+    Callback = function(val)
+        repairSafeDistance = tonumber(val) or 25
+    end
+})
 
 V_ObjectiveSection:Toggle({
     Title = "Auto Repair Generator",
@@ -1716,12 +1731,12 @@ V_ObjectiveSection:Toggle({
                     -- Safety killer check
                     if killer and killer:FindFirstChild("HumanoidRootPart") and myHrp then
                         local killerDist = (myHrp.Position - killer.HumanoidRootPart.Position).Magnitude
-                        if killerDist < 25 then
+                        if killerDist < repairSafeDistance then
                             if currentRepairPoint and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
                                 remotes.Generator.RepairEvent:FireServer(currentRepairPoint, false, nil, HttpService:GenerateGUID(false), myChar)
                                 currentRepairPoint = nil
                             end
-                            WindUI:Notify({ Title = "⚠️ Killer Nearby!", Content = "Stopped repair — Killer approaching!", Duration = 2 })
+                            WindUI:Notify({ Title = "⚠️ Killer Nearby!", Content = string.format("Stopped repair — Killer within %.0f studs!", killerDist), Duration = 2 })
                             task.wait(2)
                             return
                         end
