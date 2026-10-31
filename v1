@@ -1349,6 +1349,605 @@ DeveloperSection:Button({
     end
 })
 
+-- ============================================================
+-- VIOLENCE DISTRICT SUITE
+-- Features: Auto Repair, Perfect Skillcheck, Killer ESP,
+-- Generator ESP, Auto Pallet Stun, Auto Save Survivor,
+-- Auto Aim, Auto Parry.
+-- ============================================================
+
+local ViolenceTab = Window:Tab({
+    Title = "Violence District",
+    Icon = "swords"
+})
+
+local V_ESPSection = ViolenceTab:Section({
+    Title = "ESP & Visuals"
+})
+
+local V_ObjectiveSection = ViolenceTab:Section({
+    Title = "Objectives & Skillcheck"
+})
+
+local V_CombatSection = ViolenceTab:Section({
+    Title = "Combat & Defense"
+})
+
+local V_RescueSection = ViolenceTab:Section({
+    Title = "Rescue & Team"
+})
+
+local HttpService = game:GetService("HttpService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+-- Remote access helper
+local function getVDRemotes()
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    if not remotes then return {} end
+    return {
+        Generator = remotes:FindFirstChild("Generator"),
+        Healing = remotes:FindFirstChild("Healing"),
+        Pallet = remotes:FindFirstChild("Pallet"),
+        Window = remotes:FindFirstChild("Window"),
+        Carry = remotes:FindFirstChild("Carry"),
+        Attacks = remotes:FindFirstChild("Attacks"),
+        Killers = remotes:FindFirstChild("Killers"),
+        Exit = remotes:FindFirstChild("Exit")
+    }
+end
+
+-- Killer detection helper
+local function getKiller()
+    local myChar = player.Character
+    for _, model in ipairs(workspace:GetChildren()) do
+        if model:IsA("Model") and model ~= myChar then
+            local hum = model:FindFirstChildOfClass("Humanoid")
+            local hrp = model:FindFirstChild("HumanoidRootPart")
+            if hum and hrp and hum.Health > 0 then
+                if model:GetAttribute("Butcher") or model:GetAttribute("isAttacking") ~= nil or model:GetAttribute("isLunging") ~= nil or model:GetAttribute("isStunned") ~= nil or model.Name:lower():find("killer") or model.Name:lower():find("butcher") or model.Name:lower():find("slasher") or model.Name:lower():find("cure") or model.Name:lower():find("jason") then
+                    return model
+                end
+            end
+        end
+    end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and plr.Character and plr.Character ~= myChar then
+            local char = plr.Character
+            if char:GetAttribute("Butcher") or char:GetAttribute("isAttacking") ~= nil or char:GetAttribute("isLunging") ~= nil then
+                return char
+            end
+        end
+    end
+    return nil
+end
+
+-- ============================================================
+-- 1. KILLER ESP
+-- ============================================================
+local killerESPEnabled = false
+local killerESPHighlight
+local killerESPBillboard
+
+local function cleanKillerESP()
+    if killerESPHighlight then
+        pcall(function() killerESPHighlight:Destroy() end)
+        killerESPHighlight = nil
+    end
+    if killerESPBillboard then
+        pcall(function() killerESPBillboard:Destroy() end)
+        killerESPBillboard = nil
+    end
+end
+
+V_ESPSection:Toggle({
+    Title = "Killer ESP",
+    Description = "Highlights the Killer in Red with distance & status",
+    Default = false,
+    Callback = function(v)
+        killerESPEnabled = v
+        if not v then
+            cleanKillerESP()
+            WindUI:Notify({ Title = "Killer ESP", Content = "Killer ESP disabled.", Duration = 2 })
+            return
+        end
+
+        WindUI:Notify({ Title = "Killer ESP", Content = "Killer ESP enabled!", Duration = 2 })
+
+        task.spawn(function()
+            while killerESPEnabled do
+                local killer = getKiller()
+                local myChar = player.Character
+                local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+                if killer and killer:FindFirstChild("HumanoidRootPart") and myHrp then
+                    local kHrp = killer.HumanoidRootPart
+                    local dist = (myHrp.Position - kHrp.Position).Magnitude
+
+                    -- Highlight
+                    if not killerESPHighlight or killerESPHighlight.Parent ~= killer then
+                        cleanKillerESP()
+                        killerESPHighlight = Instance.new("Highlight")
+                        killerESPHighlight.Name = "KillerESPHighlight"
+                        killerESPHighlight.FillColor = Color3.fromRGB(255, 30, 30)
+                        killerESPHighlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+                        killerESPHighlight.FillTransparency = 0.4
+                        killerESPHighlight.OutlineTransparency = 0.1
+                        killerESPHighlight.Parent = killer
+                    end
+
+                    -- Billboard
+                    if not killerESPBillboard or killerESPBillboard.Parent ~= kHrp then
+                        killerESPBillboard = Instance.new("BillboardGui")
+                        killerESPBillboard.Name = "KillerESPBillboard"
+                        killerESPBillboard.Adornee = kHrp
+                        killerESPBillboard.Size = UDim2.fromOffset(180, 50)
+                        killerESPBillboard.StudsOffset = Vector3.new(0, 3.5, 0)
+                        killerESPBillboard.AlwaysOnTop = true
+
+                        local label = Instance.new("TextLabel")
+                        label.Name = "Label"
+                        label.Size = UDim2.fromScale(1, 1)
+                        label.BackgroundTransparency = 1
+                        label.TextColor3 = Color3.fromRGB(255, 60, 60)
+                        label.TextStrokeTransparency = 0.2
+                        label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                        label.Font = Enum.Font.GothamBold
+                        label.TextScaled = true
+                        label.Parent = killerESPBillboard
+
+                        killerESPBillboard.Parent = kHrp
+                    end
+
+                    if killerESPBillboard and killerESPBillboard:FindFirstChild("Label") then
+                        local status = "STALKING"
+                        if killer:GetAttribute("isAttacking") then
+                            status = "ATTACKING"
+                        elseif killer:GetAttribute("isLunging") then
+                            status = "LUNGING"
+                        elseif killer:GetAttribute("isStunned") then
+                            status = "STUNNED"
+                        end
+                        killerESPBillboard.Label.Text = string.format("👹 KILLER [%s]\n%.0f studs", status, dist)
+                    end
+                else
+                    cleanKillerESP()
+                end
+                task.wait(0.2)
+            end
+            cleanKillerESP()
+        end)
+    end
+})
+
+-- ============================================================
+-- 2. GENERATOR ESP
+-- ============================================================
+local genESPEnabled = false
+local genESPObjects = {}
+
+local function cleanGenESP()
+    for _, item in ipairs(genESPObjects) do
+        pcall(function() item:Destroy() end)
+    end
+    genESPObjects = {}
+end
+
+local function isGeneratorModel(model)
+    if not model:IsA("Model") then return false end
+    if model.Name:lower():find("gen") or model:FindFirstChild("GeneratorBody") or model:FindFirstChild("RepairPoint") or model:FindFirstChildWhichIsA("ProximityPrompt", true) then
+        return true
+    end
+    return false
+end
+
+V_ESPSection:Toggle({
+    Title = "Generator ESP",
+    Description = "Highlights all Generators in Cyan with distance",
+    Default = false,
+    Callback = function(v)
+        genESPEnabled = v
+        if not v then
+            cleanGenESP()
+            WindUI:Notify({ Title = "Generator ESP", Content = "Generator ESP disabled.", Duration = 2 })
+            return
+        end
+
+        WindUI:Notify({ Title = "Generator ESP", Content = "Generator ESP enabled!", Duration = 2 })
+
+        task.spawn(function()
+            while genESPEnabled do
+                cleanGenESP()
+                local myChar = player.Character
+                local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+                for _, obj in ipairs(workspace:GetDescendants()) do
+                    if not genESPEnabled then break end
+                    if isGeneratorModel(obj) then
+                        local primary = obj.PrimaryPart or obj:FindFirstChild("GeneratorBody") or obj:FindFirstChildWhichIsA("BasePart")
+                        if primary and myHrp then
+                            local dist = (myHrp.Position - primary.Position).Magnitude
+
+                            local hl = Instance.new("Highlight")
+                            hl.Name = "GenESPHighlight"
+                            hl.FillColor = Color3.fromRGB(0, 200, 255)
+                            hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+                            hl.FillTransparency = 0.5
+                            hl.OutlineTransparency = 0.2
+                            hl.Parent = obj
+                            table.insert(genESPObjects, hl)
+
+                            local bb = Instance.new("BillboardGui")
+                            bb.Name = "GenESPBillboard"
+                            bb.Adornee = primary
+                            bb.Size = UDim2.fromOffset(140, 40)
+                            bb.StudsOffset = Vector3.new(0, 3, 0)
+                            bb.AlwaysOnTop = true
+
+                            local lbl = Instance.new("TextLabel")
+                            lbl.Size = UDim2.fromScale(1, 1)
+                            lbl.BackgroundTransparency = 1
+                            lbl.TextColor3 = Color3.fromRGB(0, 220, 255)
+                            lbl.TextStrokeTransparency = 0.2
+                            lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                            lbl.Font = Enum.Font.GothamBold
+                            lbl.TextScaled = true
+                            lbl.Text = string.format("⚡ GENERATOR\n%.0f studs", dist)
+                            lbl.Parent = bb
+
+                            bb.Parent = primary
+                            table.insert(genESPObjects, bb)
+                        end
+                    end
+                end
+                task.wait(2)
+            end
+            cleanGenESP()
+        end)
+    end
+})
+
+-- ============================================================
+-- 3. PERFECT SKILLCHECK
+-- ============================================================
+local perfectSkillcheckEnabled = false
+local skillcheckConn
+
+V_ObjectiveSection:Toggle({
+    Title = "Perfect Skillcheck",
+    Description = "Automatically triggers space on skillchecks & blocks failures",
+    Default = false,
+    Callback = function(v)
+        perfectSkillcheckEnabled = v
+        if skillcheckConn then
+            pcall(function() skillcheckConn:Disconnect() end)
+            skillcheckConn = nil
+        end
+
+        if not v then
+            WindUI:Notify({ Title = "Skillcheck", Content = "Perfect Skillcheck disabled.", Duration = 2 })
+            return
+        end
+
+        WindUI:Notify({ Title = "Skillcheck", Content = "Perfect Skillcheck active!", Duration = 2 })
+
+        task.spawn(function()
+            while perfectSkillcheckEnabled do
+                pcall(function()
+                    local pg = player:FindFirstChild("PlayerGui")
+                    if pg then
+                        local scGui = pg:FindFirstChild("SkillCheckPromptGui")
+                        if scGui and scGui.Enabled then
+                            local check = scGui:FindFirstChild("Check")
+                            if check and check.Visible then
+                                -- Optimal timing delay for great skillcheck success
+                                task.wait(0.2)
+                                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+                                task.wait(0.05)
+                                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+                                WindUI:Notify({ Title = "Skillcheck", Content = "🌟 Perfect Skillcheck Hit!", Duration = 1.5 })
+                                task.wait(0.5)
+                            end
+                        end
+                    end
+                end)
+                task.wait(0.05)
+            end
+        end)
+    end
+})
+
+-- ============================================================
+-- 4. AUTO REPAIR GENERATOR
+-- ============================================================
+local autoRepairEnabled = false
+local currentRepairPoint = nil
+
+local function findClosestRepairPoint()
+    local myChar = player.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHrp then return nil end
+
+    local closestPoint = nil
+    local closestDist = math.huge
+
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj.Name == "RepairPoint" or obj.Name:find("Repair") then
+            local pos = obj:IsA("BasePart") and obj.Position or (obj:IsA("Model") and obj:GetPivot().Position)
+            if pos then
+                local dist = (myHrp.Position - pos).Magnitude
+                if dist < closestDist and dist <= 18 then
+                    closestDist = dist
+                    closestPoint = obj
+                end
+            end
+        end
+    end
+    return closestPoint
+end
+
+V_ObjectiveSection:Toggle({
+    Title = "Auto Repair Generator",
+    Description = "Auto repairs nearby generator & releases if killer approaches",
+    Default = false,
+    Callback = function(v)
+        autoRepairEnabled = v
+        local remotes = getVDRemotes()
+
+        if not v then
+            if currentRepairPoint and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
+                pcall(function()
+                    remotes.Generator.RepairEvent:FireServer(currentRepairPoint, false, nil, HttpService:GenerateGUID(false), player.Character)
+                end)
+                currentRepairPoint = nil
+            end
+            WindUI:Notify({ Title = "Auto Repair", Content = "Auto repair stopped.", Duration = 2 })
+            return
+        end
+
+        WindUI:Notify({ Title = "Auto Repair", Content = "Auto repair started!", Duration = 2 })
+
+        task.spawn(function()
+            while autoRepairEnabled do
+                pcall(function()
+                    local myChar = player.Character
+                    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                    local killer = getKiller()
+
+                    -- Safety killer check
+                    if killer and killer:FindFirstChild("HumanoidRootPart") and myHrp then
+                        local killerDist = (myHrp.Position - killer.HumanoidRootPart.Position).Magnitude
+                        if killerDist < 25 then
+                            if currentRepairPoint and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
+                                remotes.Generator.RepairEvent:FireServer(currentRepairPoint, false, nil, HttpService:GenerateGUID(false), myChar)
+                                currentRepairPoint = nil
+                            end
+                            WindUI:Notify({ Title = "⚠️ Killer Nearby!", Content = "Stopped repair — Killer approaching!", Duration = 2 })
+                            task.wait(2)
+                            return
+                        end
+                    end
+
+                    local point = findClosestRepairPoint()
+                    if point and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
+                        currentRepairPoint = point
+                        local guid = HttpService:GenerateGUID(false)
+                        remotes.Generator.RepairEvent:FireServer(point, true, nil, guid, myChar)
+                    end
+                end)
+                task.wait(1.5)
+            end
+        end)
+    end
+})
+
+-- ============================================================
+-- 5. AUTO PALLET STUN
+-- ============================================================
+local autoPalletEnabled = false
+
+local function findNearbyPallets()
+    local myChar = player.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHrp then return {} end
+
+    local pallets = {}
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj.Name:lower():find("pallet") and (obj:FindFirstChild("DropPoint") or obj:FindFirstChildWhichIsA("BasePart")) then
+            local part = obj:FindFirstChild("DropPoint") or obj:FindFirstChildWhichIsA("BasePart")
+            if part and (myHrp.Position - part.Position).Magnitude <= 16 then
+                table.insert(pallets, { model = obj, dropPoint = part })
+            end
+        end
+    end
+    return pallets
+end
+
+V_CombatSection:Toggle({
+    Title = "Auto Pallet Stun",
+    Description = "Drops pallet when killer steps into the stun radius",
+    Default = false,
+    Callback = function(v)
+        autoPalletEnabled = v
+        local remotes = getVDRemotes()
+
+        if not v then
+            WindUI:Notify({ Title = "Pallet Stun", Content = "Auto Pallet Stun disabled.", Duration = 2 })
+            return
+        end
+
+        WindUI:Notify({ Title = "Pallet Stun", Content = "Auto Pallet Stun active!", Duration = 2 })
+
+        task.spawn(function()
+            while autoPalletEnabled do
+                pcall(function()
+                    local killer = getKiller()
+                    local myChar = player.Character
+                    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+                    if killer and killer:FindFirstChild("HumanoidRootPart") and myHrp then
+                        local kHrp = killer.HumanoidRootPart
+                        local pallets = findNearbyPallets()
+
+                        for _, p in ipairs(pallets) do
+                            local killerToPallet = (kHrp.Position - p.dropPoint.Position).Magnitude
+                            if killerToPallet <= 12 and remotes.Pallet and remotes.Pallet:FindFirstChild("PalletDropEvent") then
+                                local guid = HttpService:GenerateGUID(false)
+                                remotes.Pallet.PalletDropEvent:FireServer(p.dropPoint, myHrp.Position, myHrp.CFrame.LookVector, guid, myChar)
+                                WindUI:Notify({ Title = "🪵 Pallet Stun!", Content = "Dropped pallet on Killer!", Duration = 2 })
+                                task.wait(1.5)
+                                break
+                            end
+                        end
+                    end
+                end)
+                task.wait(0.1)
+            end
+        end)
+    end
+})
+
+-- ============================================================
+-- 6. AUTO PARRY
+-- ============================================================
+local autoParryEnabled = false
+local lastParryTime = 0
+
+V_CombatSection:Toggle({
+    Title = "Auto Parry",
+    Description = "Automatically parries incoming basic attacks & lunges",
+    Default = false,
+    Callback = function(v)
+        autoParryEnabled = v
+        if not v then
+            WindUI:Notify({ Title = "Auto Parry", Content = "Auto Parry disabled.", Duration = 2 })
+            return
+        end
+
+        WindUI:Notify({ Title = "Auto Parry", Content = "Auto Parry active!", Duration = 2 })
+
+        task.spawn(function()
+            while autoParryEnabled do
+                pcall(function()
+                    local killer = getKiller()
+                    local myChar = player.Character
+                    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+                    if killer and killer:FindFirstChild("HumanoidRootPart") and myHrp then
+                        local dist = (myHrp.Position - killer.HumanoidRootPart.Position).Magnitude
+                        local isAttacking = killer:GetAttribute("isAttacking") or killer:GetAttribute("isLunging")
+
+                        if dist <= 14 and isAttacking and (tick() - lastParryTime > 1.5) then
+                            lastParryTime = tick()
+
+                            -- Equip parrying tool if in backpack
+                            local backpack = player:FindFirstChild("Backpack")
+                            local parryTool = myChar:FindFirstChild("ParryingDagger") or myChar:FindFirstChild("RiotShield")
+                            if not parryTool and backpack then
+                                parryTool = backpack:FindFirstChild("ParryingDagger") or backpack:FindFirstChild("RiotShield")
+                                if parryTool then
+                                    parryTool.Parent = myChar
+                                end
+                            end
+
+                            if parryTool then
+                                parryTool:Activate()
+                                WindUI:Notify({ Title = "🛡️ Auto Parry", Content = "Parried Killer attack!", Duration = 2 })
+                            end
+                        end
+                    end
+                end)
+                task.wait(0.05)
+            end
+        end)
+    end
+})
+
+-- ============================================================
+-- 7. AUTO AIM (AIM AT KILLER)
+-- ============================================================
+local autoAimEnabled = false
+local aimConn
+
+V_CombatSection:Toggle({
+    Title = "Auto Aim (Killer)",
+    Description = "Locks camera directly at the Killer (for items/flashlight)",
+    Default = false,
+    Callback = function(v)
+        autoAimEnabled = v
+        if aimConn then
+            pcall(function() aimConn:Disconnect() end)
+            aimConn = nil
+        end
+
+        if not v then
+            WindUI:Notify({ Title = "Auto Aim", Content = "Auto Aim disabled.", Duration = 2 })
+            return
+        end
+
+        WindUI:Notify({ Title = "Auto Aim", Content = "Auto Aim enabled!", Duration = 2 })
+
+        aimConn = RunService.RenderStepped:Connect(function()
+            if not autoAimEnabled then return end
+            pcall(function()
+                local killer = getKiller()
+                if killer and killer:FindFirstChild("HumanoidRootPart") then
+                    local cam = workspace.CurrentCamera
+                    local targetPos = killer.HumanoidRootPart.Position + Vector3.new(0, 1.5, 0)
+                    cam.CFrame = CFrame.new(cam.CFrame.Position, targetPos)
+                end
+            end)
+        end)
+    end
+})
+
+-- ============================================================
+-- 8. AUTO SAVE SURVIVOR (UNHOOK)
+-- ============================================================
+local autoSaveEnabled = false
+
+V_RescueSection:Toggle({
+    Title = "Auto Save Teammate",
+    Description = "Automatically unhooks nearby teammates from meat hooks",
+    Default = false,
+    Callback = function(v)
+        autoSaveEnabled = v
+        local remotes = getVDRemotes()
+
+        if not v then
+            WindUI:Notify({ Title = "Auto Save", Content = "Auto Save disabled.", Duration = 2 })
+            return
+        end
+
+        WindUI:Notify({ Title = "Auto Save", Content = "Auto Save enabled!", Duration = 2 })
+
+        task.spawn(function()
+            while autoSaveEnabled do
+                pcall(function()
+                    local myChar = player.Character
+                    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                    if not myHrp then return end
+
+                    for _, plr in ipairs(Players:GetPlayers()) do
+                        if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+                            local c = plr.Character
+                            local isHooked = c:GetAttribute("isHooked") or c:FindFirstChild("Hooked") or (c.Parent and c.Parent.Name:lower():find("hook"))
+                            local dist = (myHrp.Position - c.HumanoidRootPart.Position).Magnitude
+
+                            if isHooked and dist <= 16 and remotes.Carry and remotes.Carry:FindFirstChild("UnHookEvent") then
+                                remotes.Carry.UnHookEvent:FireServer(c, myChar)
+                                WindUI:Notify({ Title = "🪝 Saved Teammate!", Content = "Unhooked " .. plr.Name, Duration = 2.5 })
+                                task.wait(2)
+                                break
+                            end
+                        end
+                    end
+                end)
+                task.wait(1)
+            end
+        end)
+    end
+})
+
 local DiscordTab = Window:Tab({
     Title = "Discord",
     Icon = "message-circle"
