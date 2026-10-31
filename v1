@@ -2143,6 +2143,295 @@ V_RescueSection:Toggle({
     end
 })
 
+-- ============================================================
+-- NOCLIP SYSTEM (FOR AUTO REPAIR & AUTO CATCH)
+-- ============================================================
+local noClipEnabled = false
+local noClipConn
+
+local function updateNoClip(state)
+    noClipEnabled = state
+    if noClipConn then
+        pcall(function() noClipConn:Disconnect() end)
+        noClipConn = nil
+    end
+
+    if not state then
+        if player.Character then
+            for _, part in ipairs(player.Character:GetDescendants()) do
+                if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                    part.CanCollide = true
+                end
+            end
+        end
+        return
+    end
+
+    noClipConn = RunService.Stepped:Connect(function()
+        if not noClipEnabled then return end
+        local char = player.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end)
+end
+
+-- ============================================================
+-- KILLER AUTOMATION (AUTO CATCH, AUTO AIM & AUTO HIT)
+-- ============================================================
+local V_KillerSection = ViolenceTab:Section({
+    Title = "Killer Automation (Catch & Hit)"
+})
+
+local autoCatchEnabled = false
+local autoAimSurvivorEnabled = true
+local autoHitSurvivorEnabled = true
+local killerTravelMode = "Safe Teleport"
+local hitReachDistance = 10
+local lastKillerHitTime = 0
+
+local function isPlayerKiller()
+    local myChar = player.Character
+    if not myChar then return false end
+    if myChar:GetAttribute("Butcher") or myChar:GetAttribute("isAttacking") ~= nil or myChar:GetAttribute("isLunging") ~= nil then
+        return true
+    end
+    if myChar.Name:lower():find("killer") or myChar.Name:lower():find("butcher") or myChar.Name:lower():find("slasher") or myChar.Name:lower():find("cure") or myChar.Name:lower():find("jason") then
+        return true
+    end
+    local k = getKiller()
+    if k and k == myChar then
+        return true
+    end
+    return false
+end
+
+local function findNearestSurvivor()
+    local myChar = player.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHrp then return nil end
+
+    local bestTarget = nil
+    local bestDist = math.huge
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and plr.Character and plr.Character ~= myChar then
+            local c = plr.Character
+            local hum = c:FindFirstChildOfClass("Humanoid")
+            local hrp = c:FindFirstChild("HumanoidRootPart")
+
+            if hum and hrp and hum.Health > 0 then
+                local isHooked = c:GetAttribute("IsHooked") or c:GetAttribute("isHooked") or c:FindFirstChild("Hooked") or (c.Parent and c.Parent.Name:lower():find("hook"))
+                local isCarried = c:GetAttribute("IsCarried") or c:GetAttribute("isCarried")
+
+                if not isHooked and not isCarried then
+                    local dist = (myHrp.Position - hrp.Position).Magnitude
+                    if dist < bestDist then
+                        bestDist = dist
+                        bestTarget = c
+                    end
+                end
+            end
+        end
+    end
+
+    -- Also check any non-player Survivor models in workspace
+    if not bestTarget then
+        for _, obj in ipairs(workspace:GetChildren()) do
+            if obj:IsA("Model") and obj ~= myChar and obj:FindFirstChildOfClass("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
+                local hum = obj:FindFirstChildOfClass("Humanoid")
+                local hrp = obj.HumanoidRootPart
+                if hum.Health > 0 and not obj.Name:lower():find("killer") and not obj:GetAttribute("Butcher") then
+                    local isHooked = obj:GetAttribute("IsHooked") or obj:GetAttribute("isHooked")
+                    local isCarried = obj:GetAttribute("IsCarried") or obj:GetAttribute("isCarried")
+                    if not isHooked and not isCarried then
+                        local dist = (myHrp.Position - hrp.Position).Magnitude
+                        if dist < bestDist then
+                            bestDist = dist
+                            bestTarget = obj
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return bestTarget, bestDist
+end
+
+local function travelToSurvivor(targetChar)
+    local myChar = player.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+    if not myHrp or not targetChar then return false end
+
+    local targetHrp = targetChar:FindFirstChild("HumanoidRootPart")
+    if not targetHrp then return false end
+
+    local targetPos = targetHrp.Position
+    local dist = (myHrp.Position - targetPos).Magnitude
+    if dist <= hitReachDistance then return true end
+
+    if killerTravelMode == "Instant Teleport" then
+        -- Teleport right behind survivor
+        local behindCFrame = CFrame.new(targetPos - targetHrp.CFrame.LookVector * 2.5, targetPos)
+        myHrp.CFrame = behindCFrame
+        task.wait(0.05)
+        return true
+
+    elseif killerTravelMode == "Safe Teleport" then
+        local step = math.clamp(safeTeleportStep or 0.5, 0.1, 2.0)
+        while autoCatchEnabled and targetChar.Parent and (myHrp.Position - targetHrp.Position).Magnitude > hitReachDistance do
+            local currentPos = myHrp.Position
+            local toTarget = (targetHrp.Position - currentPos)
+            local remainingDist = toTarget.Magnitude
+            if remainingDist <= step then
+                myHrp.CFrame = CFrame.new(targetHrp.Position, targetHrp.Position + toTarget.Unit)
+                break
+            end
+
+            local moveVec = toTarget.Unit * step
+            local nextPos = currentPos + moveVec
+            myHrp.CFrame = CFrame.new(nextPos, nextPos + moveVec)
+            task.wait(0.01)
+        end
+        return (myHrp.Position - targetHrp.Position).Magnitude <= hitReachDistance
+
+    elseif killerTravelMode == "Run Normally" then
+        if hum then
+            hum:MoveTo(targetHrp.Position)
+            pcall(function() myChar:SetAttribute("Sprinting", true) end)
+        end
+        return (myHrp.Position - targetHrp.Position).Magnitude <= hitReachDistance
+    end
+
+    return false
+end
+
+V_ObjectiveSection:Toggle({
+    Title = "NoClip (Pass Through Walls)",
+    Description = "Phases through all map walls, obstacles & doors",
+    Default = false,
+    Callback = function(v)
+        updateNoClip(v)
+        WindUI:Notify({ Title = "NoClip", Content = v and "NoClip enabled!" or "NoClip disabled.", Duration = 2 })
+    end
+})
+
+V_KillerSection:Dropdown({
+    Title = "Killer Travel Mode",
+    Description = "Method used to catch up to survivors",
+    Values = { "Safe Teleport", "Run Normally", "Instant Teleport" },
+    Value = "Safe Teleport",
+    Callback = function(v)
+        killerTravelMode = v
+    end
+})
+
+V_KillerSection:Slider({
+    Title = "Hit Reach Distance",
+    Description = "Distance in studs to trigger Auto Aim & Auto Hit (6 - 20 studs)",
+    Step = 1,
+    Value = {
+        Min = 6,
+        Max = 20,
+        Default = 10,
+    },
+    Callback = function(val)
+        hitReachDistance = tonumber(val) or 10
+    end
+})
+
+V_KillerSection:Toggle({
+    Title = "Auto Aim to Survivor",
+    Description = "Locks camera directly at target Survivor when in reach",
+    Default = true,
+    Callback = function(v)
+        autoAimSurvivorEnabled = v
+    end
+})
+
+V_KillerSection:Toggle({
+    Title = "Auto Hit Survivor",
+    Description = "Automatically executes basic attack when in reach",
+    Default = true,
+    Callback = function(v)
+        autoHitSurvivorEnabled = v
+    end
+})
+
+V_KillerSection:Toggle({
+    Title = "Auto Catch Survivor",
+    Description = "Locks onto nearest Survivor, pursues them, auto aims & strikes",
+    Default = false,
+    Callback = function(v)
+        autoCatchEnabled = v
+        local remotes = getVDRemotes()
+
+        if not v then
+            WindUI:Notify({ Title = "Auto Catch", Content = "Auto Catch disabled.", Duration = 2 })
+            return
+        end
+
+        if not isPlayerKiller() then
+            WindUI:Notify({ Title = "⚠️ Role Warning", Content = "You are currently not the Killer!", Duration = 3 })
+        end
+
+        WindUI:Notify({ Title = "Auto Catch", Content = "Hunting nearest Survivor...", Duration = 2.5 })
+
+        task.spawn(function()
+            while autoCatchEnabled do
+                pcall(function()
+                    local myChar = player.Character
+                    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                    if not myHrp then task.wait(1) return end
+
+                    local survivor, dist = findNearestSurvivor()
+                    if not survivor or not survivor:FindFirstChild("HumanoidRootPart") then
+                        task.wait(2)
+                        return
+                    end
+
+                    local sHrp = survivor.HumanoidRootPart
+
+                    -- Pursue survivor if outside hit reach
+                    if dist > hitReachDistance then
+                        travelToSurvivor(survivor)
+                    end
+
+                    -- When in reach, Auto Aim & Auto Hit
+                    if (myHrp.Position - sHrp.Position).Magnitude <= (hitReachDistance + 2) then
+                        -- 1. Auto Aim
+                        if autoAimSurvivorEnabled then
+                            local cam = workspace.CurrentCamera
+                            local aimPos = sHrp.Position + Vector3.new(0, 1.2, 0)
+                            cam.CFrame = CFrame.new(cam.CFrame.Position, aimPos)
+                            myHrp.CFrame = CFrame.new(myHrp.Position, Vector3.new(sHrp.Position.X, myHrp.Position.Y, sHrp.Position.Z))
+                        end
+
+                        -- 2. Auto Hit
+                        if autoHitSurvivorEnabled and (tick() - lastKillerHitTime > 0.8) then
+                            lastKillerHitTime = tick()
+                            if remotes.Attacks and remotes.Attacks:FindFirstChild("BasicAttack") then
+                                remotes.Attacks.BasicAttack:FireServer()
+                            end
+                            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+                            task.wait(0.04)
+                            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+                            WindUI:Notify({ Title = "⚔️ Hit Executed!", Content = "Struck " .. survivor.Name, Duration = 1.5 })
+                        end
+                    end
+                end)
+                task.wait(0.1)
+            end
+        end)
+    end
+})
+
 local DiscordTab = Window:Tab({
     Title = "Discord",
     Icon = "message-circle"
