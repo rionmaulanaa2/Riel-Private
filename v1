@@ -1160,6 +1160,195 @@ MovementSection:Toggle({
     end
 })
 
+local DeveloperTab = Window:Tab({
+    Title = "Developer",
+    Icon = "code"
+})
+
+local DeveloperSection = DeveloperTab:Section({
+    Title = "Game Code Extractor"
+})
+
+local function runCodeDump(copyClipboard)
+    local decompileFunc = decompile or (getscriptbytecode and decompile) or nil
+    local writeFileFunc = writefile or nil
+    local appendFileFunc = appendfile or nil
+    local setClipboardFunc = setclipboard or toclipboard or nil
+    local MarketplaceService = game:GetService("MarketplaceService")
+
+    local gameName = "Game_" .. tostring(game.PlaceId)
+    pcall(function()
+        local info = MarketplaceService:GetProductInfo(game.PlaceId)
+        if info and info.Name then
+            gameName = info.Name:gsub("[^%w%s%-_]", "")
+        end
+    end)
+
+    local sanitized = gameName:gsub("%s+", "_")
+    local fileName = string.format("%s_%d_code_dump.lua", sanitized, game.PlaceId)
+
+    WindUI:Notify({
+        Title = "Code Dumper",
+        Content = "Scanning game for scripts...",
+        Duration = 3
+    })
+
+    local targetContainers = {
+        ReplicatedStorage,
+        game:GetService("ReplicatedFirst"),
+        game:GetService("StarterGui"),
+        game:GetService("StarterPlayer"),
+        game:GetService("Lighting"),
+        workspace
+    }
+
+    if player then
+        local ps = player:FindFirstChildOfClass("PlayerScripts") or player:FindFirstChild("PlayerScripts")
+        if ps then table.insert(targetContainers, ps) end
+        local pg = player:FindFirstChildOfClass("PlayerGui") or player:FindFirstChild("PlayerGui")
+        if pg then table.insert(targetContainers, pg) end
+        local bp = player:FindFirstChildOfClass("Backpack") or player:FindFirstChild("Backpack")
+        if bp then table.insert(targetContainers, bp) end
+        if player.Character then table.insert(targetContainers, player.Character) end
+    end
+
+    local scriptList = {}
+    local visited = {}
+
+    for _, container in ipairs(targetContainers) do
+        if container and not visited[container] then
+            visited[container] = true
+            local descendants = {}
+            pcall(function() descendants = container:GetDescendants() end)
+            for _, obj in ipairs(descendants) do
+                if not visited[obj] then
+                    visited[obj] = true
+                    local isScript = false
+                    pcall(function()
+                        if obj:IsA("LocalScript") or obj:IsA("ModuleScript") then
+                            isScript = true
+                        elseif obj:IsA("Script") and pcall(function() return obj.RunContext end) and obj.RunContext == Enum.RunContext.Client then
+                            isScript = true
+                        end
+                    end)
+                    if isScript then
+                        table.insert(scriptList, obj)
+                    end
+                end
+            end
+        end
+    end
+
+    local total = #scriptList
+    if total == 0 then
+        WindUI:Notify({
+            Title = "Code Dumper",
+            Content = "No client scripts found.",
+            Duration = 3
+        })
+        return
+    end
+
+    WindUI:Notify({
+        Title = "Code Dumper",
+        Content = string.format("Found %d scripts! Dumping...", total),
+        Duration = 3
+    })
+
+    local dateStr = os.date("%Y-%m-%d %H:%M:%S")
+    local header = string.format([[-- ==============================================================================
+-- GAME CODE DUMP: %s
+-- Place ID: %d | Place Version: %d
+-- Generated: %s | Total Scripts: %d
+-- ==============================================================================
+
+]], gameName, game.PlaceId, game.PlaceVersion, dateStr, total)
+
+    if writeFileFunc then
+        pcall(function() writeFileFunc(fileName, header) end)
+    end
+
+    local buffer = { header }
+    local count = 0
+
+    task.spawn(function()
+        for i, scr in ipairs(scriptList) do
+            local path = "Unknown"
+            local class = scr.ClassName or "Script"
+            pcall(function() path = scr:GetFullName() end)
+
+            local src = "-- [Decompilation unavailable]"
+            if decompileFunc then
+                local s, res = pcall(decompileFunc, scr)
+                if s and type(res) == "string" and #res > 0 then
+                    src = res
+                end
+            end
+            if src == "-- [Decompilation unavailable]" then
+                pcall(function()
+                    if scr.Source and #scr.Source > 0 then
+                        src = scr.Source
+                    end
+                end)
+            end
+
+            local block = string.format("\n-- [%d/%d] [%s] %s\n%s\n\n", i, total, class, path, src)
+            if appendFileFunc then
+                pcall(function() appendFileFunc(fileName, block) end)
+            end
+            table.insert(buffer, block)
+            count = count + 1
+
+            if i % 5 == 0 then
+                task.wait()
+            end
+        end
+
+        if writeFileFunc and not appendFileFunc then
+            pcall(function() writeFileFunc(fileName, table.concat(buffer, "")) end)
+        end
+
+        if copyClipboard and setClipboardFunc then
+            setClipboardFunc(table.concat(buffer, ""))
+            WindUI:Notify({
+                Title = "Code Dumper",
+                Content = string.format("Copied all %d scripts to clipboard!", count),
+                Duration = 4
+            })
+        end
+
+        if writeFileFunc then
+            WindUI:Notify({
+                Title = "Code Dumper Complete",
+                Content = string.format("Saved %d scripts to workspace/%s", count, fileName),
+                Duration = 5
+            })
+        else
+            WindUI:Notify({
+                Title = "Code Dumper Complete",
+                Content = string.format("Dumped %d scripts (Console / Buffer)", count),
+                Duration = 5
+            })
+        end
+    end)
+end
+
+DeveloperSection:Button({
+    Title = "Dump All Game Code to File",
+    Description = "Decompiles all LocalScripts & ModuleScripts into one .lua file",
+    Callback = function()
+        runCodeDump(false)
+    end
+})
+
+DeveloperSection:Button({
+    Title = "Dump & Copy to Clipboard",
+    Description = "Dumps all game code and copies it to your clipboard",
+    Callback = function()
+        runCodeDump(true)
+    end
+})
+
 local DiscordTab = Window:Tab({
     Title = "Discord",
     Icon = "message-circle"
