@@ -1657,38 +1657,199 @@ V_ObjectiveSection:Toggle({
 })
 
 -- ============================================================
--- 4. AUTO REPAIR GENERATOR
+-- 4. AUTO REPAIR GENERATOR (AUTO SEARCH & TRAVEL)
 -- ============================================================
 local autoRepairEnabled = false
 local currentRepairPoint = nil
 local repairSafeDistance = 25
+local travelMode = "Safe Teleport"
+local safeTeleportStep = 0.5
+local isTraveling = false
 
-local function findClosestRepairPoint()
+local function findNextUnfinishedGenerator()
     local myChar = player.Character
     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
     if not myHrp then return nil end
 
-    local closestPoint = nil
-    local closestDist = math.huge
+    local CollectionService = game:GetService("CollectionService")
+    local candidatePoints = {}
 
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj.Name == "RepairPoint" or obj.Name:find("Repair") then
-            local pos = obj:IsA("BasePart") and obj.Position or (obj:IsA("Model") and obj:GetPivot().Position)
-            if pos then
-                local dist = (myHrp.Position - pos).Magnitude
-                if dist < closestDist and dist <= 18 then
-                    closestDist = dist
-                    closestPoint = obj
+    -- 1. Check CollectionService "GeneratorPoint"
+    pcall(function()
+        for _, point in ipairs(CollectionService:GetTagged("GeneratorPoint")) do
+            if point:IsA("BasePart") and not point:IsDescendantOf(myChar) then
+                local parent = point.Parent
+                local isBlocked = CollectionService:HasTag(parent, "Blocked") or (parent and parent:GetAttribute("Blocked") == true)
+                local isCompleted = parent and (parent:GetAttribute("Completed") == true or parent:GetAttribute("Repaired") == true or (parent:GetAttribute("Progress") or 0) >= 100)
+                if not isBlocked and not isCompleted then
+                    table.insert(candidatePoints, point)
+                end
+            end
+        end
+    end)
+
+    -- 2. Fallback check for parts named RepairPoint / GeneratorPoint in Workspace
+    if #candidatePoints == 0 then
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and (obj.Name == "RepairPoint" or obj.Name == "GeneratorPoint") then
+                local genModel = obj:FindFirstAncestorOfClass("Model")
+                local isCompleted = genModel and (genModel:GetAttribute("Completed") == true or genModel:GetAttribute("Repaired") == true or (genModel:GetAttribute("Progress") or 0) >= 100)
+                if not isCompleted then
+                    table.insert(candidatePoints, obj)
                 end
             end
         end
     end
-    return closestPoint
+
+    -- Find closest generator point
+    local bestPoint = nil
+    local bestDist = math.huge
+    for _, pt in ipairs(candidatePoints) do
+        local dist = (myHrp.Position - pt.Position).Magnitude
+        if dist < bestDist then
+            bestDist = dist
+            bestPoint = pt
+        end
+    end
+
+    return bestPoint, bestDist
 end
+
+local function travelToPoint(targetPart)
+    local myChar = player.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+    if not myHrp or not targetPart then return false end
+
+    local targetPos = targetPart.Position
+    local dist = (myHrp.Position - targetPos).Magnitude
+    if dist <= 4.5 then return true end
+
+    isTraveling = true
+
+    if travelMode == "Instant Teleport" then
+        myHrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 1.5, 0), targetPos)
+        task.wait(0.1)
+        isTraveling = false
+        return true
+
+    elseif travelMode == "Safe Teleport" then
+        local step = math.clamp(safeTeleportStep or 0.5, 0.1, 2.0)
+        while autoRepairEnabled and targetPart and targetPart.Parent and (myHrp.Position - targetPos).Magnitude > 4 do
+            -- Killer proximity check during travel
+            local killer = getKiller()
+            if killer and killer:FindFirstChild("HumanoidRootPart") then
+                local kDist = (myHrp.Position - killer.HumanoidRootPart.Position).Magnitude
+                if kDist < repairSafeDistance then
+                    WindUI:Notify({ Title = "⚠️ Travel Aborted", Content = "Killer nearby! Halting safe travel.", Duration = 2 })
+                    isTraveling = false
+                    return false
+                end
+            end
+
+            local currentPos = myHrp.Position
+            local toTarget = (targetPos - currentPos)
+            local remainingDist = toTarget.Magnitude
+            if remainingDist <= step then
+                myHrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 1, 0), targetPos)
+                break
+            end
+
+            local moveVec = toTarget.Unit * step
+            local nextPos = currentPos + moveVec
+            myHrp.CFrame = CFrame.new(nextPos, nextPos + moveVec)
+            task.wait(0.01)
+        end
+        isTraveling = false
+        return true
+
+    elseif travelMode == "Run Normally" then
+        local PathfindingService = game:GetService("PathfindingService")
+        local path = PathfindingService:CreatePath({
+            AgentRadius = 2,
+            AgentHeight = 5,
+            AgentCanJump = true
+        })
+
+        pcall(function()
+            path:ComputeAsync(myHrp.Position, targetPos)
+        end)
+
+        local waypoints = path.Status == Enum.PathStatus.Success and path:GetWaypoints() or { { Position = targetPos } }
+        pcall(function() myChar:SetAttribute("Sprinting", true) end)
+
+        for _, wp in ipairs(waypoints) do
+            if not autoRepairEnabled then break end
+
+            local killer = getKiller()
+            if killer and killer:FindFirstChild("HumanoidRootPart") then
+                local kDist = (myHrp.Position - killer.HumanoidRootPart.Position).Magnitude
+                if kDist < repairSafeDistance then
+                    if hum then hum:MoveTo(myHrp.Position) end
+                    WindUI:Notify({ Title = "⚠️ Run Aborted", Content = "Killer nearby! Halting run.", Duration = 2 })
+                    isTraveling = false
+                    return false
+                end
+            end
+
+            if hum then
+                hum:MoveTo(wp.Position)
+                local reached = false
+                local conn
+                conn = hum.MoveToFinished:Connect(function()
+                    reached = true
+                end)
+
+                local timeout = tick() + 2
+                while not reached and tick() < timeout and autoRepairEnabled do
+                    if (myHrp.Position - wp.Position).Magnitude < 3.5 then
+                        break
+                    end
+                    task.wait(0.05)
+                end
+                if conn then conn:Disconnect() end
+            end
+
+            if (myHrp.Position - targetPos).Magnitude <= 4.5 then
+                break
+            end
+        end
+
+        isTraveling = false
+        return (myHrp.Position - targetPos).Magnitude <= 5
+    end
+
+    isTraveling = false
+    return false
+end
+
+V_ObjectiveSection:Dropdown({
+    Title = "Generator Travel Mode",
+    Description = "Method used to travel to nearby generators",
+    Values = { "Safe Teleport", "Run Normally", "Instant Teleport" },
+    Value = "Safe Teleport",
+    Callback = function(v)
+        travelMode = v
+    end
+})
+
+V_ObjectiveSection:Slider({
+    Title = "Safe Teleport Step",
+    Description = "Step distance for Safe Teleport (0.1 - 2.0 studs per step)",
+    Step = 0.1,
+    Value = {
+        Min = 0.1,
+        Max = 2.0,
+        Default = 0.5,
+    },
+    Callback = function(val)
+        safeTeleportStep = tonumber(val) or 0.5
+    end
+})
 
 V_ObjectiveSection:Slider({
     Title = "Proximity Safe Guard",
-    Description = "Cancel repair if Killer is within this distance (studs)",
+    Description = "Cancel repair/travel if Killer is within this distance (studs)",
     Step = 1,
     Value = {
         Min = 25,
@@ -1702,7 +1863,7 @@ V_ObjectiveSection:Slider({
 
 V_ObjectiveSection:Toggle({
     Title = "Auto Repair Generator",
-    Description = "Auto repairs nearby generator & releases if killer approaches",
+    Description = "Auto searches, travels to, and repairs generators",
     Default = false,
     Callback = function(v)
         autoRepairEnabled = v
@@ -1719,17 +1880,19 @@ V_ObjectiveSection:Toggle({
             return
         end
 
-        WindUI:Notify({ Title = "Auto Repair", Content = "Auto repair started!", Duration = 2 })
+        WindUI:Notify({ Title = "Auto Repair", Content = "Auto repair & search started!", Duration = 2 })
 
         task.spawn(function()
             while autoRepairEnabled do
                 pcall(function()
                     local myChar = player.Character
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                    if not myHrp then task.wait(1) return end
+
                     local killer = getKiller()
 
                     -- Safety killer check
-                    if killer and killer:FindFirstChild("HumanoidRootPart") and myHrp then
+                    if killer and killer:FindFirstChild("HumanoidRootPart") then
                         local killerDist = (myHrp.Position - killer.HumanoidRootPart.Position).Magnitude
                         if killerDist < repairSafeDistance then
                             if currentRepairPoint and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
@@ -1742,11 +1905,28 @@ V_ObjectiveSection:Toggle({
                         end
                     end
 
-                    local point = findClosestRepairPoint()
-                    if point and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
-                        currentRepairPoint = point
+                    -- Search for next unfinished generator
+                    local targetPoint, dist = findNextUnfinishedGenerator()
+                    if not targetPoint then
+                        task.wait(3)
+                        return
+                    end
+
+                    -- Travel if not yet in repair range
+                    if dist > 4.5 then
+                        WindUI:Notify({ Title = "Auto Generator", Content = string.format("Going to Generator (%.0f studs) via %s...", dist, travelMode), Duration = 2 })
+                        local arrived = travelToPoint(targetPoint)
+                        if not arrived then
+                            task.wait(1)
+                            return
+                        end
+                    end
+
+                    -- In range: initiate or maintain repair
+                    if targetPoint and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
+                        currentRepairPoint = targetPoint
                         local guid = HttpService:GenerateGUID(false)
-                        remotes.Generator.RepairEvent:FireServer(point, true, nil, guid, myChar)
+                        remotes.Generator.RepairEvent:FireServer(targetPoint, true, nil, guid, myChar)
                     end
                 end)
                 task.wait(1.5)
