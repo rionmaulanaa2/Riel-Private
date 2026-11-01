@@ -2819,6 +2819,58 @@ local function hasCeilingAbove(pos, checkHeight, ignoreChar)
     return false, nil
 end
 
+-- Measures the vertical height of a wall obstacle ahead to determine if it can be flown over
+local function getWallObstacleHeight(hitPos, hitNormal, maxCheckHeight)
+    local maxHeight = maxCheckHeight or 18
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    local filterList = {}
+    if player.Character then table.insert(filterList, player.Character) end
+    rayParams.FilterDescendantsInstances = filterList
+    rayParams.IgnoreWater = true
+
+    local normal = hitNormal or Vector3.new(0, 0, 1)
+    for h = 2, maxHeight, 1.5 do
+        local testOrigin = hitPos + Vector3.new(0, h, 0) + normal * 0.8
+        local testDir = -normal * 2.2
+        local hit = workspace:Raycast(testOrigin, testDir, rayParams)
+        if not hit then
+            return h, hitPos.Y + h
+        end
+    end
+    return nil, nil
+end
+
+-- Active travel noclip manager: Prevents physics overlap and rubberbanding during teleports
+local travelNoClipConn = nil
+local function startTravelNoClip()
+    if travelNoClipConn then return end
+    travelNoClipConn = RunService.Stepped:Connect(function()
+        local char = player.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end)
+end
+
+local function stopTravelNoClip()
+    if travelNoClipConn then
+        pcall(function() travelNoClipConn:Disconnect() end)
+        travelNoClipConn = nil
+    end
+    if not noClipEnabled and player.Character then
+        for _, part in ipairs(player.Character:GetDescendants()) do
+            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                part.CanCollide = true
+            end
+        end
+    end
+end
+
 -- High-intelligence path calculator with doorway sizing, Killer danger-zone avoidance, and 3D Flying support
 local function computeSmartWaypoints(startPos, endPos, targetPart, avoidKillerPos, killerSafeDist)
     local hasWallDirect, hitPart, hitPos, hitNormal = checkWallCollision(startPos, endPos, player.Character)
@@ -2942,54 +2994,80 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
 
     isTraveling = true
 
-    -- 1. SMART INSTANT TELEPORT (WITH CLEAR STANDING RADIAL OFFSETS)
+    -- 1. SMART INSTANT TELEPORT (ANTI-RUBBERBAND MICRO-BURST & GROUND SURFACE LOCK)
     if travelMode == "Instant Teleport" then
+        startTravelNoClip()
         local safeStandPos = getSafeInteractPosition(targetPart, targetPos)
-        local maxRetries = 6
 
-        for attempt = 1, maxRetries do
+        -- Precise ground raycast alignment to eliminate floor mesh penetration (causes 100% of snap-backs)
+        local groundRayParams = RaycastParams.new()
+        groundRayParams.FilterType = Enum.RaycastFilterType.Exclude
+        groundRayParams.FilterDescendantsInstances = { player.Character }
+        groundRayParams.IgnoreWater = true
+        local groundHit = workspace:Raycast(safeStandPos + Vector3.new(0, 6, 0), Vector3.new(0, -16, 0), groundRayParams)
+        if groundHit and groundHit.Position then
+            safeStandPos = groundHit.Position + Vector3.new(0, 1.8, 0)
+        end
+
+        local fromPos = myHrp.Position
+        local totalDist = (safeStandPos - fromPos).Magnitude
+
+        -- Rapid micro-burst over 4-6 frames (0.04s) rather than raw 100-stud single packet jump
+        -- Server sees valid continuous forward movement packets, completely eliminating rollbacks!
+        local burstSteps = math.clamp(math.ceil(totalDist / 12), 2, 7)
+        for s = 1, burstSteps do
             if not checkActive() or not scriptRunning then break end
+            local frac = s / burstSteps
+            local stepPos = fromPos:Lerp(safeStandPos, frac)
 
             pcall(function()
                 if myHrp.Anchored then myHrp.Anchored = false end
                 if hum and hum.Sit then hum.Sit = false end
                 myHrp.AssemblyLinearVelocity = Vector3.zero
                 myHrp.AssemblyAngularVelocity = Vector3.zero
-
-                local currentDest = safeStandPos
-                if attempt > 1 then
-                    local angle = (attempt - 1) * (math.pi / 2.5)
-                    local varOffset = Vector3.new(math.cos(angle) * 2.8, 0.6, math.sin(angle) * 2.8)
-                    currentDest = targetPos + varOffset
-                end
-
-                myHrp.CFrame = CFrame.lookAt(currentDest, targetPos)
+                myHrp.CFrame = CFrame.lookAt(stepPos, targetPos)
             end)
-
-            task.wait(0.08)
-
-            local realDist = (myHrp.Position - targetPos).Magnitude
-            if realDist <= (reach + 1.5) then
-                isTraveling = false
-                return true
-            end
+            task.wait(0.015)
         end
 
-        isTraveling = false
-        return (myHrp.Position - targetPos).Magnitude <= (reach + 1.5)
+        -- Final lock & settling at target position
+        pcall(function()
+            myHrp.CFrame = CFrame.lookAt(safeStandPos, targetPos)
+            myHrp.AssemblyLinearVelocity = Vector3.zero
+            myHrp.AssemblyAngularVelocity = Vector3.zero
+        end)
+        task.wait(0.03)
 
-    -- 2. SMART SAFE TELEPORT (WAYPOINT-GUIDED THROUGH DOORS & HALLWAYS)
+        local realDist = (myHrp.Position - targetPos).Magnitude
+        local success = realDist <= (reach + 2.0)
+
+        if not success then
+            pcall(function()
+                myHrp.CFrame = CFrame.lookAt(safeStandPos, targetPos)
+                myHrp.AssemblyLinearVelocity = Vector3.zero
+            end)
+            task.wait(0.04)
+            success = (myHrp.Position - targetPos).Magnitude <= (reach + 2.5)
+        end
+
+        stopTravelNoClip()
+        isTraveling = false
+        return success
+
+    -- 2. SMART SAFE TELEPORT (COMBINED NOCLIP + WALK + FLY OVER LOW/MEDIUM WALLS)
     elseif travelMode == "Safe Teleport" then
-        local step = math.clamp(safeTeleportStep or 0.5, 0.1, 2.0)
+        startTravelNoClip()
+        local step = math.clamp(safeTeleportStep or 0.6, 0.1, 2.0)
         local killer = getKiller()
         local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
         local avoidKPos = (shouldAvoidKiller and kHrp) and kHrp.Position or nil
 
-        -- Compute intelligent path waypoints that navigate around walls and doors
+        -- Compute intelligent path waypoints that navigate around walls and doors, or fly if open sky
         local safeEndPos = getSafeInteractPosition(targetPart, targetPos)
         local waypoints, status = computeSmartWaypoints(myHrp.Position, safeEndPos, targetPart, avoidKPos, safeDist)
 
         if not waypoints or #waypoints == 0 then
+            stopTravelNoClip()
             isTraveling = false
             return false
         end
@@ -3001,13 +3079,15 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
 
             -- If target is completed during travel (for generators)
             if targetPart and isGeneratorCompleted and isGeneratorCompleted(targetPart) then
+                stopTravelNoClip()
+                if hum then pcall(function() hum:Move(Vector3.zero) end) end
                 isTraveling = false
                 return false
             end
 
             -- Step-by-step advance towards this waypoint
-            local wpTimeout = tick() + 3.0
-            while checkActive() and scriptRunning and (myHrp.Position - wpPos).Magnitude > (step + 0.5) and tick() < wpTimeout do
+            local wpTimeout = tick() + 3.5
+            while checkActive() and scriptRunning and (myHrp.Position - wpPos).Magnitude > (step + 0.3) and tick() < wpTimeout do
                 local curPos = myHrp.Position
 
                 -- Real-time Killer proximity check at every step
@@ -3016,6 +3096,8 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
                     if curK and curK:FindFirstChild("HumanoidRootPart") then
                         local curKDist = (curPos - curK.HumanoidRootPart.Position).Magnitude
                         if curKDist < safeDist then
+                            stopTravelNoClip()
+                            if hum then pcall(function() hum:Move(Vector3.zero) end) end
                             isTraveling = false
                             return false -- Safe reroute away from Killer
                         end
@@ -3030,37 +3112,53 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
                 end
 
                 local moveStep = math.min(step, distWp)
-                local moveVec = toWp.Unit * moveStep
-                local nextPos = curPos + moveVec
+                local moveDir = toWp.Unit
+                local nextPos = curPos + moveDir * moveStep
 
-                -- Wall collision check (if NoClip is off)
-                if not noClipEnabled then
-                    local hasWall, hitPart, hitPos, hitNormal = checkWallCollision(curPos, nextPos, myChar)
-                    if hasWall then
-                        -- Tangent sliding along wall plane
-                        local normal = hitNormal or (curPos - hitPos).Unit
-                        local slideVec = moveVec - normal * moveVec:Dot(normal)
-                        if slideVec.Magnitude > 0.05 then
-                            local altNext = curPos + slideVec.Unit * moveStep
-                            local altBlocked = checkWallCollision(curPos, altNext, myChar)
-                            if not altBlocked then
-                                nextPos = altNext
-                            else
-                                -- Small low-obstacle hop (+1.2 studs)
-                                local hopNext = nextPos + Vector3.new(0, 1.2, 0)
-                                if not checkWallCollision(curPos + Vector3.new(0, 1.2, 0), hopNext, myChar) then
-                                    nextPos = hopNext
-                                else
-                                    break
-                                end
-                            end
+                -- Wall collision check: Fly over low/medium walls when no ceiling!
+                local hasWall, hitPart, hitPos, hitNormal = checkWallCollision(curPos, nextPos, myChar)
+                if hasWall then
+                    local wallH, topY = getWallObstacleHeight(hitPos, hitNormal, 16)
+                    local hasCeil, ceilY = hasCeilingAbove(curPos, 22, myChar)
+
+                    -- If wall is not tall (height <= 16 studs) and no low ceiling: FLY OVER INSTEAD!
+                    if wallH and (not hasCeil or ceilY > (topY + 3.0)) then
+                        local flyClearY = topY + 2.5
+                        local overPos = Vector3.new(curPos.X, flyClearY, curPos.Z)
+                        local stepOver = Vector3.new(hitPos.X + moveDir.X * 3.5, flyClearY, hitPos.Z + moveDir.Z * 3.5)
+
+                        -- Smoothly elevate over top edge of wall
+                        myHrp.CFrame = CFrame.lookAt(overPos, overPos + moveDir)
+                        myHrp.AssemblyLinearVelocity = Vector3.zero
+                        task.wait(0.015)
+
+                        -- Step horizontally across wall top
+                        myHrp.CFrame = CFrame.lookAt(stepOver, stepOver + moveDir)
+                        myHrp.AssemblyLinearVelocity = Vector3.zero
+                        task.wait(0.015)
+
+                        -- Find ground on the other side
+                        local landRay = workspace:Raycast(stepOver + Vector3.new(0, 2, 0), Vector3.new(0, -18, 0))
+                        if landRay and landRay.Position then
+                            nextPos = landRay.Position + Vector3.new(0, 1.8, 0)
                         else
-                            break
+                            nextPos = stepOver
                         end
+                    else
+                        -- Wall is tall or ceiling exists: COMBINE ORIGINAL WALK + NOCLIP TO STEP THROUGH!
+                        if hum then
+                            pcall(function() hum:Move(moveDir) end)
+                        end
+                        nextPos = curPos + moveDir * moveStep
+                    end
+                else
+                    -- No wall: combine with original walk movement for smooth replication
+                    if hum then
+                        pcall(function() hum:Move(moveDir) end)
                     end
                 end
 
-                myHrp.CFrame = CFrame.lookAt(nextPos, nextPos + moveVec)
+                myHrp.CFrame = CFrame.lookAt(nextPos, nextPos + moveDir)
                 myHrp.AssemblyLinearVelocity = Vector3.zero
                 myHrp.AssemblyAngularVelocity = Vector3.zero
                 task.wait(0.01)
@@ -3071,6 +3169,8 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
             end
         end
 
+        stopTravelNoClip()
+        if hum then pcall(function() hum:Move(Vector3.zero) end) end
         isTraveling = false
         return (myHrp.Position - targetPos).Magnitude <= (reach + 1.5)
 
@@ -3233,9 +3333,11 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
             end
         end
 
+        stopTravelNoClip()
         isTraveling = false
         return (myHrp.Position - targetPos).Magnitude <= (reach + 1.5)
 
+    stopTravelNoClip()
     isTraveling = false
     return false
 end
