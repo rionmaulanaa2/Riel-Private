@@ -2553,8 +2553,99 @@ local function findNextUnfinishedGenerator(killer)
 end
 
 -- ============================================================
--- WALL & COLLISION DETECTION (FOR SAFE TELEPORT & NORMAL RUN)
+-- SMART PATHFINDING, WALL & COLLISION DETECTION (FOR SURVIVORS & KILLER)
 -- ============================================================
+local PathfindingService = game:GetService("PathfindingService")
+
+-- Hooked Survivor Detection & Priority Rescue Engine
+local function isCharacterHooked(char)
+    if not char or not char.Parent then return false end
+
+    -- Direct attributes
+    if char:GetAttribute("isHooked") == true or char:GetAttribute("Hooked") == true then
+        return true
+    end
+    local phase = char:GetAttribute("HookPhase")
+    if phase ~= nil and tonumber(phase) ~= nil and tonumber(phase) > 0 then
+        return true
+    end
+
+    -- Child marker objects
+    if char:FindFirstChild("Hooked") or char:FindFirstChild("HookPhase") or char:FindFirstChild("HookWeld") then
+        return true
+    end
+
+    -- Model parent or ancestry
+    local pName = char.Parent.Name:lower()
+    if pName:find("hook") or pName:find("meathook") then
+        return true
+    end
+
+    -- Joints/Welds connecting HumanoidRootPart to MeatHooks
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        for _, joint in ipairs(hrp:GetJoints()) do
+            local other = (joint.Part0 == hrp) and joint.Part1 or joint.Part0
+            if other and other.Parent then
+                local oName = other.Name:lower()
+                local opName = other.Parent.Name:lower()
+                if oName:find("hook") or opName:find("hook") then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+local function isTeammateRescuable(plr)
+    if not plr or plr == player then return false end
+    local char = plr.Character
+    if not char or not char.Parent then return false end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum or hum.Health <= 0 then return false end
+
+    -- Exclude players in Lobby or Spectator mode
+    if plr.Team and (plr.Team.Name == "Lobby" or plr.Team.Name == "Choosing" or plr.Team.Name:lower():find("lobby")) then
+        return false
+    end
+    if isSurvivorInLobby and isSurvivorInLobby(char) then
+        return false
+    end
+
+    return isCharacterHooked(char)
+end
+
+local function findNearestHookedTeammate()
+    local myChar = player.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHrp then return nil, nil, math.huge end
+
+    local nearestChar, nearestPlr = nil, nil
+    local shortestDist = math.huge
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if isTeammateRescuable(plr) then
+            local dist = (myHrp.Position - plr.Character.HumanoidRootPart.Position).Magnitude
+            if dist < shortestDist then
+                shortestDist = dist
+                nearestChar = plr.Character
+                nearestPlr = plr
+            end
+        end
+    end
+
+    return nearestChar, nearestPlr, shortestDist
+end
+
+local function hasHookedTeammates()
+    if not autoSaveEnabled then return false end
+    local char = findNearestHookedTeammate()
+    return char ~= nil
+end
+
 local function checkWallCollision(fromPos, toPos, ignoreModel)
     local raycastParams = RaycastParams.new()
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -2584,51 +2675,149 @@ local function checkWallCollision(fromPos, toPos, ignoreModel)
     return false
 end
 
--- Calculates clear standing coordinates beside a generator to prevent clipping/physics pushback
-local function getSafeInteractPosition(targetPart)
-    local targetPos = targetPart.Position
-    local lookVec = targetPart.CFrame.LookVector
-    local rightVec = targetPart.CFrame.RightVector
+-- Calculates clear standing coordinates beside a target to prevent clipping/physics pushback
+local function getSafeInteractPosition(targetPart, customPos)
+    local targetPos = customPos or (targetPart and targetPart.Position) or Vector3.zero
+    local parentModel = (targetPart and targetPart:FindFirstAncestorOfClass("Model")) or (targetPart and targetPart.Parent)
 
-    -- 4 radial candidate positions around generator: Front, Back, Right, Left (2.8 studs clearance)
+    -- 6 radial test positions (radius 2.8 studs) around target
     local offsets = {
-        lookVec * 2.8,
-        -lookVec * 2.8,
-        rightVec * 2.8,
-        -rightVec * 2.8
+        Vector3.new(2.8, 0, 0),
+        Vector3.new(-2.8, 0, 0),
+        Vector3.new(0, 0, 2.8),
+        Vector3.new(0, 0, -2.8),
+        Vector3.new(2.0, 0, 2.0),
+        Vector3.new(-2.0, 0, -2.0)
     }
 
-    local parentModel = targetPart:FindFirstAncestorOfClass("Model") or targetPart.Parent
+    if targetPart and targetPart:IsA("BasePart") then
+        local look = targetPart.CFrame.LookVector * 2.8
+        local right = targetPart.CFrame.RightVector * 2.8
+        table.insert(offsets, 1, look)
+        table.insert(offsets, 2, -look)
+        table.insert(offsets, 3, right)
+        table.insert(offsets, 4, -right)
+    end
+
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    local fList = { player.Character }
+    if parentModel then table.insert(fList, parentModel) end
+    if targetPart then table.insert(fList, targetPart) end
+    rayParams.FilterDescendantsInstances = fList
+
     for _, off in ipairs(offsets) do
-        local testPos = targetPos + off + Vector3.new(0, 0.5, 0)
-        local hasWall = checkWallCollision(targetPos, testPos, parentModel)
-        if not hasWall then
-            return testPos
+        local testPos = targetPos + off
+        -- Raycast down to find ground level
+        local groundRay = workspace:Raycast(testPos + Vector3.new(0, 3, 0), Vector3.new(0, -7, 0), rayParams)
+        if groundRay and groundRay.Position then
+            local floorPos = groundRay.Position + Vector3.new(0, 2.0, 0)
+            local hasWall = checkWallCollision(targetPos, floorPos, parentModel)
+            if not hasWall then
+                return floorPos
+            end
         end
     end
 
     return targetPos + Vector3.new(0, 1.2, 0)
 end
 
-local function travelToPoint(targetPart)
+-- High-intelligence path calculator with doorway sizing & Killer danger-zone avoidance
+local function computeSmartWaypoints(startPos, endPos, targetPart, avoidKillerPos, killerSafeDist)
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 1.6, -- 1.6 studs radius (3.2 studs diameter), fits standard Roblox characters through all doorways & corridors
+        AgentHeight = 4.8, -- 4.8 studs height, fits under door lintels & arches
+        AgentCanJump = true,
+        AgentCanClimb = false,
+        WaypointSpacing = 2.5,
+        Costs = {
+            Water = 100
+        }
+    })
+
+    local success = pcall(function()
+        path:ComputeAsync(startPos, endPos)
+    end)
+
+    if success and path.Status == Enum.PathStatus.Success then
+        local rawWaypoints = path:GetWaypoints()
+        if rawWaypoints and #rawWaypoints > 0 then
+            -- Pre-check path against Killer proximity: reject if path cuts straight through Killer
+            if avoidKillerPos and killerSafeDist then
+                for _, wp in ipairs(rawWaypoints) do
+                    local distToKiller = (wp.Position - avoidKillerPos).Magnitude
+                    if distToKiller < (killerSafeDist + 4) then
+                        return nil, "killer_near_path"
+                    end
+                end
+            end
+            return rawWaypoints, "pathfinding"
+        end
+    end
+
+    -- If PathfindingService failed (e.g. custom map mesh without navmesh),
+    -- do NOT walk straight into walls! Check direct raycast:
+    local hasWall, hitPart, hitPos, hitNormal = checkWallCollision(startPos, endPos, player.Character)
+    if not hasWall then
+        return { { Position = startPos }, { Position = endPos } }, "direct"
+    end
+
+    -- Smart Tangent Detour around wall
+    local normal = hitNormal or (startPos - hitPos).Unit
+    local tangent = Vector3.new(-normal.Z, 0, normal.X).Unit
+    for d = 3, 12, 3 do
+        local cand1 = hitPos + tangent * d + normal * 2.0
+        local cand2 = hitPos - tangent * d + normal * 2.0
+        if not checkWallCollision(startPos, cand1, player.Character) and not checkWallCollision(cand1, endPos, player.Character) then
+            return { { Position = startPos }, { Position = cand1 }, { Position = endPos } }, "detour"
+        elseif not checkWallCollision(startPos, cand2, player.Character) and not checkWallCollision(cand2, endPos, player.Character) then
+            return { { Position = startPos }, { Position = cand2 }, { Position = endPos } }, "detour"
+        end
+    end
+
+    return { { Position = startPos }, { Position = endPos } }, "fallback"
+end
+
+local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKiller, customSafeDist)
     local myChar = player.Character
     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
     local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
-    if not myHrp or not targetPart then return false end
+    if not myHrp or not targetPartOrPos then return false end
 
-    local targetPos = targetPart.Position
+    -- Resolve target position & target part
+    local targetPos
+    local targetPart = nil
+    if typeof(targetPartOrPos) == "Vector3" then
+        targetPos = targetPartOrPos
+    elseif targetPartOrPos:IsA("BasePart") then
+        targetPart = targetPartOrPos
+        targetPos = targetPartOrPos.Position
+    elseif targetPartOrPos:IsA("Model") then
+        targetPart = targetPartOrPos.PrimaryPart or targetPartOrPos:FindFirstChild("HumanoidRootPart") or targetPartOrPos:FindFirstChildWhichIsA("BasePart")
+        targetPos = targetPart and targetPart.Position or targetPartOrPos:GetPivot().Position
+    else
+        return false
+    end
+
+    local reach = stopReach or 4.5
     local dist = (myHrp.Position - targetPos).Magnitude
-    if dist <= 4.5 then return true end
+    if dist <= reach then return true end
+
+    local checkActive = activeCheck or function()
+        return (autoRepairEnabled or autoSaveEnabled) and scriptRunning
+    end
+    local shouldAvoidKiller = (avoidKiller ~= false)
+    local safeDist = customSafeDist or repairSafeDistance or 25
 
     isTraveling = true
 
-    -- 1. SMART INSTANT TELEPORT (WITH RADIAL OFFSETS & VERIFIED REAL POSITION)
+    -- 1. SMART INSTANT TELEPORT (WITH CLEAR STANDING RADIAL OFFSETS)
     if travelMode == "Instant Teleport" then
-        local safeStandPos = getSafeInteractPosition(targetPart)
+        local safeStandPos = getSafeInteractPosition(targetPart, targetPos)
         local maxRetries = 6
 
         for attempt = 1, maxRetries do
-            if not autoRepairEnabled or not scriptRunning or not targetPart or not targetPart.Parent then break end
+            if not checkActive() or not scriptRunning then break end
 
             pcall(function()
                 if myHrp.Anchored then myHrp.Anchored = false end
@@ -2636,186 +2825,224 @@ local function travelToPoint(targetPart)
                 myHrp.AssemblyLinearVelocity = Vector3.zero
                 myHrp.AssemblyAngularVelocity = Vector3.zero
 
-                -- Use radial variation on retries if initial angle got blocked
                 local currentDest = safeStandPos
                 if attempt > 1 then
                     local angle = (attempt - 1) * (math.pi / 2.5)
-                    local varOffset = Vector3.new(math.cos(angle) * 2.5, 0.6, math.sin(angle) * 2.5)
+                    local varOffset = Vector3.new(math.cos(angle) * 2.8, 0.6, math.sin(angle) * 2.8)
                     currentDest = targetPos + varOffset
                 end
 
-                local destCFrame = CFrame.lookAt(currentDest, targetPos)
-                myHrp.CFrame = destCFrame
+                myHrp.CFrame = CFrame.lookAt(currentDest, targetPos)
             end)
 
             task.wait(0.08)
 
-            -- Real player position verification
             local realDist = (myHrp.Position - targetPos).Magnitude
-            if realDist <= 5.5 then
+            if realDist <= (reach + 1.5) then
                 isTraveling = false
                 return true
             end
         end
 
         isTraveling = false
-        return (myHrp.Position - targetPos).Magnitude <= 5.5
+        return (myHrp.Position - targetPos).Magnitude <= (reach + 1.5)
 
-    -- 2. SMART SAFE TELEPORT (CONTINUOUS KILLER AVOIDANCE & WALL SLIDING)
+    -- 2. SMART SAFE TELEPORT (WAYPOINT-GUIDED THROUGH DOORS & HALLWAYS)
     elseif travelMode == "Safe Teleport" then
         local step = math.clamp(safeTeleportStep or 0.5, 0.1, 2.0)
+        local killer = getKiller()
+        local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
+        local avoidKPos = (shouldAvoidKiller and kHrp) and kHrp.Position or nil
 
-        while autoRepairEnabled and scriptRunning and targetPart and targetPart.Parent and (myHrp.Position - targetPos).Magnitude > 4 do
-            local currentPos = myHrp.Position
-            local toTarget = (targetPos - currentPos)
-            local remainingDist = toTarget.Magnitude
+        -- Compute intelligent path waypoints that navigate around walls and doors
+        local safeEndPos = getSafeInteractPosition(targetPart, targetPos)
+        local waypoints, status = computeSmartWaypoints(myHrp.Position, safeEndPos, targetPart, avoidKPos, safeDist)
 
-            -- Killer avoidance calculation during step-by-step teleport
-            local killer = getKiller()
-            if killer and killer:FindFirstChild("HumanoidRootPart") then
-                local kHrp = killer.HumanoidRootPart
-                local kDist = (currentPos - kHrp.Position).Magnitude
-                if kDist < repairSafeDistance then
-                    isTraveling = false
-                    return false -- Triggers immediate safe reroute to far generator!
-                end
+        if not waypoints or #waypoints == 0 then
+            isTraveling = false
+            return false
+        end
 
-                -- If direct path approaches Killer danger radius, curve path away
-                local nextStraight = currentPos + toTarget.Unit * step
-                local nextKDist = (nextStraight - kHrp.Position).Magnitude
-                if nextKDist < (repairSafeDistance + 15) then
-                    local awayDir = (currentPos - kHrp.Position).Unit
-                    local blendedDir = (toTarget.Unit + awayDir * 1.5).Unit
-                    toTarget = blendedDir * remainingDist
-                end
-            end
+        for wpIdx = 1, #waypoints do
+            if not checkActive() or not scriptRunning then break end
+            local wp = waypoints[wpIdx]
+            local wpPos = wp.Position
 
-            -- Abort if generator completed while traveling
-            if isGeneratorCompleted(targetPart) then
+            -- If target is completed during travel (for generators)
+            if targetPart and isGeneratorCompleted and isGeneratorCompleted(targetPart) then
                 isTraveling = false
                 return false
             end
 
-            if remainingDist <= step then
-                myHrp.CFrame = CFrame.lookAt(targetPos + Vector3.new(0, 1, 0), targetPos)
-                break
+            -- Step-by-step advance towards this waypoint
+            local wpTimeout = tick() + 3.0
+            while checkActive() and scriptRunning and (myHrp.Position - wpPos).Magnitude > (step + 0.5) and tick() < wpTimeout do
+                local curPos = myHrp.Position
+
+                -- Real-time Killer proximity check at every step
+                if shouldAvoidKiller then
+                    local curK = getKiller()
+                    if curK and curK:FindFirstChild("HumanoidRootPart") then
+                        local curKDist = (curPos - curK.HumanoidRootPart.Position).Magnitude
+                        if curKDist < safeDist then
+                            isTraveling = false
+                            return false -- Safe reroute away from Killer
+                        end
+                    end
+                end
+
+                local toWp = (wpPos - curPos)
+                local distWp = toWp.Magnitude
+                if distWp <= step then
+                    myHrp.CFrame = CFrame.lookAt(wpPos, wpPos + toWp.Unit)
+                    break
+                end
+
+                local moveStep = math.min(step, distWp)
+                local moveVec = toWp.Unit * moveStep
+                local nextPos = curPos + moveVec
+
+                -- Wall collision check (if NoClip is off)
+                if not noClipEnabled then
+                    local hasWall, hitPart, hitPos, hitNormal = checkWallCollision(curPos, nextPos, myChar)
+                    if hasWall then
+                        -- Tangent sliding along wall plane
+                        local normal = hitNormal or (curPos - hitPos).Unit
+                        local slideVec = moveVec - normal * moveVec:Dot(normal)
+                        if slideVec.Magnitude > 0.05 then
+                            local altNext = curPos + slideVec.Unit * moveStep
+                            local altBlocked = checkWallCollision(curPos, altNext, myChar)
+                            if not altBlocked then
+                                nextPos = altNext
+                            else
+                                -- Small low-obstacle hop (+1.2 studs)
+                                local hopNext = nextPos + Vector3.new(0, 1.2, 0)
+                                if not checkWallCollision(curPos + Vector3.new(0, 1.2, 0), hopNext, myChar) then
+                                    nextPos = hopNext
+                                else
+                                    break
+                                end
+                            end
+                        else
+                            break
+                        end
+                    end
+                end
+
+                myHrp.CFrame = CFrame.lookAt(nextPos, nextPos + moveVec)
+                myHrp.AssemblyLinearVelocity = Vector3.zero
+                myHrp.AssemblyAngularVelocity = Vector3.zero
+                task.wait(0.01)
             end
 
-            local moveVec = toTarget.Unit * step
-            local nextPos = currentPos + moveVec
+            if (myHrp.Position - targetPos).Magnitude <= reach then
+                break
+            end
+        end
 
-            -- Collision & Wall Check when NoClip is disabled
-            if not noClipEnabled then
-                local hasWall, hitPart, hitPos, hitNormal = checkWallCollision(currentPos, nextPos, myChar)
-                if hasWall then
-                    -- Wall sliding: project movement vector along wall plane
-                    local normal = hitNormal or (currentPos - hitPos).Unit
-                    local slideVec = (moveVec - normal * moveVec:Dot(normal))
-                    if slideVec.Magnitude > 0.05 then
-                        local altNext = currentPos + slideVec.Unit * step
-                        local altBlocked = checkWallCollision(currentPos, altNext, myChar)
-                        if not altBlocked then
-                            nextPos = altNext
-                            moveVec = slideVec.Unit * step
-                        else
-                            isTraveling = false
-                            return false
-                        end
-                    else
+        isTraveling = false
+        return (myHrp.Position - targetPos).Magnitude <= (reach + 1.5)
+
+    -- 3. SMART RUN NORMALLY (PATHFINDING WITH WALL & STUCK WATCHDOG)
+    elseif travelMode == "Run Normally" then
+        local killer = getKiller()
+        local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
+        local avoidKPos = (shouldAvoidKiller and kHrp) and kHrp.Position or nil
+
+        local safeEndPos = getSafeInteractPosition(targetPart, targetPos)
+        local waypoints, status = computeSmartWaypoints(myHrp.Position, safeEndPos, targetPart, avoidKPos, safeDist)
+
+        if not waypoints or #waypoints == 0 then
+            isTraveling = false
+            return false
+        end
+
+        pcall(function() myChar:SetAttribute("Sprinting", true) end)
+
+        for wpIdx, wp in ipairs(waypoints) do
+            if not checkActive() or not scriptRunning then break end
+
+            -- Real-time Killer check
+            if shouldAvoidKiller then
+                local curK = getKiller()
+                if curK and curK:FindFirstChild("HumanoidRootPart") then
+                    local curKDist = (myHrp.Position - curK.HumanoidRootPart.Position).Magnitude
+                    if curKDist < safeDist then
+                        if hum then hum:MoveTo(myHrp.Position) end
                         isTraveling = false
                         return false
                     end
                 end
             end
 
-            myHrp.CFrame = CFrame.new(nextPos, nextPos + moveVec)
-            task.wait(0.01)
-        end
-
-        isTraveling = false
-        return (myHrp.Position - targetPos).Magnitude <= 5
-
-    -- 3. SMART RUN NORMALLY (PATHFINDING WITH KILLER DANGER ZONE AVOIDANCE)
-    elseif travelMode == "Run Normally" then
-        local PathfindingService = game:GetService("PathfindingService")
-        local path = PathfindingService:CreatePath({
-            AgentRadius = 2.5,
-            AgentHeight = 5,
-            AgentCanJump = true
-        })
-
-        pcall(function()
-            path:ComputeAsync(myHrp.Position, targetPos)
-        end)
-
-        local waypoints = path.Status == Enum.PathStatus.Success and path:GetWaypoints() or { { Position = targetPos } }
-        pcall(function() myChar:SetAttribute("Sprinting", true) end)
-
-        -- Pre-evaluate waypoints: if path passes dangerously close to Killer, abort immediately
-        local killer = getKiller()
-        if killer and killer:FindFirstChild("HumanoidRootPart") then
-            local kHrp = killer.HumanoidRootPart
-            for _, wp in ipairs(waypoints) do
-                local wpKDist = (wp.Position - kHrp.Position).Magnitude
-                if wpKDist < (repairSafeDistance + 10) then
-                    if hum then hum:MoveTo(myHrp.Position) end
-                    isTraveling = false
-                    return false -- Reroute away from dangerous path
-                end
-            end
-        end
-
-        for _, wp in ipairs(waypoints) do
-            if not autoRepairEnabled or not scriptRunning then break end
-
-            local currentKiller = getKiller()
-            if currentKiller and currentKiller:FindFirstChild("HumanoidRootPart") then
-                local kDist = (myHrp.Position - currentKiller.HumanoidRootPart.Position).Magnitude
-                if kDist < repairSafeDistance then
-                    if hum then hum:MoveTo(myHrp.Position) end
-                    isTraveling = false
-                    return false
-                end
+            if (myHrp.Position - targetPos).Magnitude <= reach then
+                break
             end
 
-            if isGeneratorCompleted(targetPart) then
+            if targetPart and isGeneratorCompleted and isGeneratorCompleted(targetPart) then
+                if hum then hum:MoveTo(myHrp.Position) end
                 isTraveling = false
                 return false
             end
 
-            -- Collision & obstacle check on normal run
-            if not noClipEnabled then
-                local hasWall, hitPart = checkWallCollision(myHrp.Position, wp.Position, myChar)
-                if hasWall and hum then
-                    hum.Jump = true
-                end
+            -- Jump action if path requires jumping
+            if wp.Action == Enum.PathWaypointAction.Jump and hum then
+                hum.Jump = true
             end
 
             if hum then
                 hum:MoveTo(wp.Position)
-                local reached = false
-                local conn
-                conn = hum.MoveToFinished:Connect(function()
-                    reached = true
-                end)
 
-                local timeout = tick() + 2
-                while not reached and tick() < timeout and autoRepairEnabled and scriptRunning do
-                    if (myHrp.Position - wp.Position).Magnitude < 3.5 then
-                        break
+                local wpStartTime = tick()
+                local lastPos = myHrp.Position
+                local lastCheckTime = tick()
+                local stuckCounter = 0
+
+                while checkActive() and scriptRunning and (myHrp.Position - wp.Position).Magnitude > 2.8 and (tick() - wpStartTime) < 4.0 do
+                    -- Anti-Stuck & Wall Collision Watchdog
+                    if (tick() - lastCheckTime) >= 0.15 then
+                        local distMoved = (myHrp.Position - lastPos).Magnitude
+                        lastPos = myHrp.Position
+                        lastCheckTime = tick()
+
+                        if distMoved < 0.25 then
+                            stuckCounter = stuckCounter + 1
+                            if stuckCounter >= 2 then
+                                -- Character stuck on doorpost or wall corner!
+                                hum.Jump = true
+                                local hasWall, _, hitPos, hitNormal = checkWallCollision(myHrp.Position, wp.Position, myChar)
+                                if hasWall and hitNormal then
+                                    local sideDeflect = Vector3.new(-hitNormal.Z, 0, hitNormal.X).Unit * 3.0
+                                    hum:MoveTo(myHrp.Position + sideDeflect)
+                                    task.wait(0.18)
+                                end
+                                hum:MoveTo(wp.Position)
+                                stuckCounter = 0
+                            end
+                        else
+                            stuckCounter = 0
+                        end
                     end
-                    task.wait(0.05)
-                end
-                if conn then conn:Disconnect() end
-            end
 
-            if (myHrp.Position - targetPos).Magnitude <= 4.5 then
-                break
+                    -- Real-time Killer check during run
+                    if shouldAvoidKiller then
+                        local curK = getKiller()
+                        if curK and curK:FindFirstChild("HumanoidRootPart") then
+                            if (myHrp.Position - curK.HumanoidRootPart.Position).Magnitude < safeDist then
+                                hum:MoveTo(myHrp.Position)
+                                isTraveling = false
+                                return false
+                            end
+                        end
+                    end
+
+                    task.wait(0.04)
+                end
             end
         end
 
         isTraveling = false
-        return (myHrp.Position - targetPos).Magnitude <= 5
+        return (myHrp.Position - targetPos).Magnitude <= (reach + 1.5)
     end
 
     isTraveling = false
@@ -2915,6 +3142,18 @@ V_ObjectiveSection:Toggle({
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
                     if not myHrp then task.wait(1) return end
 
+                    -- PRIORITY CHECK: SAVE TEAMMATE > FIX GENERATOR
+                    if autoSaveEnabled and hasHookedTeammates() then
+                        if currentRepairPoint and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
+                            pcall(function()
+                                remotes.Generator.RepairEvent:FireServer(currentRepairPoint, false, nil, HttpService:GenerateGUID(false), myChar)
+                            end)
+                            currentRepairPoint = nil
+                        end
+                        task.wait(0.5)
+                        return
+                    end
+
                     local killer = getKiller()
 
                     -- If Killer is nearby, IMMEDIATELY find and travel to a far, safe generator!
@@ -2978,6 +3217,13 @@ V_ObjectiveSection:Toggle({
 
                         local repairTimeout = tick() + 60
                         while autoRepairEnabled and currentRepairPoint == targetPoint and tick() < repairTimeout do
+                            -- Priority Interrupt: Teammate was hooked, immediately drop repair to rescue!
+                            if autoSaveEnabled and hasHookedTeammates() then
+                                remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, guid, myChar)
+                                currentRepairPoint = nil
+                                task.wait(0.2)
+                                break
+                            end
                             -- Real-time killer check: break and flee to far generator if killer approaches
                             local k = getKiller()
                             if k and k:FindFirstChild("HumanoidRootPart") then
@@ -3270,13 +3516,13 @@ V_CombatSection:Slider({
 })
 
 -- ============================================================
--- 8. AUTO SAVE SURVIVOR (UNHOOK)
+-- 8. AUTO SAVE SURVIVOR (UNHOOK & HIGH-PRIORITY RESCUE)
 -- ============================================================
-local autoSaveEnabled = false
+autoSaveEnabled = false
 
 V_RescueSection:Toggle({
     Title = "Auto Save Teammate",
-    Description = "Automatically unhooks nearby teammates from meat hooks",
+    Description = "Automatically finds, travels to, and unhooks hooked teammates (Prioritized over generators)",
     Default = false,
     Callback = function(v)
         autoSaveEnabled = v
@@ -3287,31 +3533,67 @@ V_RescueSection:Toggle({
             return
         end
 
-        WindUI:Notify({ Title = "Auto Save", Content = "Auto Save enabled!", Duration = 2 })
+        WindUI:Notify({ Title = "Auto Save", Content = "Auto Save enabled! (Priority rescue active)", Duration = 2 })
 
         task.spawn(function()
+            local lastNoticeTime = 0
             while autoSaveEnabled do
                 pcall(function()
+                    if isPlayerKiller and isPlayerKiller() then
+                        task.wait(1)
+                        return
+                    end
+
                     local myChar = player.Character
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-                    if not myHrp then return end
+                    if not myHrp then task.wait(0.5) return end
 
-                    for _, plr in ipairs(Players:GetPlayers()) do
-                        if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-                            local c = plr.Character
-                            local isHooked = c:GetAttribute("isHooked") or c:FindFirstChild("Hooked") or (c.Parent and c.Parent.Name:lower():find("hook"))
-                            local dist = (myHrp.Position - c.HumanoidRootPart.Position).Magnitude
+                    local hookedChar, hookedPlr, hookedDist = findNearestHookedTeammate()
+                    if not hookedChar or not hookedPlr then
+                        task.wait(0.4)
+                        return
+                    end
 
-                            if isHooked and dist <= 16 and remotes.Carry and remotes.Carry:FindFirstChild("UnHookEvent") then
-                                remotes.Carry.UnHookEvent:FireServer(c, myChar)
-                                WindUI:Notify({ Title = "🪝 Saved Teammate!", Content = "Unhooked " .. plr.Name, Duration = 2.5 })
-                                task.wait(2)
-                                break
+                    local targetHrp = hookedChar:FindFirstChild("HumanoidRootPart")
+                    if not targetHrp then task.wait(0.4) return end
+
+                    -- Rate-limited notice of rescue attempt
+                    if (tick() - lastNoticeTime) > 8 then
+                        lastNoticeTime = tick()
+                        WindUI:Notify({ Title = "🪝 Priority Rescue", Content = "Rescuing hooked teammate: " .. hookedPlr.Name, Duration = 2.5 })
+                    end
+
+                    -- Smart Travel to the hooked teammate if outside reach
+                    local dist = (myHrp.Position - targetHrp.Position).Magnitude
+                    if dist > 5.5 then
+                        travelToPoint(targetHrp, 5.0, function()
+                            return autoSaveEnabled and isCharacterHooked(hookedChar)
+                        end, true, 14) -- tighter safe distance (14 studs) so rescue can be completed
+                    end
+
+                    -- When in unhook reach (<= 7.0 studs)
+                    local finalDist = (myHrp.Position - targetHrp.Position).Magnitude
+                    if finalDist <= 7.0 and isCharacterHooked(hookedChar) then
+                        if remotes.Carry and remotes.Carry:FindFirstChild("UnHookEvent") then
+                            pcall(function()
+                                myChar:SetAttribute("isUnhooking", true)
+                                remotes.Carry.UnHookEvent:FireServer(hookedChar, myChar)
+                            end)
+
+                            local rescueTimeout = tick() + 2.5
+                            while isCharacterHooked(hookedChar) and tick() < rescueTimeout and autoSaveEnabled do
+                                task.wait(0.2)
+                            end
+                            pcall(function() myChar:SetAttribute("isUnhooking", false) end)
+
+                            if not isCharacterHooked(hookedChar) then
+                                WindUI:Notify({ Title = "🪝 Saved Teammate!", Content = "Unhooked " .. hookedPlr.Name .. "!", Duration = 3 })
+                                task.wait(0.5)
                             end
                         end
                     end
                 end)
-                task.wait(1)
+                task.wait(0.3)
             end
         end)
     end
@@ -3809,83 +4091,128 @@ local function travelToTargetLocation(targetPos, stopReach, activeCheck)
     local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
     if not myHrp or not targetPos then return false end
 
+    local reach = stopReach or 5.0
     local dist = (myHrp.Position - targetPos).Magnitude
-    if dist <= stopReach then return true end
+    if dist <= reach then return true end
+
+    local checkActive = activeCheck or function() return true end
 
     if killerTravelMode == "Instant Teleport" then
         local targetCF = CFrame.new(targetPos + Vector3.new(0, 0.5, 0), targetPos)
-        for attempt = 1, 3 do
+        for attempt = 1, 4 do
             myHrp.CFrame = targetCF
-            myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-            myHrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            myHrp.AssemblyLinearVelocity = Vector3.zero
+            myHrp.AssemblyAngularVelocity = Vector3.zero
             task.wait(0.04)
-            if (myHrp.Position - targetPos).Magnitude <= (stopReach + 3) then
+            if (myHrp.Position - targetPos).Magnitude <= (reach + 2.5) then
                 break
             end
         end
-        return (myHrp.Position - targetPos).Magnitude <= (stopReach + 4)
+        return (myHrp.Position - targetPos).Magnitude <= (reach + 3.0)
 
     elseif killerTravelMode == "Safe Teleport" then
-        local step = math.clamp(safeTeleportStep or 0.5, 0.1, 2.0)
-        while activeCheck() and (myHrp.Position - targetPos).Magnitude > stopReach do
-            local currentPos = myHrp.Position
-            local toTarget = (targetPos - currentPos)
-            local remainingDist = toTarget.Magnitude
-            if remainingDist <= step then
-                myHrp.CFrame = CFrame.new(targetPos, targetPos + toTarget.Unit)
+        local step = math.clamp(safeTeleportStep or 0.6, 0.1, 2.0)
+        local waypoints = computeSmartWaypoints(myHrp.Position, targetPos, nil, nil, nil)
+        if not waypoints or #waypoints == 0 then
+            waypoints = { { Position = myHrp.Position }, { Position = targetPos } }
+        end
+
+        for wpIdx = 1, #waypoints do
+            if not checkActive() then break end
+            local wpPos = waypoints[wpIdx].Position
+
+            local wpTimeout = tick() + 3.0
+            while checkActive() and (myHrp.Position - wpPos).Magnitude > (step + 0.5) and tick() < wpTimeout do
+                local curPos = myHrp.Position
+                local toWp = (wpPos - curPos)
+                local distWp = toWp.Magnitude
+                if distWp <= step then
+                    myHrp.CFrame = CFrame.lookAt(wpPos, wpPos + toWp.Unit)
+                    break
+                end
+
+                local moveStep = math.min(step, distWp)
+                local moveVec = toWp.Unit * moveStep
+                local nextPos = curPos + moveVec
+
+                if not noClipEnabled then
+                    local hasWall, hitPart, hitPos, hitNormal = checkWallCollision(curPos, nextPos, myChar)
+                    if hasWall then
+                        local normal = hitNormal or (curPos - hitPos).Unit
+                        local slideVec = moveVec - normal * moveVec:Dot(normal)
+                        if slideVec.Magnitude > 0.05 then
+                            local altNext = curPos + slideVec.Unit * moveStep
+                            if not checkWallCollision(curPos, altNext, myChar) then
+                                nextPos = altNext
+                            end
+                        end
+                    end
+                end
+
+                myHrp.CFrame = CFrame.lookAt(nextPos, nextPos + moveVec)
+                myHrp.AssemblyLinearVelocity = Vector3.zero
+                myHrp.AssemblyAngularVelocity = Vector3.zero
+                task.wait(0.01)
+            end
+
+            if (myHrp.Position - targetPos).Magnitude <= reach then
                 break
             end
-
-            local moveVec = toTarget.Unit * step
-            local nextPos = currentPos + moveVec
-
-            if not noClipEnabled then
-                local hasWall, hitPart = checkWallCollision(currentPos, nextPos, myChar)
-                if hasWall then
-                    return false
-                end
-            end
-
-            myHrp.CFrame = CFrame.new(nextPos, nextPos + moveVec)
-            task.wait(0.01)
         end
-        return (myHrp.Position - targetPos).Magnitude <= (stopReach + 2)
+        return (myHrp.Position - targetPos).Magnitude <= (reach + 2.5)
 
     elseif killerTravelMode == "Run Normally" then
-        local PathfindingService = game:GetService("PathfindingService")
-        local path = PathfindingService:CreatePath({
-            AgentRadius = 2.5,
-            AgentHeight = 5,
-            AgentCanJump = true
-        })
+        local waypoints = computeSmartWaypoints(myHrp.Position, targetPos, nil, nil, nil)
+        if not waypoints or #waypoints == 0 then
+            waypoints = { { Position = myHrp.Position }, { Position = targetPos } }
+        end
 
-        pcall(function()
-            path:ComputeAsync(myHrp.Position, targetPos)
-        end)
-
-        local waypoints = path.Status == Enum.PathStatus.Success and path:GetWaypoints() or { { Position = targetPos } }
         pcall(function() myChar:SetAttribute("Sprinting", true) end)
 
-        for _, wp in ipairs(waypoints) do
-            if not activeCheck() then break end
-            if (myHrp.Position - targetPos).Magnitude <= stopReach then break end
+        for wpIdx, wp in ipairs(waypoints) do
+            if not checkActive() then break end
+            if (myHrp.Position - targetPos).Magnitude <= reach then break end
 
-            if not noClipEnabled then
-                local hasWall, hitPart = checkWallCollision(myHrp.Position, wp.Position, myChar)
-                if hasWall and hum then
-                    hum.Jump = true
-                end
+            if wp.Action == Enum.PathWaypointAction.Jump and hum then
+                hum.Jump = true
             end
 
             if hum then
                 hum:MoveTo(wp.Position)
-                local timeout = tick() + 1.5
-                while (myHrp.Position - wp.Position).Magnitude > 3.5 and tick() < timeout and activeCheck() do
-                    task.wait(0.05)
+
+                local wpStartTime = tick()
+                local lastPos = myHrp.Position
+                local lastCheckTime = tick()
+                local stuckCounter = 0
+
+                while checkActive() and (myHrp.Position - wp.Position).Magnitude > 2.8 and (tick() - wpStartTime) < 3.5 do
+                    if (tick() - lastCheckTime) >= 0.15 then
+                        local distMoved = (myHrp.Position - lastPos).Magnitude
+                        lastPos = myHrp.Position
+                        lastCheckTime = tick()
+
+                        if distMoved < 0.25 then
+                            stuckCounter = stuckCounter + 1
+                            if stuckCounter >= 2 then
+                                hum.Jump = true
+                                local hasWall, _, hitPos, hitNormal = checkWallCollision(myHrp.Position, wp.Position, myChar)
+                                if hasWall and hitNormal then
+                                    local sideDeflect = Vector3.new(-hitNormal.Z, 0, hitNormal.X).Unit * 3.0
+                                    hum:MoveTo(myHrp.Position + sideDeflect)
+                                    task.wait(0.18)
+                                end
+                                hum:MoveTo(wp.Position)
+                                stuckCounter = 0
+                            end
+                        else
+                            stuckCounter = 0
+                        end
+                    end
+                    task.wait(0.04)
                 end
             end
         end
-        return (myHrp.Position - targetPos).Magnitude <= (stopReach + 2)
+        return (myHrp.Position - targetPos).Magnitude <= (reach + 2.5)
     end
 
     return false
