@@ -2599,6 +2599,21 @@ local function isCharacterHooked(char)
     return false
 end
 
+local function isCharacterKnocked(char)
+    if not char or not char.Parent then return false end
+    if char:GetAttribute("Knocked") == true or char:GetAttribute("isKnocked") == true
+        or char:GetAttribute("Downed") == true or char:GetAttribute("isDowned") == true
+        or char:GetAttribute("isBleeding") == true then
+        return true
+    end
+    if CollectionService and CollectionService:HasTag(char, "Knocked") then return true end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health > 0 and hum.Health < 30 then
+        return true
+    end
+    return false
+end
+
 local function isTeammateRescuable(plr)
     if not plr or plr == player then return false end
     local char = plr.Character
@@ -2615,36 +2630,99 @@ local function isTeammateRescuable(plr)
         return false
     end
 
-    return isCharacterHooked(char)
+    return isCharacterHooked(char) or isCharacterKnocked(char)
 end
 
-local function findNearestHookedTeammate()
+local function findUnhookPointForTeammate(teammateChar)
+    if not teammateChar then return nil end
+    local hrp = teammateChar:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+
+    local nearestPoint = nil
+    local minDist = 16
+
+    -- 1. Check CollectionService tagged UnhookPoint
+    if CollectionService then
+        for _, pt in ipairs(CollectionService:GetTagged("UnhookPoint")) do
+            if pt:IsA("BasePart") then
+                local d = (pt.Position - hrp.Position).Magnitude
+                if d < minDist then
+                    minDist = d
+                    nearestPoint = pt
+                end
+            end
+        end
+    end
+    if nearestPoint then return nearestPoint end
+
+    -- 2. Check hook models in workspace
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and (obj.Name == "UnhookPoint" or obj.Name:lower():find("unhook")) then
+            local d = (obj.Position - hrp.Position).Magnitude
+            if d < minDist then
+                minDist = d
+                nearestPoint = obj
+            end
+        end
+    end
+
+    return nearestPoint or hrp
+end
+
+local function findNearestRescuableTeammate()
     local myChar = player.Character
     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    if not myHrp then return nil, nil, math.huge end
+    if not myHrp then return nil, nil, math.huge, nil end
 
     local nearestChar, nearestPlr = nil, nil
     local shortestDist = math.huge
+    local rescueType = nil -- "hooked" or "knocked"
 
+    -- Priority 1: Hooked teammates
     for _, plr in ipairs(Players:GetPlayers()) do
-        if isTeammateRescuable(plr) then
+        if plr ~= player and plr.Character and isTeammateRescuable(plr) and isCharacterHooked(plr.Character) then
             local dist = (myHrp.Position - plr.Character.HumanoidRootPart.Position).Magnitude
             if dist < shortestDist then
                 shortestDist = dist
                 nearestChar = plr.Character
                 nearestPlr = plr
+                rescueType = "hooked"
             end
         end
     end
 
-    return nearestChar, nearestPlr, shortestDist
+    if nearestChar then
+        return nearestChar, nearestPlr, shortestDist, rescueType
+    end
+
+    -- Priority 2: Knocked teammates needing revival/heal
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and plr.Character and isTeammateRescuable(plr) and isCharacterKnocked(plr.Character) then
+            local dist = (myHrp.Position - plr.Character.HumanoidRootPart.Position).Magnitude
+            if dist < shortestDist then
+                shortestDist = dist
+                nearestChar = plr.Character
+                nearestPlr = plr
+                rescueType = "knocked"
+            end
+        end
+    end
+
+    return nearestChar, nearestPlr, shortestDist, rescueType
 end
 
-local function hasHookedTeammates()
+local function findNearestHookedTeammate()
+    local c, p, d, t = findNearestRescuableTeammate()
+    return c, p, d
+end
+
+local function hasTeammatesNeedingRescue()
     if not autoSaveEnabled then return false end
-    local char = findNearestHookedTeammate()
+    local char = findNearestRescuableTeammate()
     return char ~= nil
 end
+
+local hasHookedTeammates = hasTeammatesNeedingRescue
 
 local function checkWallCollision(fromPos, toPos, ignoreModel)
     local raycastParams = RaycastParams.new()
@@ -2722,11 +2800,57 @@ local function getSafeInteractPosition(targetPart, customPos)
     return targetPos + Vector3.new(0, 1.2, 0)
 end
 
--- High-intelligence path calculator with doorway sizing & Killer danger-zone avoidance
+local function hasCeilingAbove(pos, checkHeight, ignoreChar)
+    local height = checkHeight or 24
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    local filter = {}
+    if ignoreChar then table.insert(filter, ignoreChar) end
+    if player.Character then table.insert(filter, player.Character) end
+    rayParams.FilterDescendantsInstances = filter
+    rayParams.IgnoreWater = true
+
+    local rayOrigin = pos + Vector3.new(0, 1.5, 0)
+    local rayDir = Vector3.new(0, height, 0)
+    local hit = workspace:Raycast(rayOrigin, rayDir, rayParams)
+    if hit and hit.Instance and hit.Instance.CanCollide and hit.Instance.Transparency < 0.95 and not hit.Instance:IsA("Terrain") then
+        return true, hit.Position.Y
+    end
+    return false, nil
+end
+
+-- High-intelligence path calculator with doorway sizing, Killer danger-zone avoidance, and 3D Flying support
 local function computeSmartWaypoints(startPos, endPos, targetPart, avoidKillerPos, killerSafeDist)
+    local hasWallDirect, hitPart, hitPos, hitNormal = checkWallCollision(startPos, endPos, player.Character)
+
+    -- If no wall is blocking direct line of sight, return direct path
+    if not hasWallDirect then
+        return { { Position = startPos }, { Position = endPos } }, "direct"
+    end
+
+    -- 1. Check if we can Fly over obstacles (if there is NO ceiling above)
+    local hasCeilStart, ceilStartY = hasCeilingAbove(startPos, 22, player.Character)
+    local hasCeilEnd, ceilEndY = hasCeilingAbove(endPos, 22, player.Character)
+    local midPos = (startPos + endPos) * 0.5
+    local hasCeilMid, ceilMidY = hasCeilingAbove(midPos, 22, player.Character)
+
+    if not hasCeilStart and not hasCeilEnd and not hasCeilMid then
+        -- Sky is completely open! Fly up and over the obstacles obstacle-free!
+        local flyAltitude = math.max(startPos.Y, endPos.Y) + 14
+        local airStart = Vector3.new(startPos.X, flyAltitude, startPos.Z)
+        local airEnd = Vector3.new(endPos.X, flyAltitude, endPos.Z)
+        return {
+            { Position = startPos },
+            { Position = airStart },
+            { Position = airEnd },
+            { Position = endPos }
+        }, "flying"
+    end
+
+    -- 2. Try NavMesh PathfindingService (for indoor / under-ceiling areas)
     local path = PathfindingService:CreatePath({
-        AgentRadius = 1.6, -- 1.6 studs radius (3.2 studs diameter), fits standard Roblox characters through all doorways & corridors
-        AgentHeight = 4.8, -- 4.8 studs height, fits under door lintels & arches
+        AgentRadius = 1.6,
+        AgentHeight = 4.8,
         AgentCanJump = true,
         AgentCanClimb = false,
         WaypointSpacing = 2.5,
@@ -2742,7 +2866,6 @@ local function computeSmartWaypoints(startPos, endPos, targetPart, avoidKillerPo
     if success and path.Status == Enum.PathStatus.Success then
         local rawWaypoints = path:GetWaypoints()
         if rawWaypoints and #rawWaypoints > 0 then
-            -- Pre-check path against Killer proximity: reject if path cuts straight through Killer
             if avoidKillerPos and killerSafeDist then
                 for _, wp in ipairs(rawWaypoints) do
                     local distToKiller = (wp.Position - avoidKillerPos).Magnitude
@@ -2755,23 +2878,31 @@ local function computeSmartWaypoints(startPos, endPos, targetPart, avoidKillerPo
         end
     end
 
-    -- If PathfindingService failed (e.g. custom map mesh without navmesh),
-    -- do NOT walk straight into walls! Check direct raycast:
-    local hasWall, hitPart, hitPos, hitNormal = checkWallCollision(startPos, endPos, player.Character)
-    if not hasWall then
-        return { { Position = startPos }, { Position = endPos } }, "direct"
-    end
-
-    -- Smart Tangent Detour around wall
+    -- 3. Smart Tangent Detour around wall (when under ceiling or navmesh fails)
     local normal = hitNormal or (startPos - hitPos).Unit
     local tangent = Vector3.new(-normal.Z, 0, normal.X).Unit
-    for d = 3, 12, 3 do
+    for d = 3, 14, 3 do
         local cand1 = hitPos + tangent * d + normal * 2.0
         local cand2 = hitPos - tangent * d + normal * 2.0
         if not checkWallCollision(startPos, cand1, player.Character) and not checkWallCollision(cand1, endPos, player.Character) then
             return { { Position = startPos }, { Position = cand1 }, { Position = endPos } }, "detour"
         elseif not checkWallCollision(startPos, cand2, player.Character) and not checkWallCollision(cand2, endPos, player.Character) then
             return { { Position = startPos }, { Position = cand2 }, { Position = endPos } }, "detour"
+        end
+    end
+
+    -- 4. If partial ceiling allows, low fly-hop (hop over low obstacles up to ceiling)
+    if ceilStartY and (ceilStartY - startPos.Y) >= 8 then
+        local hopY = math.min(startPos.Y + 6, ceilStartY - 2)
+        local hopStart = Vector3.new(startPos.X, hopY, startPos.Z)
+        local hopEnd = Vector3.new(endPos.X, hopY, endPos.Z)
+        if not checkWallCollision(hopStart, hopEnd, player.Character) then
+            return {
+                { Position = startPos },
+                { Position = hopStart },
+                { Position = hopEnd },
+                { Position = endPos }
+            }, "flying"
         end
     end
 
@@ -3044,6 +3175,66 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
         isTraveling = false
         return (myHrp.Position - targetPos).Magnitude <= (reach + 1.5)
     end
+    -- 4. SMART FLYING TRAVEL (3D AIR TRAVERSAL OVER WALLS & MAZES WHEN NO CEILING)
+    elseif travelMode == "Flying" then
+        local safeEndPos = getSafeInteractPosition(targetPart, targetPos)
+        local killer = getKiller()
+        local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
+        local avoidKPos = (shouldAvoidKiller and kHrp) and kHrp.Position or nil
+
+        local waypoints, status = computeSmartWaypoints(myHrp.Position, safeEndPos, targetPart, avoidKPos, safeDist)
+        if not waypoints or #waypoints == 0 then
+            local hasCeil, ceilY = hasCeilingAbove(myHrp.Position, 20, myChar)
+            local flyY = hasCeil and math.min(myHrp.Position.Y + 6, ceilY - 2) or (math.max(myHrp.Position.Y, safeEndPos.Y) + 14)
+            waypoints = {
+                { Position = myHrp.Position },
+                { Position = Vector3.new(myHrp.Position.X, flyY, myHrp.Position.Z) },
+                { Position = Vector3.new(safeEndPos.X, flyY, safeEndPos.Z) },
+                { Position = safeEndPos }
+            }
+        end
+
+        local flyStepDist = 1.5
+        for wpIdx, wp in ipairs(waypoints) do
+            if not checkActive() or not scriptRunning then break end
+            local wpPos = wp.Position
+            local wpTimeout = tick() + 4.0
+
+            while checkActive() and scriptRunning and (myHrp.Position - wpPos).Magnitude > (flyStepDist + 0.3) and tick() < wpTimeout do
+                local curPos = myHrp.Position
+                local toWp = (wpPos - curPos)
+                local distWp = toWp.Magnitude
+                if distWp <= flyStepDist then
+                    myHrp.CFrame = CFrame.lookAt(wpPos, wpPos + toWp.Unit)
+                    break
+                end
+
+                if shouldAvoidKiller then
+                    local curK = getKiller()
+                    if curK and curK:FindFirstChild("HumanoidRootPart") then
+                        local curKDist = (curPos - curK.HumanoidRootPart.Position).Magnitude
+                        if curKDist < 12 and (curPos.Y - curK.HumanoidRootPart.Position.Y) < 8 then
+                            wpPos = wpPos + Vector3.new(0, 4, 0)
+                        end
+                    end
+                end
+
+                local moveStep = math.min(flyStepDist, distWp)
+                local nextPos = curPos + toWp.Unit * moveStep
+
+                myHrp.CFrame = CFrame.lookAt(nextPos, nextPos + toWp.Unit)
+                myHrp.AssemblyLinearVelocity = Vector3.zero
+                myHrp.AssemblyAngularVelocity = Vector3.zero
+                task.wait(0.015)
+            end
+
+            if (myHrp.Position - targetPos).Magnitude <= reach then
+                break
+            end
+        end
+
+        isTraveling = false
+        return (myHrp.Position - targetPos).Magnitude <= (reach + 1.5)
 
     isTraveling = false
     return false
@@ -3051,8 +3242,8 @@ end
 
 V_ObjectiveSection:Dropdown({
     Title = "Generator Travel Mode",
-    Description = "Method used to travel to nearby generators",
-    Values = { "Safe Teleport", "Run Normally", "Instant Teleport" },
+    Description = "Method used to travel to nearby generators (Flying hops over walls when no ceiling)",
+    Values = { "Safe Teleport", "Flying", "Run Normally", "Instant Teleport" },
     Value = "Safe Teleport",
     Callback = function(v)
         travelMode = v
@@ -3334,56 +3525,179 @@ V_CombatSection:Toggle({
 })
 
 -- ============================================================
--- 6. AUTO PARRY
+-- 6. AUTO PARRY (PERFECT DIRECTIONAL COUNTER & DEFENSE)
 -- ============================================================
 local autoParryEnabled = false
 local lastParryTime = 0
 
+local function isKillerAttackingState(killer)
+    if not killer then return false end
+    if killer:GetAttribute("isAttacking") == true
+        or killer:GetAttribute("isLunging") == true
+        or killer:GetAttribute("AttackLock") == true
+        or killer:GetAttribute("Attacking") == true
+        or killer:GetAttribute("isSlashing") == true
+        or killer:GetAttribute("holdingAttack") == true then
+        return true
+    end
+
+    local hum = killer:FindFirstChildOfClass("Humanoid")
+    local anim = hum and hum:FindFirstChildOfClass("Animator")
+    if anim then
+        for _, track in ipairs(anim:GetPlayingAnimationTracks()) do
+            local name = (track.Name or ""):lower()
+            if name:find("attack") or name:find("slash") or name:find("swing")
+                or name:find("lunge") or name:find("hit") or name:find("strike")
+                or name:find("machete") or name:find("cleaver") or name:find("axe") then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function findParryDefensiveTool()
+    local myChar = player.Character
+    local backpack = player:FindFirstChild("Backpack")
+    local candidateNames = {
+        "Parrying Dagger", "ParryingDagger", "Dagger",
+        "Riot Shield", "RiotShield", "Shield",
+        "Flashlight"
+    }
+
+    if myChar then
+        for _, name in ipairs(candidateNames) do
+            local t = myChar:FindFirstChild(name)
+            if t and t:IsA("Tool") then return t, "char" end
+        end
+        for _, item in ipairs(myChar:GetChildren()) do
+            if item:IsA("Tool") then
+                local low = item.Name:lower()
+                if low:find("parry") or low:find("dagger") or low:find("shield") or low:find("flashlight") then
+                    return item, "char"
+                end
+            end
+        end
+    end
+
+    if backpack then
+        for _, name in ipairs(candidateNames) do
+            local t = backpack:FindFirstChild(name)
+            if t and t:IsA("Tool") then return t, "backpack" end
+        end
+        for _, item in ipairs(backpack:GetChildren()) do
+            if item:IsA("Tool") then
+                local low = item.Name:lower()
+                if low:find("parry") or low:find("dagger") or low:find("shield") or low:find("flashlight") then
+                    return item, "backpack"
+                end
+            end
+        end
+    end
+
+    return nil, nil
+end
+
 V_CombatSection:Toggle({
     Title = "Auto Parry",
-    Description = "Automatically parries incoming basic attacks & lunges",
+    Description = "Automatically snaps direction & parries incoming killer attacks, lunges, & swings",
     Default = false,
     Callback = function(v)
         autoParryEnabled = v
+        local remotes = getVDRemotes()
+
         if not v then
             WindUI:Notify({ Title = "Auto Parry", Content = "Auto Parry disabled.", Duration = 2 })
             return
         end
 
-        WindUI:Notify({ Title = "Auto Parry", Content = "Auto Parry active!", Duration = 2 })
+        WindUI:Notify({ Title = "Auto Parry", Content = "Auto Parry active! (Directional snap + item defense)", Duration = 2 })
 
         task.spawn(function()
             while autoParryEnabled do
                 pcall(function()
+                    if isPlayerKiller and isPlayerKiller() then
+                        task.wait(1)
+                        return
+                    end
+
                     local killer = getKiller()
                     local myChar = player.Character
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
 
                     if killer and killer:FindFirstChild("HumanoidRootPart") and myHrp then
-                        local dist = (myHrp.Position - killer.HumanoidRootPart.Position).Magnitude
-                        local isAttacking = killer:GetAttribute("isAttacking") or killer:GetAttribute("isLunging")
+                        local kHrp = killer.HumanoidRootPart
+                        local dist = (myHrp.Position - kHrp.Position).Magnitude
+                        local attacking = isKillerAttackingState(killer)
 
-                        if dist <= 14 and isAttacking and (tick() - lastParryTime > 1.5) then
-                            lastParryTime = tick()
+                        -- Trigger parry if killer is attacking within 15 studs, OR if killer is in striking reach (<= 7.5 studs)
+                        if (dist <= 15 and attacking) or (dist <= 7.5 and (tick() - lastParryTime > 0.8)) then
+                            if (tick() - lastParryTime) > 0.8 then
+                                lastParryTime = tick()
 
-                            -- Equip parrying tool if in backpack
-                            local backpack = player:FindFirstChild("Backpack")
-                            local parryTool = myChar:FindFirstChild("ParryingDagger") or myChar:FindFirstChild("RiotShield")
-                            if not parryTool and backpack then
-                                parryTool = backpack:FindFirstChild("ParryingDagger") or backpack:FindFirstChild("RiotShield")
-                                if parryTool then
+                                -- 1. Face directly toward the Killer (Mandatory for parry in Violence District)
+                                local targetLook = Vector3.new(kHrp.Position.X, myHrp.Position.Y, kHrp.Position.Z)
+                                myHrp.CFrame = CFrame.lookAt(myHrp.Position, targetLook)
+
+                                -- 2. Equip defensive parrying tool
+                                local parryTool, location = findParryDefensiveTool()
+                                if parryTool and location == "backpack" then
                                     parryTool.Parent = myChar
                                 end
-                            end
 
-                            if parryTool then
-                                parryTool:Activate()
-                                WindUI:Notify({ Title = "🛡️ Auto Parry", Content = "Parried Killer attack!", Duration = 2 })
+                                -- 3. Fire Official Violence District Parrying Remotes
+                                pcall(function()
+                                    if remotes.Items then
+                                        -- Parrying Dagger Remote
+                                        local daggerFolder = remotes.Items:FindFirstChild("Parrying Dagger") or remotes.Items:FindFirstChild("ParryingDagger")
+                                        if daggerFolder and daggerFolder:FindFirstChild("parry") then
+                                            daggerFolder.parry:FireServer(myChar)
+                                        end
+
+                                        -- Riot Shield Remote
+                                        local shieldFolder = remotes.Items:FindFirstChild("Riot Shield") or remotes.Items:FindFirstChild("RiotShield")
+                                        if shieldFolder and shieldFolder:FindFirstChild("Rush") then
+                                            shieldFolder.Rush:FireServer(myChar)
+                                        end
+
+                                        -- Flashlight Stun Remote
+                                        if remotes.Items:FindFirstChild("Flashlight") and remotes.Items.Flashlight:FindFirstChild("Activate") then
+                                            remotes.Items.Flashlight.Activate:FireServer(true, kHrp.Position)
+                                        end
+                                    end
+                                end)
+
+                                -- 4. Tool:Activate() call
+                                if parryTool then
+                                    pcall(function() parryTool:Activate() end)
+                                end
+
+                                -- 5. Mobile GUI Button trigger (ItemFrame / Survivor-mob item action)
+                                pcall(function()
+                                    local pg = player:FindFirstChild("PlayerGui")
+                                    if pg then
+                                        for _, guiName in ipairs({"Survivor-mob", "Survivor", "MobileGui"}) do
+                                            local g = pg:FindFirstChild(guiName)
+                                            if g then
+                                                for _, btn in ipairs(g:GetDescendants()) do
+                                                    if btn:IsA("GuiButton") and (btn.Name:lower():find("item") or btn.Name:lower():find("parry") or btn.Name:lower():find("use")) then
+                                                        if typeof(firesignal) == "function" then
+                                                            firesignal(btn.MouseButton1Down)
+                                                            firesignal(btn.Activated)
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                end)
+
+                                WindUI:Notify({ Title = "🛡️ Auto Parry!", Content = "Parried Killer attack (" .. string.format("%.1f", dist) .. " studs)!", Duration = 2 })
                             end
                         end
                     end
                 end)
-                task.wait(0.05)
+                task.wait(0.03)
             end
         end)
     end
@@ -3522,7 +3836,7 @@ autoSaveEnabled = false
 
 V_RescueSection:Toggle({
     Title = "Auto Save Teammate",
-    Description = "Automatically finds, travels to, and unhooks hooked teammates (Prioritized over generators)",
+    Description = "Automatically rescues hooked teammates (unhook) & knocked teammates (heal/revive)",
     Default = false,
     Callback = function(v)
         autoSaveEnabled = v
@@ -3533,7 +3847,7 @@ V_RescueSection:Toggle({
             return
         end
 
-        WindUI:Notify({ Title = "Auto Save", Content = "Auto Save enabled! (Priority rescue active)", Duration = 2 })
+        WindUI:Notify({ Title = "Auto Save", Content = "Auto Save enabled! (Priority rescue & revive active)", Duration = 2 })
 
         task.spawn(function()
             local lastNoticeTime = 0
@@ -3548,52 +3862,109 @@ V_RescueSection:Toggle({
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
                     if not myHrp then task.wait(0.5) return end
 
-                    local hookedChar, hookedPlr, hookedDist = findNearestHookedTeammate()
-                    if not hookedChar or not hookedPlr then
+                    local targetChar, targetPlr, targetDist, rescueType = findNearestRescuableTeammate()
+                    if not targetChar or not targetPlr then
                         task.wait(0.4)
                         return
                     end
 
-                    local targetHrp = hookedChar:FindFirstChild("HumanoidRootPart")
+                    local targetHrp = targetChar:FindFirstChild("HumanoidRootPart")
                     if not targetHrp then task.wait(0.4) return end
 
                     -- Rate-limited notice of rescue attempt
-                    if (tick() - lastNoticeTime) > 8 then
+                    if (tick() - lastNoticeTime) > 6 then
                         lastNoticeTime = tick()
-                        WindUI:Notify({ Title = "🪝 Priority Rescue", Content = "Rescuing hooked teammate: " .. hookedPlr.Name, Duration = 2.5 })
+                        local actionWord = (rescueType == "hooked") and "Unhooking" or "Reviving"
+                        local emoji = (rescueType == "hooked") and "🪝" or "🩹"
+                        WindUI:Notify({ Title = emoji .. " Priority Rescue", Content = actionWord .. " teammate: " .. targetPlr.Name, Duration = 2.5 })
                     end
 
-                    -- Smart Travel to the hooked teammate if outside reach
-                    local dist = (myHrp.Position - targetHrp.Position).Magnitude
-                    if dist > 5.5 then
-                        travelToPoint(targetHrp, 5.0, function()
-                            return autoSaveEnabled and isCharacterHooked(hookedChar)
-                        end, true, 14) -- tighter safe distance (14 studs) so rescue can be completed
-                    end
+                    -- 1. RESCUE HOOKED TEAMMATE
+                    if rescueType == "hooked" then
+                        local unhookPt = findUnhookPointForTeammate(targetChar)
+                        local travelDest = unhookPt or targetHrp
 
-                    -- When in unhook reach (<= 7.0 studs)
-                    local finalDist = (myHrp.Position - targetHrp.Position).Magnitude
-                    if finalDist <= 7.0 and isCharacterHooked(hookedChar) then
-                        if remotes.Carry and remotes.Carry:FindFirstChild("UnHookEvent") then
-                            pcall(function()
-                                myChar:SetAttribute("isUnhooking", true)
-                                remotes.Carry.UnHookEvent:FireServer(hookedChar, myChar)
-                            end)
+                        local dist = (myHrp.Position - travelDest.Position).Magnitude
+                        if dist > 5.2 then
+                            travelToPoint(travelDest, 4.8, function()
+                                return autoSaveEnabled and isCharacterHooked(targetChar)
+                            end, true, 12)
+                        end
 
-                            local rescueTimeout = tick() + 2.5
-                            while isCharacterHooked(hookedChar) and tick() < rescueTimeout and autoSaveEnabled do
-                                task.wait(0.2)
+                        local finalDist = (myHrp.Position - travelDest.Position).Magnitude
+                        if finalDist <= 7.0 and isCharacterHooked(targetChar) then
+                            if remotes.Carry and remotes.Carry:FindFirstChild("UnHookEvent") then
+                                pcall(function()
+                                    myChar:SetAttribute("isUnhooking", true)
+                                    if unhookPt then
+                                        remotes.Carry.UnHookEvent:FireServer(unhookPt, myChar)
+                                    end
+                                    remotes.Carry.UnHookEvent:FireServer(targetChar, myChar)
+                                end)
+
+                                local rescueTimeout = tick() + 2.8
+                                while isCharacterHooked(targetChar) and tick() < rescueTimeout and autoSaveEnabled do
+                                    task.wait(0.15)
+                                    if unhookPt then
+                                        pcall(function() remotes.Carry.UnHookEvent:FireServer(unhookPt, myChar) end)
+                                    end
+                                end
+                                pcall(function() myChar:SetAttribute("isUnhooking", false) end)
+
+                                if not isCharacterHooked(targetChar) then
+                                    WindUI:Notify({ Title = "🪝 Saved Teammate!", Content = "Unhooked " .. targetPlr.Name .. "!", Duration = 2.5 })
+                                    task.wait(0.4)
+                                end
                             end
-                            pcall(function() myChar:SetAttribute("isUnhooking", false) end)
+                        end
 
-                            if not isCharacterHooked(hookedChar) then
-                                WindUI:Notify({ Title = "🪝 Saved Teammate!", Content = "Unhooked " .. hookedPlr.Name .. "!", Duration = 3 })
-                                task.wait(0.5)
+                    -- 2. REVIVE / HEAL KNOCKED DOWN TEAMMATE
+                    elseif rescueType == "knocked" then
+                        local dist = (myHrp.Position - targetHrp.Position).Magnitude
+                        if dist > 4.5 then
+                            travelToPoint(targetHrp, 4.0, function()
+                                return autoSaveEnabled and isCharacterKnocked(targetChar)
+                            end, true, 12)
+                        end
+
+                        local finalDist = (myHrp.Position - targetHrp.Position).Magnitude
+                        if finalDist <= 6.0 and isCharacterKnocked(targetChar) then
+                            if remotes.Healing and remotes.Healing:FindFirstChild("HealEvent") then
+                                local healGuid = HttpService:GenerateGUID(false)
+                                pcall(function()
+                                    myChar:SetAttribute("isHealing", true)
+                                    remotes.Healing.HealEvent:FireServer(targetHrp, true, healGuid, myChar)
+                                end)
+
+                                local healTimeout = tick() + 8.0
+                                while isCharacterKnocked(targetChar) and tick() < healTimeout and autoSaveEnabled do
+                                    pcall(function()
+                                        remotes.Healing.HealEvent:FireServer(targetHrp, true, healGuid, myChar)
+                                    end)
+                                    -- Real-time killer interrupt check
+                                    local k = getKiller()
+                                    if k and k:FindFirstChild("HumanoidRootPart") and (myHrp.Position - k.HumanoidRootPart.Position).Magnitude < 14 then
+                                        break
+                                    end
+                                    task.wait(0.4)
+                                end
+
+                                pcall(function()
+                                    myChar:SetAttribute("isHealing", false)
+                                    if remotes.Healing:FindFirstChild("Reset") then
+                                        remotes.Healing.Reset:FireServer(myChar)
+                                    end
+                                end)
+
+                                if not isCharacterKnocked(targetChar) then
+                                    WindUI:Notify({ Title = "🩹 Revived Teammate!", Content = "Healed & revived " .. targetPlr.Name .. "!", Duration = 2.5 })
+                                    task.wait(0.3)
+                                end
                             end
                         end
                     end
                 end)
-                task.wait(0.3)
+                task.wait(0.25)
             end
         end)
     end
