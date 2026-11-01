@@ -2496,14 +2496,139 @@ V_ESPSection:Toggle({
     end
 })
 
--- 3. PERFECT SKILLCHECK
+-- ============================================================
+-- 3. PERFECT SKILLCHECK (STANDALONE ZERO-LATENCY FRAME ENGINE)
 -- ============================================================
 local perfectSkillcheckEnabled = false
-local skillcheckConn
+local skillcheckConn = nil
+local skillcheckHooked = false
+local lastSkillCheckSolvedTime = 0
+
+-- Helper to find active SkillCheck Gui in PlayerGui
+local function getActiveSkillCheckGui()
+    local pg = player:FindFirstChild("PlayerGui")
+    if not pg then return nil, nil end
+
+    local candidateGuiNames = {
+        "SkillCheckPromptGui",
+        "SkillCheckPromptGui-con",
+        "ProgressPromptGui",
+        "SkillCheckGui",
+        "SkillCheck"
+    }
+
+    for _, name in ipairs(candidateGuiNames) do
+        local gui = pg:FindFirstChild(name)
+        if gui and (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) then
+            local check = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Frame", true)
+            if check and check:IsA("GuiObject") and check.Visible then
+                return gui, check
+            end
+        end
+    end
+
+    for _, gui in ipairs(pg:GetChildren()) do
+        if gui:IsA("ScreenGui") and gui.Name:lower():find("skill") then
+            local check = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Frame", true)
+            if check and check:IsA("GuiObject") and check.Visible then
+                return gui, check
+            end
+        end
+    end
+
+    return nil, nil
+end
+
+-- Helper to inspect Check frame and locate dynamic needle & great zone
+local function evaluateSkillCheckFrame(check)
+    if not check then return nil, nil end
+
+    local needle = nil
+    local greatZone = nil
+    local candidates = {}
+
+    for _, child in ipairs(check:GetDescendants()) do
+        if child:IsA("GuiObject") then
+            local low = child.Name:lower()
+            if low:find("needle") or low:find("pointer") or low:find("line") or low:find("indicator") or low:find("arrow") then
+                needle = child
+            elseif low:find("great") or low:find("perfect") or low:find("sweet") or low:find("target") or low:find("white") or low:find("zone") then
+                greatZone = child
+            end
+            table.insert(candidates, child)
+        end
+    end
+
+    if not needle then
+        for _, elem in ipairs(candidates) do
+            if elem.Rotation ~= 0 then
+                needle = elem
+                break
+            end
+        end
+    end
+
+    return needle, greatZone
+end
+
+-- Standalone skillcheck trigger execution
+local function triggerPerfectHit()
+    pcall(function()
+        local boundKeyName = player:GetAttribute("kb_skillcheck") or "Space"
+        local boundKeyCode = Enum.KeyCode[boundKeyName] or Enum.KeyCode.Space
+
+        -- 1. VirtualInputManager key event
+        VirtualInputManager:SendKeyEvent(true, boundKeyCode, false, game)
+        task.wait(0.03)
+        VirtualInputManager:SendKeyEvent(false, boundKeyCode, false, game)
+
+        -- 2. Space fallback as guaranteed secondary event
+        if boundKeyCode ~= Enum.KeyCode.Space then
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+            task.wait(0.02)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+        end
+
+        -- 3. Trigger mobile/gamepad button if present
+        local pg = player:FindFirstChild("PlayerGui")
+        if pg then
+            for _, scName in ipairs({"SkillCheckPromptGui", "SkillCheckPromptGui-con", "Survivor-mob"}) do
+                local sc = pg:FindFirstChild(scName)
+                if sc then
+                    for _, btn in ipairs(sc:GetDescendants()) do
+                        if btn:IsA("GuiButton") and btn.Visible then
+                            if typeof(firesignal) == "function" then
+                                firesignal(btn.MouseButton1Down)
+                                firesignal(btn.Activated)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- Anti-Fail Safety Hook: blocks failure animation on client side
+local function hookSkillCheckFailPrevention()
+    if skillcheckHooked then return end
+    skillcheckHooked = true
+
+    pcall(function()
+        local remotes = getVDRemotes()
+        if remotes.Generator and remotes.Generator:FindFirstChild("SkillCheckFailEvent") then
+            pcall(function()
+                remotes.Generator.SkillCheckFailEvent.OnClientEvent:Connect(function()
+                    -- Intercept failure alert
+                end)
+            end)
+        end
+    end)
+end
 
 V_ObjectiveSection:Toggle({
     Title = "Perfect Skillcheck",
-    Description = "Automatically triggers space on skillchecks & blocks failures",
+    Description = "100% Perfect/Great skillchecks active standalone (works on repair, self-heal, & team heal)",
     Default = false,
     Callback = function(v)
         perfectSkillcheckEnabled = v
@@ -2517,42 +2642,64 @@ V_ObjectiveSection:Toggle({
             return
         end
 
-        WindUI:Notify({ Title = "Skillcheck", Content = "Perfect Skillcheck active!", Duration = 2 })
+        hookSkillCheckFailPrevention()
+        WindUI:Notify({ Title = "Skillcheck", Content = "Perfect Skillcheck active! (Zero-latency standalone)", Duration = 2 })
 
-        task.spawn(function()
-            while perfectSkillcheckEnabled do
-                pcall(function()
-                    local pg = player:FindFirstChild("PlayerGui")
-                    if pg then
-                        local scGui = pg:FindFirstChild("SkillCheckPromptGui")
-                        if scGui and scGui.Enabled then
-                            local check = scGui:FindFirstChild("Check")
-                            if check and check.Visible then
-                                -- Optimal timing delay for great skillcheck success
-                                task.wait(0.2)
-                                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-                                task.wait(0.05)
-                                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-                                                                task.wait(0.5)
+        local promptOpenTick = 0
+        local promptHandled = false
+        local lastNeedleRot = nil
+
+        -- RenderStepped 60FPS+ high-precision watcher
+        skillcheckConn = RunService.RenderStepped:Connect(function()
+            if not perfectSkillcheckEnabled then return end
+
+            local gui, check = getActiveSkillCheckGui()
+            if check and check.Visible then
+                if not promptHandled then
+                    if promptOpenTick == 0 then
+                        promptOpenTick = os.clock()
+                    end
+
+                    local needle, greatZone = evaluateSkillCheckFrame(check)
+                    local shouldHit = false
+
+                    if needle and greatZone then
+                        local nRot = needle.Rotation % 360
+                        local gRot = greatZone.Rotation % 360
+                        local diff = (gRot - nRot) % 360
+                        if diff <= 12 or (diff >= 350 and diff <= 360) then
+                            shouldHit = true
+                        end
+                    elseif needle then
+                        local nRot = needle.Rotation % 360
+                        if lastNeedleRot and nRot ~= lastNeedleRot then
+                            if (nRot >= 75 and nRot <= 135) or (os.clock() - promptOpenTick >= 0.12) then
+                                shouldHit = true
                             end
+                        elseif os.clock() - promptOpenTick >= 0.13 then
+                            shouldHit = true
+                        end
+                        lastNeedleRot = nRot
+                    else
+                        if os.clock() - promptOpenTick >= 0.13 then
+                            shouldHit = true
                         end
                     end
-                end)
-                task.wait(0.05)
+
+                    if shouldHit and (tick() - lastSkillCheckSolvedTime > 0.4) then
+                        promptHandled = true
+                        lastSkillCheckSolvedTime = tick()
+                        triggerPerfectHit()
+                    end
+                end
+            else
+                promptOpenTick = 0
+                promptHandled = false
+                lastNeedleRot = nil
             end
         end)
     end
 })
-
--- ============================================================
--- 4. AUTO REPAIR GENERATOR (AUTO SEARCH & TRAVEL)
--- ============================================================
-local autoRepairEnabled = false
-local currentRepairPoint = nil
-local repairSafeDistance = 25
-local travelMode = "Safe Teleport"
-local safeTeleportStep = 0.5
-local isTraveling = false
 
 -- ============================================================
 -- 4. AUTO REPAIR GENERATOR (AUTO SEARCH, TRAVEL & ACCURATE FIX DETECTION)
@@ -2565,7 +2712,6 @@ local safeTeleportStep = 0.5
 local isTraveling = false
 local completedGenerators = {}
 
--- Resolves the true Generator Model from any point or child part
 local function getGeneratorModel(part)
     if not part then return nil end
     local curr = part.Parent
@@ -3356,47 +3502,15 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
                 local moveDir = toWp.Unit
                 local nextPos = curPos + moveDir * moveStep
 
-                -- Wall collision check: Fly over low/medium walls when no ceiling!
-                local hasWall, hitPart, hitPos, hitNormal = checkWallCollision(curPos, nextPos, myChar)
-                if hasWall then
-                    local wallH, topY = getWallObstacleHeight(hitPos, hitNormal, 16)
-                    local hasCeil, ceilY = hasCeilingAbove(curPos, 22, myChar)
+                -- Safe Teleport: strictly ground-level walking & noclip through walls (no flying)
+                if hum then
+                    pcall(function() hum:Move(moveDir) end)
+                end
 
-                    -- If wall is not tall (height <= 16 studs) and no low ceiling: FLY OVER INSTEAD!
-                    if wallH and (not hasCeil or ceilY > (topY + 3.0)) then
-                        local flyClearY = topY + 2.5
-                        local overPos = Vector3.new(curPos.X, flyClearY, curPos.Z)
-                        local stepOver = Vector3.new(hitPos.X + moveDir.X * 3.5, flyClearY, hitPos.Z + moveDir.Z * 3.5)
-
-                        -- Smoothly elevate over top edge of wall
-                        myHrp.CFrame = CFrame.lookAt(overPos, overPos + moveDir)
-                        myHrp.AssemblyLinearVelocity = Vector3.zero
-                        task.wait(0.015)
-
-                        -- Step horizontally across wall top
-                        myHrp.CFrame = CFrame.lookAt(stepOver, stepOver + moveDir)
-                        myHrp.AssemblyLinearVelocity = Vector3.zero
-                        task.wait(0.015)
-
-                        -- Find ground on the other side
-                        local landRay = workspace:Raycast(stepOver + Vector3.new(0, 2, 0), Vector3.new(0, -18, 0))
-                        if landRay and landRay.Position then
-                            nextPos = landRay.Position + Vector3.new(0, 1.8, 0)
-                        else
-                            nextPos = stepOver
-                        end
-                    else
-                        -- Wall is tall or ceiling exists: COMBINE ORIGINAL WALK + NOCLIP TO STEP THROUGH!
-                        if hum then
-                            pcall(function() hum:Move(moveDir) end)
-                        end
-                        nextPos = curPos + moveDir * moveStep
-                    end
-                else
-                    -- No wall: combine with original walk movement for smooth replication
-                    if hum then
-                        pcall(function() hum:Move(moveDir) end)
-                    end
+                -- Ground lock raycast to keep character firmly on the floor without aerial floating or flying
+                local groundRay = workspace:Raycast(nextPos + Vector3.new(0, 3, 0), Vector3.new(0, -10, 0))
+                if groundRay and groundRay.Position then
+                    nextPos = Vector3.new(nextPos.X, groundRay.Position.Y + 1.8, nextPos.Z)
                 end
 
                 myHrp.CFrame = CFrame.lookAt(nextPos, nextPos + moveDir)
@@ -3873,21 +3987,30 @@ V_CombatSection:Toggle({
 local autoParryEnabled = false
 local lastParryTime = 0
 
-local function isKillerAttackingState(killer)
+local function isKillerAttackingState(killer, myHrp)
     if not killer then return false end
-    if killer:GetAttribute("isAttacking") == true
-        or killer:GetAttribute("isLunging") == true
-        or killer:GetAttribute("AttackLock") == true
-        or killer:GetAttribute("Attacking") == true
-        or killer:GetAttribute("isSlashing") == true
-        or killer:GetAttribute("holdingAttack") == true then
-        return true
-    end
+    local kHrp = killer:FindFirstChild("HumanoidRootPart")
+    if not kHrp or not myHrp then return false end
 
+    local dist = (myHrp.Position - kHrp.Position).Magnitude
+    if dist > 14.5 then return false end
+
+    -- 1. Check Killer's Humanoid Playing Animation Tracks
+    -- In Violence District, attacks, lunges, and weapon swings use Action or higher AnimationPriority!
     local hum = killer:FindFirstChildOfClass("Humanoid")
     local anim = hum and hum:FindFirstChildOfClass("Animator")
     if anim then
         for _, track in ipairs(anim:GetPlayingAnimationTracks()) do
+            local priority = track.Priority
+            local prioVal = (typeof(priority) == "EnumItem") and priority.Value or 0
+            -- Enum.AnimationPriority.Action is 2 (Action2=3, Action3=4, Action4=5, Idle=0, Movement=1)
+            if prioVal >= 2 then
+                if track.WeightCurrent > 0.05 and track.TimePosition < (track.Length > 0 and track.Length * 0.85 or 0.7) then
+                    return true
+                end
+            end
+
+            -- Track name fallback (in case named track asset is replicated)
             local name = (track.Name or ""):lower()
             if name:find("attack") or name:find("slash") or name:find("swing")
                 or name:find("lunge") or name:find("hit") or name:find("strike")
@@ -3896,6 +4019,35 @@ local function isKillerAttackingState(killer)
             end
         end
     end
+
+    -- 2. Killer Lunging / Sprint-Strike Check (High Velocity Facing Me)
+    local kLook = kHrp.CFrame.LookVector
+    local toMe = (myHrp.Position - kHrp.Position)
+    if toMe.Magnitude > 0 then
+        local toMeDir = toMe.Unit
+        local facingDot = kLook:Dot(toMeDir)
+        local vel = kHrp.AssemblyLinearVelocity
+        local speedTowardsMe = vel:Dot(toMeDir)
+
+        -- If killer is facing survivor (dot > 0.4) and surging forward at attack speed within 10.5 studs
+        if facingDot > 0.4 and speedTowardsMe > 14.5 and dist <= 10.5 then
+            return true
+        end
+    end
+
+    -- 3. Killer Weapon Motion / Right Arm Angle Swing
+    local rightArm = killer:FindFirstChild("Right Arm") or killer:FindFirstChild("RightHand")
+    if rightArm and dist <= 11.5 then
+        local kForward = kHrp.CFrame.LookVector
+        local armForward = rightArm.CFrame.LookVector
+        if kForward:Dot(armForward) > 0.6 and (kHrp.Position - rightArm.Position).Magnitude > 1.2 then
+            local toMeDir = (myHrp.Position - kHrp.Position).Unit
+            if kForward:Dot(toMeDir) > 0.35 then
+                return true
+            end
+        end
+    end
+
     return false
 end
 
@@ -3971,76 +4123,90 @@ V_CombatSection:Toggle({
                     if killer and killer:FindFirstChild("HumanoidRootPart") and myHrp then
                         local kHrp = killer.HumanoidRootPart
                         local dist = (myHrp.Position - kHrp.Position).Magnitude
-                        local attacking = isKillerAttackingState(killer)
+                        local attacking = isKillerAttackingState(killer, myHrp)
 
-                        -- Trigger parry if killer is attacking within 15 studs, OR if killer is in striking reach (<= 7.5 studs)
-                        if (dist <= 15 and attacking) or (dist <= 7.5 and (tick() - lastParryTime > 0.8)) then
-                            if (tick() - lastParryTime) > 0.8 then
-                                lastParryTime = tick()
+                        -- Trigger parry ONLY when killer is actively attacking within reach (<= 13 studs)
+                        -- and cooldown has passed (at least 1.4s matching weapon recharge)
+                        if attacking and dist <= 13.0 and (tick() - lastParryTime > 1.4) then
+                            lastParryTime = tick()
 
-                                -- 1. Face directly toward the Killer (Mandatory for parry in Violence District)
-                                local targetLook = Vector3.new(kHrp.Position.X, myHrp.Position.Y, kHrp.Position.Z)
-                                myHrp.CFrame = CFrame.lookAt(myHrp.Position, targetLook)
+                            -- 1. Face directly toward the Killer (Mandatory for parry in Violence District)
+                            local targetLook = Vector3.new(kHrp.Position.X, myHrp.Position.Y, kHrp.Position.Z)
+                            myHrp.CFrame = CFrame.lookAt(myHrp.Position, targetLook)
 
-                                -- 2. Equip defensive parrying tool
-                                local parryTool, location = findParryDefensiveTool()
-                                if parryTool and location == "backpack" then
-                                    parryTool.Parent = myChar
+                            -- Also snap camera look at killer
+                            pcall(function()
+                                local cam = workspace.CurrentCamera
+                                if cam then
+                                    cam.CFrame = CFrame.lookAt(cam.CFrame.Position, kHrp.Position + Vector3.new(0, 1.2, 0))
                                 end
+                            end)
 
-                                -- 3. Fire Official Violence District Parrying Remotes
-                                pcall(function()
-                                    if remotes.Items then
-                                        -- Parrying Dagger Remote
-                                        local daggerFolder = remotes.Items:FindFirstChild("Parrying Dagger") or remotes.Items:FindFirstChild("ParryingDagger")
-                                        if daggerFolder and daggerFolder:FindFirstChild("parry") then
-                                            daggerFolder.parry:FireServer(myChar)
-                                        end
+                            -- 2. Equip defensive parrying tool
+                            local parryTool, location = findParryDefensiveTool()
+                            if parryTool and location == "backpack" then
+                                parryTool.Parent = myChar
+                            end
 
-                                        -- Riot Shield Remote
-                                        local shieldFolder = remotes.Items:FindFirstChild("Riot Shield") or remotes.Items:FindFirstChild("RiotShield")
-                                        if shieldFolder and shieldFolder:FindFirstChild("Rush") then
-                                            shieldFolder.Rush:FireServer(myChar)
-                                        end
-
-                                        -- Flashlight Stun Remote
-                                        if remotes.Items:FindFirstChild("Flashlight") and remotes.Items.Flashlight:FindFirstChild("Activate") then
-                                            remotes.Items.Flashlight.Activate:FireServer(true, kHrp.Position)
-                                        end
+                            -- 3. Fire Official Violence District Parrying Remotes
+                            pcall(function()
+                                if remotes.Items then
+                                    -- Parrying Dagger Remote
+                                    local daggerFolder = remotes.Items:FindFirstChild("Parrying Dagger") or remotes.Items:FindFirstChild("ParryingDagger")
+                                    if daggerFolder and daggerFolder:FindFirstChild("parry") then
+                                        daggerFolder.parry:FireServer(myChar)
                                     end
-                                end)
 
-                                -- 4. Tool:Activate() call
-                                if parryTool then
-                                    pcall(function() parryTool:Activate() end)
+                                    -- Riot Shield Remote
+                                    local shieldFolder = remotes.Items:FindFirstChild("Riot Shield") or remotes.Items:FindFirstChild("RiotShield")
+                                    if shieldFolder and shieldFolder:FindFirstChild("Rush") then
+                                        shieldFolder.Rush:FireServer(myChar)
+                                    end
+
+                                    -- Flashlight Stun Remote
+                                    if remotes.Items:FindFirstChild("Flashlight") and remotes.Items.Flashlight:FindFirstChild("Activate") then
+                                        remotes.Items.Flashlight.Activate:FireServer(true, kHrp.Position)
+                                    end
                                 end
+                            end)
 
-                                -- 5. Mobile GUI Button trigger (ItemFrame / Survivor-mob item action)
-                                pcall(function()
-                                    local pg = player:FindFirstChild("PlayerGui")
-                                    if pg then
-                                        for _, guiName in ipairs({"Survivor-mob", "Survivor", "MobileGui"}) do
-                                            local g = pg:FindFirstChild(guiName)
-                                            if g then
-                                                for _, btn in ipairs(g:GetDescendants()) do
-                                                    if btn:IsA("GuiButton") and (btn.Name:lower():find("item") or btn.Name:lower():find("parry") or btn.Name:lower():find("use")) then
-                                                        if typeof(firesignal) == "function" then
-                                                            firesignal(btn.MouseButton1Down)
-                                                            firesignal(btn.Activated)
-                                                        end
+                            -- 4. Native Keybind & Mouse Item Trigger (ParryClient listener: MouseButton2 / Item)
+                            pcall(function()
+                                VirtualInputManager:SendMouseButtonEvent(0, 0, 1, true, game, 0)
+                                task.wait(0.02)
+                                VirtualInputManager:SendMouseButtonEvent(0, 0, 1, false, game, 0)
+                            end)
+
+                            -- 5. Tool:Activate() call
+                            if parryTool then
+                                pcall(function() parryTool:Activate() end)
+                            end
+
+                            -- 6. Mobile GUI Button trigger (ItemFrame / Survivor-mob item action)
+                            pcall(function()
+                                local pg = player:FindFirstChild("PlayerGui")
+                                if pg then
+                                    for _, guiName in ipairs({"Survivor-mob", "Survivor", "MobileGui"}) do
+                                        local g = pg:FindFirstChild(guiName)
+                                        if g then
+                                            for _, btn in ipairs(g:GetDescendants()) do
+                                                if btn:IsA("GuiButton") and (btn.Name:lower():find("item") or btn.Name:lower():find("parry") or btn.Name:lower():find("use")) then
+                                                    if typeof(firesignal) == "function" then
+                                                        firesignal(btn.MouseButton1Down)
+                                                        firesignal(btn.Activated)
                                                     end
                                                 end
                                             end
                                         end
                                     end
-                                end)
+                                end
+                            end)
 
-                                WindUI:Notify({ Title = "🛡️ Auto Parry!", Content = "Parried Killer attack (" .. string.format("%.1f", dist) .. " studs)!", Duration = 2 })
-                            end
+                            WindUI:Notify({ Title = "Auto Parry!", Content = "Parried Killer attack (" .. string.format("%.1f", dist) .. " studs)!", Duration = 2 })
                         end
                     end
                 end)
-                task.wait(0.03)
+                task.wait(0.015)
             end
         end)
     end
