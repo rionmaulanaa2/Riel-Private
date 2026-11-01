@@ -97,7 +97,7 @@ local function stopScript()
     autoHitSurvivorEnabled = false
     autoHookSurvivorEnabled = false
     autoDodgeEnabled = false
-    autoRoleAdaptEnabled = false
+    autoRoleAdaptEnabled = true
     flyEnabled = false
     didEnabled = false
     noClipEnabled = false
@@ -2703,7 +2703,7 @@ V_ESPSection:Toggle({
 -- ============================================================
 -- 3. PERFECT SKILLCHECK (STANDALONE ZERO-LATENCY FRAME ENGINE)
 -- ============================================================
-local perfectSkillcheckEnabled = false
+local perfectSkillcheckEnabled = true
 local skillcheckConn = nil
 local skillcheckHooked = false
 local lastSkillCheckSolvedTime = 0
@@ -2830,80 +2830,93 @@ local function hookSkillCheckFailPrevention()
     end)
 end
 
+local function startSkillcheckWatcher()
+    if skillcheckConn then
+        pcall(function() skillcheckConn:Disconnect() end)
+        skillcheckConn = nil
+    end
+
+    hookSkillCheckFailPrevention()
+
+    local promptOpenTick = 0
+    local promptHandled = false
+    local lastNeedleRot = nil
+
+    -- RenderStepped 60FPS+ high-precision watcher
+    skillcheckConn = RunService.RenderStepped:Connect(function()
+        if not perfectSkillcheckEnabled then return end
+
+        local gui, check = getActiveSkillCheckGui()
+        if check and check.Visible then
+            if not promptHandled then
+                if promptOpenTick == 0 then
+                    promptOpenTick = os.clock()
+                end
+
+                local needle, greatZone = evaluateSkillCheckFrame(check)
+                local shouldHit = false
+
+                if needle and greatZone then
+                    local nRot = needle.Rotation % 360
+                    local gRot = greatZone.Rotation % 360
+                    local diff = (gRot - nRot) % 360
+                    if diff <= 12 or (diff >= 350 and diff <= 360) then
+                        shouldHit = true
+                    end
+                elseif needle then
+                    local nRot = needle.Rotation % 360
+                    if lastNeedleRot and nRot ~= lastNeedleRot then
+                        if (nRot >= 75 and nRot <= 135) or (os.clock() - promptOpenTick >= 0.12) then
+                            shouldHit = true
+                        end
+                    elseif os.clock() - promptOpenTick >= 0.13 then
+                        shouldHit = true
+                    end
+                    lastNeedleRot = nRot
+                else
+                    if os.clock() - promptOpenTick >= 0.13 then
+                        shouldHit = true
+                    end
+                end
+
+                if shouldHit and (tick() - lastSkillCheckSolvedTime > 0.4) then
+                    promptHandled = true
+                    lastSkillCheckSolvedTime = tick()
+                    triggerPerfectHit()
+                end
+            end
+        else
+            promptOpenTick = 0
+            promptHandled = false
+            lastNeedleRot = nil
+        end
+    end)
+end
+
 V_ObjectiveSection:Toggle({
     Title = "Perfect Skillcheck",
     Description = "100% Perfect/Great skillchecks active standalone (works on repair, self-heal, & team heal)",
-    Default = false,
+    Default = true,
     Callback = function(v)
         perfectSkillcheckEnabled = v
-        if skillcheckConn then
-            pcall(function() skillcheckConn:Disconnect() end)
-            skillcheckConn = nil
-        end
-
         if not v then
+            if skillcheckConn then
+                pcall(function() skillcheckConn:Disconnect() end)
+                skillcheckConn = nil
+            end
             WindUI:Notify({ Title = "Skillcheck", Content = "Perfect Skillcheck disabled.", Duration = 2 })
             return
         end
 
-        hookSkillCheckFailPrevention()
+        startSkillcheckWatcher()
         WindUI:Notify({ Title = "Skillcheck", Content = "Perfect Skillcheck active! (Zero-latency standalone)", Duration = 2 })
-
-        local promptOpenTick = 0
-        local promptHandled = false
-        local lastNeedleRot = nil
-
-        -- RenderStepped 60FPS+ high-precision watcher
-        skillcheckConn = RunService.RenderStepped:Connect(function()
-            if not perfectSkillcheckEnabled then return end
-
-            local gui, check = getActiveSkillCheckGui()
-            if check and check.Visible then
-                if not promptHandled then
-                    if promptOpenTick == 0 then
-                        promptOpenTick = os.clock()
-                    end
-
-                    local needle, greatZone = evaluateSkillCheckFrame(check)
-                    local shouldHit = false
-
-                    if needle and greatZone then
-                        local nRot = needle.Rotation % 360
-                        local gRot = greatZone.Rotation % 360
-                        local diff = (gRot - nRot) % 360
-                        if diff <= 12 or (diff >= 350 and diff <= 360) then
-                            shouldHit = true
-                        end
-                    elseif needle then
-                        local nRot = needle.Rotation % 360
-                        if lastNeedleRot and nRot ~= lastNeedleRot then
-                            if (nRot >= 75 and nRot <= 135) or (os.clock() - promptOpenTick >= 0.12) then
-                                shouldHit = true
-                            end
-                        elseif os.clock() - promptOpenTick >= 0.13 then
-                            shouldHit = true
-                        end
-                        lastNeedleRot = nRot
-                    else
-                        if os.clock() - promptOpenTick >= 0.13 then
-                            shouldHit = true
-                        end
-                    end
-
-                    if shouldHit and (tick() - lastSkillCheckSolvedTime > 0.4) then
-                        promptHandled = true
-                        lastSkillCheckSolvedTime = tick()
-                        triggerPerfectHit()
-                    end
-                end
-            else
-                promptOpenTick = 0
-                promptHandled = false
-                lastNeedleRot = nil
-            end
-        end)
     end
 })
+
+-- Auto-activate Perfect Skillcheck on script initialization
+if perfectSkillcheckEnabled then
+    startSkillcheckWatcher()
+end
 
 -- ============================================================
 -- 4. AUTO REPAIR GENERATOR (AUTO SEARCH, TRAVEL & ACCURATE FIX DETECTION)
@@ -3552,7 +3565,7 @@ local function computeSmartWaypoints(startPos, endPos, targetPart, avoidKillerPo
     return { { Position = startPos }, { Position = endPos } }, "fallback"
 end
 
-local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKiller, customSafeDist)
+local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKiller, customSafeDist, specificTravelMode)
     local myChar = player.Character
     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
     local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
@@ -3582,11 +3595,12 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
     end
     local shouldAvoidKiller = (avoidKiller ~= false)
     local safeDist = customSafeDist or repairSafeDistance or 25
+    local activeMode = specificTravelMode or travelMode
 
     isTraveling = true
 
     -- 1. SMART INSTANT TELEPORT (ANTI-RUBBERBAND MICRO-BURST & GROUND SURFACE LOCK)
-    if travelMode == "Instant Teleport" then
+    if activeMode == "Instant Teleport" then
         startTravelNoClip()
         local safeStandPos = getSafeInteractPosition(targetPart, targetPos)
 
@@ -3646,7 +3660,7 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
         return success
 
     -- 2. SMART SAFE TELEPORT (COMBINED NOCLIP + WALK + FLY OVER LOW/MEDIUM WALLS)
-    elseif travelMode == "Safe Teleport" then
+    elseif activeMode == "Safe Teleport" then
         startTravelNoClip()
         local step = math.clamp(safeTeleportStep or 0.6, 0.1, 2.0)
         local killer = getKiller()
@@ -3734,7 +3748,7 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
         return (myHrp.Position - targetPos).Magnitude <= (reach + 1.5)
 
     -- 3. SMART RUN NORMALLY (PATHFINDING WITH WALL & STUCK WATCHDOG)
-    elseif travelMode == "Run Normally" then
+    elseif activeMode == "Run Normally" then
         local killer = getKiller()
         local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
         local avoidKPos = (shouldAvoidKiller and kHrp) and kHrp.Position or nil
@@ -3834,7 +3848,7 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
         isTraveling = false
         return (myHrp.Position - targetPos).Magnitude <= (reach + 1.5)
     -- 4. SMART FLYING TRAVEL (3D AIR TRAVERSAL OVER WALLS & MAZES WHEN NO CEILING)
-    elseif travelMode == "Flying" then
+    elseif activeMode == "Flying" then
         local safeEndPos = getSafeInteractPosition(targetPart, targetPos)
         local killer = getKiller()
         local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
@@ -4551,13 +4565,220 @@ V_CombatSection:Slider({
 })
 
 -- ============================================================
--- 8. AUTO SAVE SURVIVOR (UNHOOK & HIGH-PRIORITY RESCUE)
+-- 8. AUTO SAVE SURVIVOR & RESCUE TEAM ENGINE
 -- ============================================================
 autoSaveEnabled = false
+local rescueTravelMode = "Safe Teleport"
+local selectedHookedTeammateLabel = nil
+local rescueDropdownRef = nil
+
+-- Helper to list all currently hooked teammates
+local function getHookedTeammatesList()
+    local list = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and plr.Character and isCharacterHooked(plr.Character) then
+            local label = string.format("🪝 %s (@%s)", plr.DisplayName or plr.Name, plr.Name)
+            table.insert(list, {
+                label = label,
+                player = plr,
+                character = plr.Character,
+                name = plr.Name
+            })
+        end
+    end
+    return list
+end
+
+local function getHookedTeammateLabels()
+    local list = getHookedTeammatesList()
+    local labels = {}
+    for _, item in ipairs(list) do
+        table.insert(labels, item.label)
+    end
+    if #labels == 0 then
+        table.insert(labels, "No Hooked Teammates")
+    end
+    return labels
+end
+
+-- Core function to travel to and unhook a specific hooked teammate
+local function executeTeammateUnhook(targetChar, targetPlrName)
+    local myChar = player.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHrp or not targetChar then return false end
+
+    local targetHrp = targetChar:FindFirstChild("HumanoidRootPart")
+    if not targetHrp then return false end
+
+    local unhookPt = findUnhookPointForTeammate(targetChar)
+    local travelDest = unhookPt or targetHrp
+
+    WindUI:Notify({
+        Title = "🪝 Rescuing Teammate",
+        Content = string.format("Traveling to %s via %s...", targetPlrName or targetChar.Name, rescueTravelMode),
+        Duration = 2.5
+    })
+
+    -- Travel using user's chosen Rescue Travel Mode (Instant Teleport, Safe Teleport, or Run Normally)
+    local arrived = travelToPoint(travelDest, 4.8, function()
+        return isCharacterHooked(targetChar) and scriptRunning
+    end, true, 12, rescueTravelMode)
+
+    local finalDist = (myHrp.Position - travelDest.Position).Magnitude
+    if finalDist <= 7.5 and isCharacterHooked(targetChar) then
+        local remotes = getVDRemotes()
+        if remotes.Carry and remotes.Carry:FindFirstChild("UnHookEvent") then
+            pcall(function()
+                myChar:SetAttribute("isUnhooking", true)
+                if unhookPt then
+                    remotes.Carry.UnHookEvent:FireServer(unhookPt, myChar)
+                end
+                remotes.Carry.UnHookEvent:FireServer(targetChar, myChar)
+            end)
+
+            -- Fire ProximityPrompts for instant prompt completion
+            pcall(function()
+                for _, prompt in ipairs(targetChar:GetDescendants()) do
+                    if prompt:IsA("ProximityPrompt") then
+                        fireproximityprompt(prompt)
+                    end
+                end
+                if unhookPt and unhookPt.Parent then
+                    for _, prompt in ipairs(unhookPt.Parent:GetDescendants()) do
+                        if prompt:IsA("ProximityPrompt") then
+                            fireproximityprompt(prompt)
+                        end
+                    end
+                end
+            end)
+
+            local rescueTimeout = tick() + 3.0
+            while isCharacterHooked(targetChar) and tick() < rescueTimeout and scriptRunning do
+                task.wait(0.15)
+                if unhookPt then
+                    pcall(function() remotes.Carry.UnHookEvent:FireServer(unhookPt, myChar) end)
+                end
+                pcall(function() remotes.Carry.UnHookEvent:FireServer(targetChar, myChar) end)
+            end
+            pcall(function() myChar:SetAttribute("isUnhooking", false) end)
+
+            if not isCharacterHooked(targetChar) then
+                WindUI:Notify({ Title = "🎉 Teammate Rescued!", Content = string.format("Successfully unhooked %s!", targetPlrName or targetChar.Name), Duration = 3 })
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Dropdown to choose travel mode specifically for rescuing
+V_RescueSection:Dropdown({
+    Title = "Rescue Travel Mode",
+    Description = "Method used to reach hooked and knocked teammates (Instant, Safe, or Normal Run)",
+    Values = { "Safe Teleport", "Run Normally", "Instant Teleport" },
+    Value = "Safe Teleport",
+    Callback = function(v)
+        rescueTravelMode = v
+    end
+})
+
+-- Dynamic dropdown of hooked teammates
+local initialHookedLabels = getHookedTeammateLabels()
+rescueDropdownRef = V_RescueSection:Dropdown({
+    Title = "Select Hooked Teammate",
+    Description = "Choose a specific hooked teammate to rescue",
+    Values = initialHookedLabels,
+    Value = initialHookedLabels[1],
+    Callback = function(v)
+        selectedHookedTeammateLabel = v
+    end
+})
+
+V_RescueSection:Button({
+    Title = "🔄 Refresh Hooked List",
+    Description = "Scans match and updates hooked teammate dropdown",
+    Callback = function()
+        local newLabels = getHookedTeammateLabels()
+        pcall(function()
+            if rescueDropdownRef and rescueDropdownRef.SetValues then
+                rescueDropdownRef:SetValues(newLabels)
+            elseif rescueDropdownRef and rescueDropdownRef.Refresh then
+                rescueDropdownRef:Refresh(newLabels)
+            end
+        end)
+        local count = (newLabels[1] == "No Hooked Teammates") and 0 or #newLabels
+        WindUI:Notify({ Title = "Hooked Teammates", Content = string.format("Found %d hooked teammate(s).", count), Duration = 2.5 })
+    end
+})
+
+V_RescueSection:Button({
+    Title = "⚡ Go & Rescue Selected Teammate",
+    Description = "Travels to selected hooked friend using chosen travel mode and unhooks them",
+    Callback = function()
+        local hookedList = getHookedTeammatesList()
+        if #hookedList == 0 then
+            WindUI:Notify({ Title = "Rescue Notice", Content = "No hooked teammates currently found!", Duration = 2.5 })
+            return
+        end
+
+        local target = nil
+        if selectedHookedTeammateLabel and selectedHookedTeammateLabel ~= "No Hooked Teammates" then
+            for _, item in ipairs(hookedList) do
+                if item.label == selectedHookedTeammateLabel or item.name == selectedHookedTeammateLabel or item.label:find(selectedHookedTeammateLabel, 1, true) then
+                    target = item
+                    break
+                end
+            end
+        end
+
+        if not target then
+            target = hookedList[1]
+        end
+
+        task.spawn(function()
+            executeTeammateUnhook(target.character, target.player.DisplayName or target.name)
+        end)
+    end
+})
+
+V_RescueSection:Button({
+    Title = "⚡ Instant Rescue Nearest Hooked Friend",
+    Description = "Finds nearest hooked friend, travels via chosen travel mode and unhooks them immediately",
+    Callback = function()
+        local targetChar, targetPlr = nil, nil
+        local shortestDist = math.huge
+        local myChar = player.Character
+        local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if not myHrp then return end
+
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= player and plr.Character and isCharacterHooked(plr.Character) then
+                local sHrp = plr.Character:FindFirstChild("HumanoidRootPart")
+                if sHrp then
+                    local d = (myHrp.Position - sHrp.Position).Magnitude
+                    if d < shortestDist then
+                        shortestDist = d
+                        targetChar = plr.Character
+                        targetPlr = plr
+                    end
+                end
+            end
+        end
+
+        if not targetChar then
+            WindUI:Notify({ Title = "Rescue Notice", Content = "No hooked teammates detected!", Duration = 2.5 })
+            return
+        end
+
+        task.spawn(function()
+            executeTeammateUnhook(targetChar, targetPlr.DisplayName or targetPlr.Name)
+        end)
+    end
+})
 
 V_RescueSection:Toggle({
-    Title = "Auto Save Teammate",
-    Description = "Automatically rescues hooked teammates (unhook) & knocked teammates (heal/revive)",
+    Title = "Auto Save Teammate (Continuous)",
+    Description = "Continuously rescues hooked teammates & revives knocked teammates using chosen travel mode",
     Default = false,
     Callback = function(v)
         autoSaveEnabled = v
@@ -4568,7 +4789,7 @@ V_RescueSection:Toggle({
             return
         end
 
-        WindUI:Notify({ Title = "Auto Save", Content = "Auto Save enabled! (Priority rescue & revive active)", Duration = 2 })
+        WindUI:Notify({ Title = "Auto Save", Content = string.format("Auto Save active! (Travel: %s)", rescueTravelMode), Duration = 2.5 })
 
         task.spawn(function()
             local lastNoticeTime = 0
@@ -4597,7 +4818,7 @@ V_RescueSection:Toggle({
                         lastNoticeTime = tick()
                         local actionWord = (rescueType == "hooked") and "Unhooking" or "Reviving"
                         local emoji = (rescueType == "hooked") and "🪝" or "🩹"
-                        WindUI:Notify({ Title = emoji .. " Priority Rescue", Content = actionWord .. " teammate: " .. targetPlr.Name, Duration = 2.5 })
+                        WindUI:Notify({ Title = emoji .. " Priority Rescue", Content = string.format("%s teammate: %s (via %s)", actionWord, targetPlr.Name, rescueTravelMode), Duration = 2.5 })
                     end
 
                     -- 1. RESCUE HOOKED TEAMMATE
@@ -4609,11 +4830,11 @@ V_RescueSection:Toggle({
                         if dist > 5.2 then
                             travelToPoint(travelDest, 4.8, function()
                                 return autoSaveEnabled and isCharacterHooked(targetChar)
-                            end, true, 12)
+                            end, true, 12, rescueTravelMode)
                         end
 
                         local finalDist = (myHrp.Position - travelDest.Position).Magnitude
-                        if finalDist <= 7.0 and isCharacterHooked(targetChar) then
+                        if finalDist <= 7.5 and isCharacterHooked(targetChar) then
                             if remotes.Carry and remotes.Carry:FindFirstChild("UnHookEvent") then
                                 pcall(function()
                                     myChar:SetAttribute("isUnhooking", true)
@@ -4621,6 +4842,21 @@ V_RescueSection:Toggle({
                                         remotes.Carry.UnHookEvent:FireServer(unhookPt, myChar)
                                     end
                                     remotes.Carry.UnHookEvent:FireServer(targetChar, myChar)
+                                end)
+
+                                pcall(function()
+                                    for _, prompt in ipairs(targetChar:GetDescendants()) do
+                                        if prompt:IsA("ProximityPrompt") then
+                                            fireproximityprompt(prompt)
+                                        end
+                                    end
+                                    if unhookPt and unhookPt.Parent then
+                                        for _, prompt in ipairs(unhookPt.Parent:GetDescendants()) do
+                                            if prompt:IsA("ProximityPrompt") then
+                                                fireproximityprompt(prompt)
+                                            end
+                                        end
+                                    end
                                 end)
 
                                 local rescueTimeout = tick() + 2.8
@@ -4645,7 +4881,7 @@ V_RescueSection:Toggle({
                         if dist > 4.5 then
                             travelToPoint(targetHrp, 4.0, function()
                                 return autoSaveEnabled and isCharacterKnocked(targetChar)
-                            end, true, 12)
+                            end, true, 12, rescueTravelMode)
                         end
 
                         local finalDist = (myHrp.Position - targetHrp.Position).Magnitude
@@ -4978,7 +5214,7 @@ local autoAimSurvivorEnabled = false
 local autoHitSurvivorEnabled = false
 local autoHookSurvivorEnabled = false
 local isHookActionActive = false
-local killerTravelMode = "Safe Teleport"
+local killerTravelMode = "Instant Teleport"
 local hitReachDistance = 10
 local lastKillerHitTime = 0
 local currentKillerTarget = nil
@@ -5807,8 +6043,8 @@ V_ObjectiveSection:Toggle({
 V_KillerSection:Dropdown({
     Title = "Killer Travel Mode",
     Description = "Method used to catch up to survivors & transport to hooks",
-    Values = { "Safe Teleport", "Run Normally", "Instant Teleport" },
-    Value = "Safe Teleport",
+    Values = { "Instant Teleport", "Safe Teleport", "Run Normally" },
+    Value = "Instant Teleport",
     Callback = function(v)
         killerTravelMode = v
     end
