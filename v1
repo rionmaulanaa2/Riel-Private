@@ -1776,67 +1776,281 @@ local function getVDRemotes()
     }
 end
 
--- Killer detection helper
--- Killer detection helper (Violence District CollectionService, Team & Attribute Detection)
-local function getKiller()
-    local myChar = player.Character
-    local CollectionService = game:GetService("CollectionService")
+-- ============================================================
+-- CORE MATCH, ROLE & ENTITY RECOGNITION ENGINE
+-- ============================================================
+-- Unified authoritative system ensuring 100% accurate role, team,
+-- and entity detection across rounds, respawns, and lobby transitions.
 
-    -- 1. Check CollectionService "Killer" tag (Official Violence District method)
-    pcall(function()
-        for _, obj in ipairs(CollectionService:GetTagged("Killer")) do
-            if obj and obj:IsA("Model") and obj ~= myChar then
-                local hum = obj:FindFirstChildOfClass("Humanoid")
-                local hrp = obj:FindFirstChild("HumanoidRootPart")
-                if hum and hrp and hum.Health > 0 then
-                    return obj
-                end
+local function isValidCharacter(char)
+    if not char or not char.Parent then return false end
+    if not char:IsDescendantOf(workspace) then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hum or not hrp or hum.Health <= 0 then return false end
+    return true, hum, hrp
+end
+
+local function isEntityInLobbyOrSpectating(char, plr)
+    if not char and not plr then return true end
+    plr = plr or (char and Players:GetPlayerFromCharacter(char))
+
+    if plr then
+        if plr:GetAttribute("InLobby") == true or plr:GetAttribute("Lobby") == true then
+            return true
+        end
+        if plr:GetAttribute("IsDead") == true or plr:GetAttribute("HasEscaped") == true then
+            return true
+        end
+        local team = plr.Team
+        if team then
+            local tName = team.Name:lower()
+            if tName:find("lobby") or tName:find("choos") or tName:find("spectat") or tName:find("intermission") then
+                return true
             end
         end
-    end)
+    end
 
-    -- 2. Check Players on Killer Team, with Killer attribute, or with CollectionService Tag
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player and plr.Character and plr.Character ~= myChar then
-            local char = plr.Character
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if hum and hrp and hum.Health > 0 then
-                local isKillerTeam = plr.Team and (plr.Team.Name == "Killer" or plr.Team.Name:lower():find("killer") or (plr.Team.Name ~= "Survivors" and plr.Team.Name ~= "Lobby" and plr.Team.Name ~= "Choosing"))
-                local hasKillerAttr = plr:GetAttribute("IsKiller") == true 
-                    or char:GetAttribute("IsKiller") == true 
-                    or char:GetAttribute("Butcher") == true 
-                    or char:GetAttribute("killerend") ~= nil
-                    or char:GetAttribute("isAttacking") ~= nil
-                    or char:GetAttribute("isLunging") ~= nil
-                local hasKillerTag = CollectionService:HasTag(char, "Killer") or CollectionService:HasTag(plr, "Killer")
+    if char then
+        if char:GetAttribute("InLobby") == true or char:GetAttribute("Lobby") == true then
+            return true
+        end
+        local lobby = workspace:FindFirstChild("Lobby")
+        if lobby and char:IsDescendantOf(lobby) then
+            return true
+        end
+        if char:FindFirstAncestor("Lobby") then
+            return true
+        end
+    end
 
-                if isKillerTeam or hasKillerAttr or hasKillerTag then
-                    return char
+    return false
+end
+local isSurvivorInLobby = isEntityInLobbyOrSpectating
+
+local function isCharacterHooked(char)
+    if not char or not char.Parent then return false end
+
+    -- Direct attributes
+    if char:GetAttribute("isHooked") == true or char:GetAttribute("Hooked") == true or char:GetAttribute("IsHooked") == true then
+        return true
+    end
+    local phase = char:GetAttribute("HookPhase")
+    if phase ~= nil and tonumber(phase) ~= nil and tonumber(phase) > 0 then
+        return true
+    end
+
+    -- Child marker objects
+    if char:FindFirstChild("Hooked") or char:FindFirstChild("HookPhase") or char:FindFirstChild("HookWeld") then
+        return true
+    end
+
+    -- Model parent or ancestry
+    local pName = char.Parent.Name:lower()
+    if pName:find("hook") or pName:find("meathook") then
+        return true
+    end
+
+    -- Joints/Welds connecting HumanoidRootPart to MeatHooks
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        for _, joint in ipairs(hrp:GetJoints()) do
+            local other = (joint.Part0 == hrp) and joint.Part1 or joint.Part0
+            if other and other.Parent then
+                local oName = other.Name:lower()
+                local opName = other.Parent.Name:lower()
+                if oName:find("hook") or opName:find("hook") then
+                    return true
                 end
             end
         end
     end
 
-    -- 3. Check workspace models for killer attributes or names
-    for _, model in ipairs(workspace:GetChildren()) do
-        if model:IsA("Model") and model ~= myChar then
-            local hum = model:FindFirstChildOfClass("Humanoid")
-            local hrp = model:FindFirstChild("HumanoidRootPart")
-            if hum and hrp and hum.Health > 0 then
-                if CollectionService:HasTag(model, "Killer")
-                    or model:GetAttribute("Butcher")
-                    or model:GetAttribute("IsKiller") == true
-                    or model:GetAttribute("isAttacking") ~= nil
-                    or model:GetAttribute("isLunging") ~= nil
-                    or model:GetAttribute("isStunned") ~= nil
-                    or model.Name:lower():find("killer")
-                    or model.Name:lower():find("butcher")
-                    or model.Name:lower():find("slasher")
-                    or model.Name:lower():find("cure")
-                    or model.Name:lower():find("jason") then
-                    return model
+    return false
+end
+
+local function isCharacterKnocked(char)
+    if not char or not char.Parent then return false end
+    if char:GetAttribute("Knocked") == true or char:GetAttribute("isKnocked") == true
+        or char:GetAttribute("Downed") == true or char:GetAttribute("isDowned") == true
+        or char:GetAttribute("isBleeding") == true then
+        return true
+    end
+    if CollectionService and CollectionService:HasTag(char, "Knocked") then return true end
+    if char:FindFirstChild("downed") or char:FindFirstChild("Knocked") then return true end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health > 0 and hum.Health < 30 then
+        return true
+    end
+    return false
+end
+
+-- Authoritative killer verification: Prevents misidentifying former survivors as killer
+-- and prevents survivors from retaining stale killer flags between games.
+local function isCharacterKiller(char, plr)
+    local valid, hum, hrp = isValidCharacter(char)
+    if not valid then return false end
+    plr = plr or Players:GetPlayerFromCharacter(char)
+
+    -- If entity is in Lobby or Spectating, they are not an active Killer in match
+    if isEntityInLobbyOrSpectating(char, plr) then
+        return false
+    end
+
+    -- 1. Explicit Team verification
+    if plr and plr.Team then
+        local tName = plr.Team.Name:lower()
+        -- In Violence District, survivors are explicitly on "Survivors" team
+        if tName == "survivors" or tName:find("survivor") then
+            return false
+        end
+        if tName == "killer" or tName:find("killer") then
+            return true
+        end
+    end
+
+    -- 2. Survivor interaction state attributes (Killer cannot repair, heal, vault-slide pallet)
+    if char:GetAttribute("isRepairing") == true 
+        or char:GetAttribute("isHealing") == true 
+        or char:GetAttribute("isVaulting") == true 
+        or char:GetAttribute("isSliding") == true 
+        or char:GetAttribute("isDroppingPallet") == true 
+        or char:GetAttribute("isUnhooking") == true 
+        or char:GetAttribute("isExiting") == true then
+        return false
+    end
+
+    -- 3. CollectionService "Killer" tag (Applied by server to active killer character)
+    if CollectionService:HasTag(char, "Killer") then
+        return true
+    end
+    if plr and CollectionService:HasTag(plr, "Killer") then
+        return true
+    end
+
+    -- 4. Killer-specific attributes on CURRENT character instance
+    if char:GetAttribute("Butcher") == true 
+        or char:GetAttribute("IsKiller") == true 
+        or char:GetAttribute("KillerName") ~= nil 
+        or char:GetAttribute("ChainBusy") == true then
+        return true
+    end
+
+    -- 5. Active Killer combat states
+    if char:GetAttribute("isAttacking") == true 
+        or char:GetAttribute("isLunging") == true 
+        or char:GetAttribute("isStunned") == true then
+        return true
+    end
+
+    -- 6. Known killer model names in workspace
+    local cName = char.Name:lower()
+    if cName:find("butcher") or cName:find("slasher") or cName:find("cure") 
+        or cName:find("jason") or cName:find("abysswalker") or cName:find("veil") 
+        or cName:find("stalker") or cName:find("masked") or cName:find("hidden") then
+        return true
+    end
+
+    -- 7. Killer weapons / tools held
+    for _, item in ipairs(char:GetChildren()) do
+        if item:IsA("Tool") or item:IsA("BasePart") or item:IsA("Model") then
+            local iName = item.Name:lower()
+            if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
+                or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher") then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+-- Authoritative survivor verification: Strictly excludes Killer, Lobby, and Spectators.
+local function isCharacterSurvivor(char, plr)
+    local valid, hum, hrp = isValidCharacter(char)
+    if not valid then return false end
+    if char == player.Character then return false end
+    plr = plr or Players:GetPlayerFromCharacter(char)
+
+    -- Under no circumstance can the Killer be classified as a Survivor
+    if isCharacterKiller(char, plr) then
+        return false
+    end
+
+    -- Exclude Lobby/Spectator
+    if isEntityInLobbyOrSpectating(char, plr) then
+        return false
+    end
+
+    -- If player is on Killer team
+    if plr and plr.Team then
+        local tName = plr.Team.Name:lower()
+        if tName == "killer" or tName:find("killer") then
+            return false
+        end
+        if tName == "survivors" or tName:find("survivor") then
+            return true
+        end
+    end
+
+    -- CollectionService tags
+    if CollectionService:HasTag(char, "Survivor") or CollectionService:HasTag(char, "Survivors") then
+        return true
+    end
+
+    -- Active survivor status attributes
+    if char:GetAttribute("isRepairing") ~= nil 
+        or char:GetAttribute("isHealing") ~= nil 
+        or char:GetAttribute("isVaulting") ~= nil 
+        or char:GetAttribute("isSliding") ~= nil 
+        or char:GetAttribute("isDroppingPallet") ~= nil 
+        or char:GetAttribute("isUnhooking") ~= nil 
+        or char:GetAttribute("isExiting") ~= nil 
+        or char:GetAttribute("Sprinting") ~= nil 
+        or isCharacterHooked(char) 
+        or isCharacterKnocked(char) then
+        return true
+    end
+
+    -- Valid player character in workspace not on killer/lobby team
+    if plr and plr ~= player then
+        return true
+    end
+
+    return false
+end
+
+local function getKiller()
+    local myChar = player.Character
+
+    -- 1. Check all other players in Players
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and plr.Character and plr.Character ~= myChar then
+            if isCharacterKiller(plr.Character, plr) then
+                return plr.Character
+            end
+        end
+    end
+
+    -- 2. Check CollectionService "Killer" tagged objects (models in workspace)
+    local taggedKiller = nil
+    pcall(function()
+        for _, obj in ipairs(CollectionService:GetTagged("Killer")) do
+            if obj and obj:IsA("Model") and obj ~= myChar and obj:IsDescendantOf(workspace) then
+                if isCharacterKiller(obj) then
+                    taggedKiller = obj
+                    break
                 end
+            end
+        end
+    end)
+    if taggedKiller then return taggedKiller end
+
+    -- 3. Check workspace top-level models
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("Model") and obj ~= myChar and obj:IsDescendantOf(workspace) and not Players:GetPlayerFromCharacter(obj) then
+            if isCharacterKiller(obj) then
+                return obj
             end
         end
     end
@@ -1847,33 +2061,70 @@ end
 local function isPlayerKiller()
     local myChar = player.Character
     if not myChar then return false end
-    local CollectionService = game:GetService("CollectionService")
-
-    if CollectionService:HasTag(myChar, "Killer") or CollectionService:HasTag(player, "Killer") then
-        return true
-    end
-    if player.Team and (player.Team.Name == "Killer" or player.Team.Name:lower():find("killer") or (player.Team.Name ~= "Survivors" and player.Team.Name ~= "Lobby" and player.Team.Name ~= "Choosing")) then
-        return true
-    end
-    if myChar:GetAttribute("IsKiller") == true or player:GetAttribute("IsKiller") == true or myChar:GetAttribute("Butcher") == true or myChar:GetAttribute("isAttacking") ~= nil or myChar:GetAttribute("isLunging") ~= nil then
-        return true
-    end
-    if myChar.Name:lower():find("killer") or myChar.Name:lower():find("butcher") or myChar.Name:lower():find("slasher") or myChar.Name:lower():find("cure") or myChar.Name:lower():find("jason") then
-        return true
-    end
-    local k = getKiller()
-    if k and k == myChar then
-        return true
-    end
-    return false
+    return isCharacterKiller(myChar, player)
 end
+
+-- ============================================================
+-- GLOBAL MATCH RESET & ESP CLEANUP HANDLER
+-- ============================================================
+-- Whenever a round finishes or a player respawns, wipes all stale
+-- BillboardGuis and Highlights across the entire workspace to prevent
+-- old roles from lingering into subsequent games.
+
+local function cleanAllESPs()
+    if cleanKillerESP then pcall(cleanKillerESP) end
+    if cleanSurvivorESP then pcall(cleanSurvivorESP) end
+    if cleanGenESP then pcall(cleanGenESP) end
+
+    pcall(function()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj.Name == "KillerESPHighlight" or obj.Name == "KillerESPBillboard"
+                or obj.Name == "SurvivorESPHighlight" or obj.Name == "SurvivorESPBillboard"
+                or obj.Name == "GenESPHighlight" or obj.Name == "GenESPBillboard" then
+                obj:Destroy()
+            end
+        end
+    end)
+end
+
+local function onMatchOrCharacterReset()
+    cleanAllESPs()
+    currentKillerTarget = nil
+    currentRepairPoint = nil
+    lastDetectedRole = nil
+end
+
+-- Connect local player respawn
+player.CharacterAdded:Connect(function(newChar)
+    task.wait(0.4)
+    onMatchOrCharacterReset()
+end)
+
+-- Connect other players' character respawns and team changes
+local function setupPlayerListeners(plr)
+    if not plr or plr == player then return end
+    plr.CharacterAdded:Connect(function(newChar)
+        task.wait(0.4)
+        onMatchOrCharacterReset()
+    end)
+    plr:GetPropertyChangedSignal("Team"):Connect(function()
+        task.wait(0.3)
+        onMatchOrCharacterReset()
+    end)
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do
+    setupPlayerListeners(plr)
+end
+Players.PlayerAdded:Connect(setupPlayerListeners)
 
 -- ============================================================
 -- 1. KILLER ESP
 -- ============================================================
 local killerESPEnabled = false
-local killerESPHighlight
-local killerESPBillboard
+local killerESPHighlight = nil
+local killerESPBillboard = nil
+local lastTrackedKiller = nil
 
 local function cleanKillerESP()
     if killerESPHighlight then
@@ -1884,6 +2135,7 @@ local function cleanKillerESP()
         pcall(function() killerESPBillboard:Destroy() end)
         killerESPBillboard = nil
     end
+    lastTrackedKiller = nil
 end
 
 V_ESPSection:Toggle({
@@ -1906,13 +2158,25 @@ V_ESPSection:Toggle({
                 local myChar = player.Character
                 local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
 
-                if killer and killer:FindFirstChild("HumanoidRootPart") and myHrp then
+                if killer and killer.Parent and killer:IsDescendantOf(workspace) and killer:FindFirstChild("HumanoidRootPart") and myHrp then
                     local kHrp = killer.HumanoidRootPart
                     local dist = (myHrp.Position - kHrp.Position).Magnitude
 
+                    -- Strip any accidental Survivor ESP that may have attached to killer
+                    local sHl = killer:FindFirstChild("SurvivorESPHighlight")
+                    if sHl then pcall(function() sHl:Destroy() end) end
+                    local sBb = kHrp:FindFirstChild("SurvivorESPBillboard")
+                    if sBb then pcall(function() sBb:Destroy() end) end
+
+                    -- Rebind if killer instance changed (new round or different player)
+                    if lastTrackedKiller ~= killer then
+                        cleanKillerESP()
+                        lastTrackedKiller = killer
+                    end
+
                     -- Highlight
                     if not killerESPHighlight or killerESPHighlight.Parent ~= killer then
-                        cleanKillerESP()
+                        pcall(function() if killerESPHighlight then killerESPHighlight:Destroy() end end)
                         killerESPHighlight = Instance.new("Highlight")
                         killerESPHighlight.Name = "KillerESPHighlight"
                         killerESPHighlight.FillColor = Color3.fromRGB(255, 30, 30)
@@ -1924,6 +2188,7 @@ V_ESPSection:Toggle({
 
                     -- Billboard
                     if not killerESPBillboard or killerESPBillboard.Parent ~= kHrp then
+                        pcall(function() if killerESPBillboard then killerESPBillboard:Destroy() end end)
                         killerESPBillboard = Instance.new("BillboardGui")
                         killerESPBillboard.Name = "KillerESPBillboard"
                         killerESPBillboard.Adornee = kHrp
@@ -1980,7 +2245,8 @@ local function cleanGenESP()
 end
 
 local function isGeneratorModel(model)
-    if not model:IsA("Model") then return false end
+    if not model or not model:IsA("Model") or not model:IsDescendantOf(workspace) then return false end
+    if model:FindFirstAncestor("Lobby") then return false end
     if model.Name:lower():find("gen") or model:FindFirstChild("GeneratorBody") or model:FindFirstChild("RepairPoint") or model:FindFirstChildWhichIsA("ProximityPrompt", true) then
         return true
     end
@@ -2106,23 +2372,26 @@ V_ESPSection:Toggle({
                 cleanSurvivorESP()
                 local myChar = player.Character
                 local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                local killerChar = getKiller()
 
                 local candidateChars = {}
                 for _, plr in ipairs(Players:GetPlayers()) do
-                    if plr ~= player and plr.Character and plr.Character ~= myChar then
-                        table.insert(candidateChars, { char = plr.Character, name = plr.DisplayName or plr.Name })
+                    if plr ~= player and plr.Character and plr.Character ~= myChar and plr.Character ~= killerChar then
+                        if isCharacterSurvivor(plr.Character, plr) and not isCharacterKiller(plr.Character, plr) then
+                            table.insert(candidateChars, { char = plr.Character, name = plr.DisplayName or plr.Name, plr = plr })
+                        end
                     end
                 end
 
                 for _, obj in ipairs(workspace:GetChildren()) do
-                    if obj:IsA("Model") and obj ~= myChar and obj:FindFirstChildOfClass("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
-                        if not obj.Name:lower():find("killer") and not obj:GetAttribute("Butcher") then
+                    if obj:IsA("Model") and obj ~= myChar and obj ~= killerChar and not Players:GetPlayerFromCharacter(obj) then
+                        if isCharacterSurvivor(obj) and not isCharacterKiller(obj) then
                             local alreadyAdded = false
                             for _, c in ipairs(candidateChars) do
                                 if c.char == obj then alreadyAdded = true break end
                             end
                             if not alreadyAdded then
-                                table.insert(candidateChars, { char = obj, name = obj.Name })
+                                table.insert(candidateChars, { char = obj, name = obj.Name, plr = nil })
                             end
                         end
                     end
@@ -2134,15 +2403,20 @@ V_ESPSection:Toggle({
                     local hum = c:FindFirstChildOfClass("Humanoid")
                     local hrp = c:FindFirstChild("HumanoidRootPart")
 
-                    if hum and hrp and hum.Health > 0 and myHrp then
+                    if hum and hrp and hum.Health > 0 and myHrp and c:IsDescendantOf(workspace) then
+                        -- Double-check: NEVER draw survivor ESP on the Killer
+                        if c == killerChar or isCharacterKiller(c, item.plr) then
+                            continue
+                        end
+
                         local dist = (myHrp.Position - hrp.Position).Magnitude
 
-                        -- Determine status & color
+                        -- Determine status & color using unified functions
                         local status = "HEALTHY"
                         local fillColor = Color3.fromRGB(50, 255, 50)
 
-                        local isHooked = c:GetAttribute("IsHooked") or c:GetAttribute("isHooked") or c:GetAttribute("HookPhase") ~= nil or c:FindFirstChild("Hooked") or (c.Parent and c.Parent.Name:lower():find("hook"))
-                        local isKnocked = c:GetAttribute("Knocked") or c:GetAttribute("isKnocked") or c:GetAttribute("Downed") or c:GetAttribute("isDowned") or (CollectionService and CollectionService:HasTag(c, "Knocked")) or c:FindFirstChild("downed") or c:FindFirstChild("Knocked") or hum.Health < 30
+                        local isHooked = isCharacterHooked(c)
+                        local isKnocked = isCharacterKnocked(c)
                         local isCarried = c:GetAttribute("IsCarried") or c:GetAttribute("isCarried") or c:GetAttribute("BeingCarried")
 
                         if isHooked then
@@ -2199,7 +2473,6 @@ V_ESPSection:Toggle({
     end
 })
 
--- ============================================================
 -- 3. PERFECT SKILLCHECK
 -- ============================================================
 local perfectSkillcheckEnabled = false
@@ -2558,75 +2831,20 @@ end
 local PathfindingService = game:GetService("PathfindingService")
 
 -- Hooked Survivor Detection & Priority Rescue Engine
-local function isCharacterHooked(char)
-    if not char or not char.Parent then return false end
-
-    -- Direct attributes
-    if char:GetAttribute("isHooked") == true or char:GetAttribute("Hooked") == true then
-        return true
-    end
-    local phase = char:GetAttribute("HookPhase")
-    if phase ~= nil and tonumber(phase) ~= nil and tonumber(phase) > 0 then
-        return true
-    end
-
-    -- Child marker objects
-    if char:FindFirstChild("Hooked") or char:FindFirstChild("HookPhase") or char:FindFirstChild("HookWeld") then
-        return true
-    end
-
-    -- Model parent or ancestry
-    local pName = char.Parent.Name:lower()
-    if pName:find("hook") or pName:find("meathook") then
-        return true
-    end
-
-    -- Joints/Welds connecting HumanoidRootPart to MeatHooks
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        for _, joint in ipairs(hrp:GetJoints()) do
-            local other = (joint.Part0 == hrp) and joint.Part1 or joint.Part0
-            if other and other.Parent then
-                local oName = other.Name:lower()
-                local opName = other.Parent.Name:lower()
-                if oName:find("hook") or opName:find("hook") then
-                    return true
-                end
-            end
-        end
-    end
-
-    return false
-end
-
-local function isCharacterKnocked(char)
-    if not char or not char.Parent then return false end
-    if char:GetAttribute("Knocked") == true or char:GetAttribute("isKnocked") == true
-        or char:GetAttribute("Downed") == true or char:GetAttribute("isDowned") == true
-        or char:GetAttribute("isBleeding") == true then
-        return true
-    end
-    if CollectionService and CollectionService:HasTag(char, "Knocked") then return true end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum and hum.Health > 0 and hum.Health < 30 then
-        return true
-    end
-    return false
-end
+-- (Note: isCharacterHooked and isCharacterKnocked are anchored in Core Entity Engine)
 
 local function isTeammateRescuable(plr)
     if not plr or plr == player then return false end
     local char = plr.Character
     if not char or not char.Parent then return false end
+    if not isCharacterSurvivor(char, plr) then return false end
+    if isCharacterKiller(char, plr) then return false end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then return false end
 
     -- Exclude players in Lobby or Spectator mode
-    if plr.Team and (plr.Team.Name == "Lobby" or plr.Team.Name == "Choosing" or plr.Team.Name:lower():find("lobby")) then
-        return false
-    end
-    if isSurvivorInLobby and isSurvivorInLobby(char) then
+    if isEntityInLobbyOrSpectating(char, plr) then
         return false
     end
 
@@ -4144,71 +4362,33 @@ local lastKillerHitTime = 0
 local currentKillerTarget = nil
 local killerAimConn = nil
 
--- Validates that target is an active upright Survivor (EXCLUDES Lobby players, knocked down, hooked & carried)
+-- Validates that target is an active upright Survivor (EXCLUDES Killer, Lobby players, knocked down, hooked & carried)
 local function isSurvivorValidTarget(c)
     if not c or not c.Parent then return false end
     if c == player.Character then return false end
+    if not isCharacterSurvivor(c) then return false end
+    if isCharacterKiller(c) or c == getKiller() then return false end
+    
     local hum = c:FindFirstChildOfClass("Humanoid")
     local hrp = c:FindFirstChild("HumanoidRootPart")
     if not hum or not hrp or hum.Health <= 0 then return false end
 
-    -- Exclude Killer models
-    if c:GetAttribute("Butcher") or c:GetAttribute("isAttacking") ~= nil or c:GetAttribute("isLunging") ~= nil or c.Name:lower():find("killer") or c.Name:lower():find("butcher") or c.Name:lower():find("slasher") or c.Name:lower():find("cure") or c.Name:lower():find("jason") then
+    -- Exclude Lobby/Spectating
+    if isEntityInLobbyOrSpectating(c) then
         return false
     end
 
-    -- 1. EXCLUDE LOBBY PLAYERS
-    local lobbyFolder = workspace:FindFirstChild("Lobby")
-    if lobbyFolder and c:IsDescendantOf(lobbyFolder) then
-        return false
-    end
-    if c.Parent and c.Parent.Name:lower():find("lobby") then
-        return false
-    end
-    if c:FindFirstAncestor("Lobby") then
-        return false
-    end
+    -- Exclude Knocked Down / Downed survivors
+    if isCharacterKnocked(c) then return false end
 
-    local plr = Players:GetPlayerFromCharacter(c)
-    if plr then
-        if plr.Team and (plr.Team.Name == "Lobby" or plr.Team.Name:lower():find("lobby") or plr.Team.Name == "Choosing" or plr.Team.Name:lower():find("intermission")) then
-            return false
-        end
-        if plr:GetAttribute("InLobby") == true or plr:GetAttribute("Lobby") == true then
-            return false
-        end
-    end
-    if c:GetAttribute("InLobby") == true or c:GetAttribute("Lobby") == true then
-        return false
-    end
+    -- Exclude Hooked survivors
+    if isCharacterHooked(c) then return false end
 
-    -- 2. Exclude Knocked Down / Downed survivors (Do NOT exclude injured survivors)
-    local isKnocked = c:GetAttribute("Knocked") == true
-        or c:GetAttribute("isKnocked") == true
-        or c:GetAttribute("Downed") == true
-        or c:GetAttribute("isDowned") == true
-        or c:FindFirstChild("downed") ~= nil
-        or c:FindFirstChild("Knocked") ~= nil
-        or (CollectionService and CollectionService:HasTag(c, "Knocked"))
-        or (c:GetAttribute("State") and tostring(c:GetAttribute("State")):lower():find("down"))
-
-    if isKnocked then return false end
-
-    -- 3. Exclude Hooked survivors
-    local isHooked = c:GetAttribute("IsHooked") == true
-        or c:GetAttribute("isHooked") == true
-        or c:GetAttribute("HookPhase") ~= nil
-        or c:FindFirstChild("Hooked") ~= nil
-        or (c.Parent and c.Parent.Name:lower():find("hook"))
-
-    if isHooked then return false end
-
-    -- 4. Exclude Carried survivors
+    -- Exclude Carried survivors
     local isCarried = c:GetAttribute("IsCarried") == true
         or c:GetAttribute("isCarried") == true
         or c:GetAttribute("BeingCarried") == true
         or c:FindFirstChild("Carried") ~= nil
-
     if isCarried then return false end
 
     return true
@@ -4218,54 +4398,27 @@ end
 local function isSurvivorDowned(c)
     if not c or not c.Parent then return false end
     if c == player.Character then return false end
+    if not isCharacterSurvivor(c) then return false end
+    if isCharacterKiller(c) or c == getKiller() then return false end
+    
     local hum = c:FindFirstChildOfClass("Humanoid")
     local hrp = c:FindFirstChild("HumanoidRootPart")
     if not hum or not hrp or hum.Health <= 0 then return false end
 
-    -- Exclude Killer models
-    if c:GetAttribute("Butcher") or c:GetAttribute("isAttacking") ~= nil or c.Name:lower():find("killer") or c.Name:lower():find("butcher") then
-        return false
-    end
+    -- Exclude Lobby/Spectating
+    if isEntityInLobbyOrSpectating(c) then return false end
 
-    -- Exclude Lobby
-    local lobbyFolder = workspace:FindFirstChild("Lobby")
-    if lobbyFolder and c:IsDescendantOf(lobbyFolder) then return false end
-    if c.Parent and c.Parent.Name:lower():find("lobby") then return false end
-    if c:FindFirstAncestor("Lobby") then return false end
-    local plr = Players:GetPlayerFromCharacter(c)
-    if plr then
-        if plr.Team and (plr.Team.Name == "Lobby" or plr.Team.Name:lower():find("lobby") or plr.Team.Name == "Choosing" or plr.Team.Name:lower():find("intermission")) then
-            return false
-        end
-        if plr:GetAttribute("InLobby") == true or plr:GetAttribute("Lobby") == true then
-            return false
-        end
-    end
-    if c:GetAttribute("InLobby") == true or c:GetAttribute("Lobby") == true then
-        return false
-    end
+    -- Exclude Hooked survivors
+    if isCharacterHooked(c) then return false end
 
-    -- Exclude already hooked survivors
-    if c:GetAttribute("IsHooked") == true or c:GetAttribute("isHooked") == true or c:GetAttribute("HookPhase") ~= nil or c:FindFirstChild("Hooked") ~= nil or (c.Parent and c.Parent.Name:lower():find("hook")) then
-        return false
-    end
+    -- Exclude Carried survivors
+    local isCarried = c:GetAttribute("IsCarried") == true
+        or c:GetAttribute("isCarried") == true
+        or c:GetAttribute("BeingCarried") == true
+        or c:FindFirstChild("Carried") ~= nil
+    if isCarried then return false end
 
-    -- Exclude already carried survivors
-    if c:GetAttribute("IsCarried") == true or c:GetAttribute("isCarried") == true or c:GetAttribute("BeingCarried") == true or c:FindFirstChild("Carried") ~= nil then
-        return false
-    end
-
-    -- Must be Downed / Knocked
-    local isDowned = c:GetAttribute("Knocked") == true
-        or c:GetAttribute("isKnocked") == true
-        or c:GetAttribute("Downed") == true
-        or c:GetAttribute("isDowned") == true
-        or c:FindFirstChild("downed") ~= nil
-        or c:FindFirstChild("Knocked") ~= nil
-        or (CollectionService and CollectionService:HasTag(c, "Knocked"))
-        or (c:GetAttribute("State") and tostring(c:GetAttribute("State")):lower():find("down"))
-
-    return isDowned
+    return isCharacterKnocked(c)
 end
 
 local function findNearestSurvivor()
