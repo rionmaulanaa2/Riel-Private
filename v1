@@ -2268,6 +2268,7 @@ local function isGeneratorCompleted(point)
 end
 
 -- Finds the next unfinished generator, actively avoiding generators near the Killer
+-- Finds the next unfinished generator, actively avoiding generators near the Killer
 local function findNextUnfinishedGenerator(killer)
     local myChar = player.Character
     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -2311,30 +2312,38 @@ local function findNextUnfinishedGenerator(killer)
     local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
     local isThreatened = kHrp and ((myHrp.Position - kHrp.Position).Magnitude < (repairSafeDistance + 5))
 
-    -- When Killer is present, evaluate safety of all generators!
+    -- High-Intelligence Killer Avoidance & Safe Generator Selection
     if kHrp then
         local safeCandidates = {}
+        -- Absolute minimum safe distance: at least 60 studs away from Killer
+        local minSafeDistance = math.max(repairSafeDistance + 25, 60)
+
         for _, pt in ipairs(candidatePoints) do
             local kDist = (kHrp.Position - pt.Position).Magnitude
             local myDist = (myHrp.Position - pt.Position).Magnitude
-            -- A generator is safe if killer is far from it
-            if kDist >= (repairSafeDistance + 15) then
+
+            -- Strictly only consider generator safe if Killer is sufficiently far away
+            if kDist >= minSafeDistance then
                 table.insert(safeCandidates, { point = pt, myDist = myDist, kDist = kDist })
             end
         end
 
         if #safeCandidates > 0 then
-            -- Sort safe candidates: if in danger, choose furthest from killer; otherwise closest safe one
+            -- Sort safe candidates: balance safety from Killer (high kDist) with proximity to player (low myDist)
             table.sort(safeCandidates, function(a, b)
                 if isThreatened then
+                    -- When in immediate danger, pick the one furthest from Killer
                     return a.kDist > b.kDist
                 else
-                    return a.myDist < b.myDist
+                    local scoreA = (a.kDist * 2.0) - a.myDist
+                    local scoreB = (b.kDist * 2.0) - b.myDist
+                    return scoreA > scoreB
                 end
             end)
             return safeCandidates[1].point, safeCandidates[1].myDist
         else
-            -- If all generators are within killer range, pick the one FURTHEST from killer
+            -- If all unfinished generators are within minimum safe range of Killer,
+            -- choose the generator that is the ABSOLUTE FURTHEST from the Killer on the map
             local furthestPt = nil
             local maxKDist = -1
             for _, pt in ipairs(candidatePoints) do
@@ -2350,7 +2359,7 @@ local function findNextUnfinishedGenerator(killer)
         end
     end
 
-    -- No killer detected or no danger: choose closest unfinished generator
+    -- No killer detected: choose closest unfinished generator
     local bestPoint = nil
     local bestDist = math.huge
     for _, pt in ipairs(candidatePoints) do
@@ -2390,10 +2399,36 @@ local function checkWallCollision(fromPos, toPos, ignoreModel)
     local hit = workspace:Raycast(rayOrigin, rayDir, raycastParams)
     if hit and hit.Instance and hit.Instance.CanCollide then
         if hit.Instance.Transparency < 0.95 and not hit.Instance:IsA("Terrain") then
-            return true, hit.Instance, hit.Position
+            return true, hit.Instance, hit.Position, hit.Normal
         end
     end
     return false
+end
+
+-- Calculates clear standing coordinates beside a generator to prevent clipping/physics pushback
+local function getSafeInteractPosition(targetPart)
+    local targetPos = targetPart.Position
+    local lookVec = targetPart.CFrame.LookVector
+    local rightVec = targetPart.CFrame.RightVector
+
+    -- 4 radial candidate positions around generator: Front, Back, Right, Left (2.8 studs clearance)
+    local offsets = {
+        lookVec * 2.8,
+        -lookVec * 2.8,
+        rightVec * 2.8,
+        -rightVec * 2.8
+    }
+
+    local parentModel = targetPart:FindFirstAncestorOfClass("Model") or targetPart.Parent
+    for _, off in ipairs(offsets) do
+        local testPos = targetPos + off + Vector3.new(0, 0.5, 0)
+        local hasWall = checkWallCollision(targetPos, testPos, parentModel)
+        if not hasWall then
+            return testPos
+        end
+    end
+
+    return targetPos + Vector3.new(0, 1.2, 0)
 end
 
 local function travelToPoint(targetPart)
@@ -2408,11 +2443,13 @@ local function travelToPoint(targetPart)
 
     isTraveling = true
 
-    -- 1. INSTANT TELEPORT WITH RELIABLE RETRY & UNANCHOR/VELOCITY RESET
+    -- 1. SMART INSTANT TELEPORT (WITH RADIAL OFFSETS & VERIFIED REAL POSITION)
     if travelMode == "Instant Teleport" then
+        local safeStandPos = getSafeInteractPosition(targetPart)
         local maxRetries = 6
+
         for attempt = 1, maxRetries do
-            if not autoRepairEnabled or not targetPart or not targetPart.Parent then break end
+            if not autoRepairEnabled or not scriptRunning or not targetPart or not targetPart.Parent then break end
 
             pcall(function()
                 if myHrp.Anchored then myHrp.Anchored = false end
@@ -2420,46 +2457,68 @@ local function travelToPoint(targetPart)
                 myHrp.AssemblyLinearVelocity = Vector3.zero
                 myHrp.AssemblyAngularVelocity = Vector3.zero
 
-                local destCFrame = CFrame.new(targetPos + Vector3.new(0, 1.2, 0), targetPos)
+                -- Use radial variation on retries if initial angle got blocked
+                local currentDest = safeStandPos
+                if attempt > 1 then
+                    local angle = (attempt - 1) * (math.pi / 2.5)
+                    local varOffset = Vector3.new(math.cos(angle) * 2.5, 0.6, math.sin(angle) * 2.5)
+                    currentDest = targetPos + varOffset
+                end
+
+                local destCFrame = CFrame.lookAt(currentDest, targetPos)
                 myHrp.CFrame = destCFrame
             end)
 
             task.wait(0.08)
 
-            if (myHrp.Position - targetPos).Magnitude <= 4.5 then
+            -- Real player position verification
+            local realDist = (myHrp.Position - targetPos).Magnitude
+            if realDist <= 5.5 then
                 isTraveling = false
                 return true
             end
         end
 
         isTraveling = false
-        return (myHrp.Position - targetPos).Magnitude <= 4.5
+        return (myHrp.Position - targetPos).Magnitude <= 5.5
 
-    -- 2. SAFE TELEPORT WITH CONTINUOUS KILLER ESCAPE & OBSTACLE AVOIDANCE
+    -- 2. SMART SAFE TELEPORT (CONTINUOUS KILLER AVOIDANCE & WALL SLIDING)
     elseif travelMode == "Safe Teleport" then
         local step = math.clamp(safeTeleportStep or 0.5, 0.1, 2.0)
-        while autoRepairEnabled and targetPart and targetPart.Parent and (myHrp.Position - targetPos).Magnitude > 4 do
-            -- Killer proximity check during travel
+
+        while autoRepairEnabled and scriptRunning and targetPart and targetPart.Parent and (myHrp.Position - targetPos).Magnitude > 4 do
+            local currentPos = myHrp.Position
+            local toTarget = (targetPos - currentPos)
+            local remainingDist = toTarget.Magnitude
+
+            -- Killer avoidance calculation during step-by-step teleport
             local killer = getKiller()
             if killer and killer:FindFirstChild("HumanoidRootPart") then
-                local kDist = (myHrp.Position - killer.HumanoidRootPart.Position).Magnitude
+                local kHrp = killer.HumanoidRootPart
+                local kDist = (currentPos - kHrp.Position).Magnitude
                 if kDist < repairSafeDistance then
                     isTraveling = false
-                    return false
+                    return false -- Triggers immediate safe reroute to far generator!
+                end
+
+                -- If direct path approaches Killer danger radius, curve path away
+                local nextStraight = currentPos + toTarget.Unit * step
+                local nextKDist = (nextStraight - kHrp.Position).Magnitude
+                if nextKDist < (repairSafeDistance + 15) then
+                    local awayDir = (currentPos - kHrp.Position).Unit
+                    local blendedDir = (toTarget.Unit + awayDir * 1.5).Unit
+                    toTarget = blendedDir * remainingDist
                 end
             end
 
-            -- Abort if generator was completed while traveling
+            -- Abort if generator completed while traveling
             if isGeneratorCompleted(targetPart) then
                 isTraveling = false
                 return false
             end
 
-            local currentPos = myHrp.Position
-            local toTarget = (targetPos - currentPos)
-            local remainingDist = toTarget.Magnitude
             if remainingDist <= step then
-                myHrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 1, 0), targetPos)
+                myHrp.CFrame = CFrame.lookAt(targetPos + Vector3.new(0, 1, 0), targetPos)
                 break
             end
 
@@ -2468,24 +2527,40 @@ local function travelToPoint(targetPart)
 
             -- Collision & Wall Check when NoClip is disabled
             if not noClipEnabled then
-                local hasWall, hitPart = checkWallCollision(currentPos, nextPos, myChar)
+                local hasWall, hitPart, hitPos, hitNormal = checkWallCollision(currentPos, nextPos, myChar)
                 if hasWall then
-                    isTraveling = false
-                    return false
+                    -- Wall sliding: project movement vector along wall plane
+                    local normal = hitNormal or (currentPos - hitPos).Unit
+                    local slideVec = (moveVec - normal * moveVec:Dot(normal))
+                    if slideVec.Magnitude > 0.05 then
+                        local altNext = currentPos + slideVec.Unit * step
+                        local altBlocked = checkWallCollision(currentPos, altNext, myChar)
+                        if not altBlocked then
+                            nextPos = altNext
+                            moveVec = slideVec.Unit * step
+                        else
+                            isTraveling = false
+                            return false
+                        end
+                    else
+                        isTraveling = false
+                        return false
+                    end
                 end
             end
 
             myHrp.CFrame = CFrame.new(nextPos, nextPos + moveVec)
             task.wait(0.01)
         end
+
         isTraveling = false
         return (myHrp.Position - targetPos).Magnitude <= 5
 
-    -- 3. RUN NORMALLY WITH PATHFINDING
+    -- 3. SMART RUN NORMALLY (PATHFINDING WITH KILLER DANGER ZONE AVOIDANCE)
     elseif travelMode == "Run Normally" then
         local PathfindingService = game:GetService("PathfindingService")
         local path = PathfindingService:CreatePath({
-            AgentRadius = 2,
+            AgentRadius = 2.5,
             AgentHeight = 5,
             AgentCanJump = true
         })
@@ -2497,12 +2572,26 @@ local function travelToPoint(targetPart)
         local waypoints = path.Status == Enum.PathStatus.Success and path:GetWaypoints() or { { Position = targetPos } }
         pcall(function() myChar:SetAttribute("Sprinting", true) end)
 
-        for _, wp in ipairs(waypoints) do
-            if not autoRepairEnabled then break end
+        -- Pre-evaluate waypoints: if path passes dangerously close to Killer, abort immediately
+        local killer = getKiller()
+        if killer and killer:FindFirstChild("HumanoidRootPart") then
+            local kHrp = killer.HumanoidRootPart
+            for _, wp in ipairs(waypoints) do
+                local wpKDist = (wp.Position - kHrp.Position).Magnitude
+                if wpKDist < (repairSafeDistance + 10) then
+                    if hum then hum:MoveTo(myHrp.Position) end
+                    isTraveling = false
+                    return false -- Reroute away from dangerous path
+                end
+            end
+        end
 
-            local killer = getKiller()
-            if killer and killer:FindFirstChild("HumanoidRootPart") then
-                local kDist = (myHrp.Position - killer.HumanoidRootPart.Position).Magnitude
+        for _, wp in ipairs(waypoints) do
+            if not autoRepairEnabled or not scriptRunning then break end
+
+            local currentKiller = getKiller()
+            if currentKiller and currentKiller:FindFirstChild("HumanoidRootPart") then
+                local kDist = (myHrp.Position - currentKiller.HumanoidRootPart.Position).Magnitude
                 if kDist < repairSafeDistance then
                     if hum then hum:MoveTo(myHrp.Position) end
                     isTraveling = false
@@ -2515,7 +2604,7 @@ local function travelToPoint(targetPart)
                 return false
             end
 
-            -- Collision check on normal run
+            -- Collision & obstacle check on normal run
             if not noClipEnabled then
                 local hasWall, hitPart = checkWallCollision(myHrp.Position, wp.Position, myChar)
                 if hasWall and hum then
@@ -2532,7 +2621,7 @@ local function travelToPoint(targetPart)
                 end)
 
                 local timeout = tick() + 2
-                while not reached and tick() < timeout and autoRepairEnabled do
+                while not reached and tick() < timeout and autoRepairEnabled and scriptRunning do
                     if (myHrp.Position - wp.Position).Magnitude < 3.5 then
                         break
                     end
@@ -2914,7 +3003,7 @@ V_CombatSection:Toggle({
 })
 
 -- ============================================================
--- AUTO DODGE KILLER (INSTANT TELEPORT BEHIND KILLER)
+-- AUTO DODGE KILLER (INSTANT TELEPORT 5 STUDS BEHIND KILLER)
 -- ============================================================
 local autoDodgeEnabled = false
 local autoDodgeDistance = 15
@@ -2923,7 +3012,7 @@ local lastDodgeTime = 0
 
 V_CombatSection:Toggle({
     Title = "Auto Dodge Killer",
-    Description = "Instantly teleports 2 studs behind Killer when detected nearby",
+    Description = "Instantly teleports 5 studs behind Killer when detected nearby",
     Default = false,
     Callback = function(v)
         autoDodgeEnabled = v
@@ -2932,11 +3021,12 @@ V_CombatSection:Toggle({
             return
         end
 
-        WindUI:Notify({ Title = "Auto Dodge", Content = "Auto Dodge active! (Behind Killer 2 studs)", Duration = 2 })
+        WindUI:Notify({ Title = "Auto Dodge", Content = "Auto Dodge active! (Behind Killer 5 studs)", Duration = 2 })
 
         task.spawn(function()
-            while autoDodgeEnabled do
+            while autoDodgeEnabled and scriptRunning do
                 pcall(function()
+                    if not scriptRunning or not autoDodgeEnabled then return end
                     local myChar = player.Character
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
                     local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
@@ -2951,16 +3041,32 @@ V_CombatSection:Toggle({
                         local dist = (myHrp.Position - kHrp.Position).Magnitude
 
                         if dist <= autoDodgeDistance and (tick() - lastDodgeTime >= autoDodgeCooldown) then
-                            -- Calculate position 2 studs directly behind killer
-                            local behindPos = kHrp.Position - (kHrp.CFrame.LookVector * 2)
-                            local distToBehind = (myHrp.Position - behindPos).Magnitude
+                            -- Target position: exactly 5 studs directly behind Killer
+                            local behindDir = -kHrp.CFrame.LookVector
+                            local targetBehind = kHrp.Position + (behindDir * 5)
+
+                            -- Wall & Obstacle detection behind killer to prevent clipping into walls
+                            if not noClipEnabled then
+                                local rayParams = RaycastParams.new()
+                                rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                                rayParams.FilterDescendantsInstances = { killer, myChar }
+                                local hit = workspace:Raycast(kHrp.Position, behindDir * 5.2, rayParams)
+                                if hit and hit.Instance and hit.Instance.CanCollide then
+                                    targetBehind = hit.Position + (hit.Normal * 1.5)
+                                end
+                            end
+
+                            local distToBehind = (myHrp.Position - targetBehind).Magnitude
                             local isFacingMe = kHrp.CFrame.LookVector:Dot((myHrp.Position - kHrp.Position).Unit) > -0.2
 
-                            if distToBehind > 1.2 or isFacingMe then
+                            if distToBehind > 1.5 or isFacingMe then
                                 lastDodgeTime = tick()
-                                -- Instantly teleport 2 studs behind killer facing killer's back
-                                myHrp.CFrame = CFrame.lookAt(behindPos, kHrp.Position)
-                                                            end
+                                -- Reset linear and angular velocities to stop forward momentum
+                                myHrp.AssemblyLinearVelocity = Vector3.zero
+                                myHrp.AssemblyAngularVelocity = Vector3.zero
+                                -- Instantly teleport 5 studs behind killer facing killer's back
+                                myHrp.CFrame = CFrame.lookAt(targetBehind, kHrp.Position)
+                            end
                         end
                     end
                 end)
