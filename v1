@@ -1783,7 +1783,7 @@ end)
 local HttpService = game:GetService("HttpService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
--- Remote access helper
+-- Remote access helper (Expanded with Collision & Mechanics from the dump.lua)
 local function getVDRemotes()
     local remotes = ReplicatedStorage:FindFirstChild("Remotes")
     if not remotes then return {} end
@@ -1795,8 +1795,83 @@ local function getVDRemotes()
         Carry = remotes:FindFirstChild("Carry"),
         Attacks = remotes:FindFirstChild("Attacks"),
         Killers = remotes:FindFirstChild("Killers"),
-        Exit = remotes:FindFirstChild("Exit")
+        Exit = remotes:FindFirstChild("Exit"),
+        Collision = remotes:FindFirstChild("Collision"),
+        Mechanics = remotes:FindFirstChild("Mechanics"),
+        Chase = remotes:FindFirstChild("Chase")
     }
+end
+
+-- Resilient helper to locate DisableCollision remote
+local function getDisableCollisionRemote()
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    if remotes then
+        local col = remotes:FindFirstChild("Collision")
+        if col and col:FindFirstChild("DisableCollision") then
+            return col.DisableCollision
+        end
+    end
+    for _, desc in ipairs(ReplicatedStorage:GetDescendants()) do
+        if desc.Name == "DisableCollision" and (desc:IsA("RemoteEvent") or desc:IsA("UnreliableRemoteEvent")) then
+            return desc
+        end
+    end
+    return nil
+end
+
+-- Resilient helper to locate EnableCollision remote
+local function getEnableCollisionRemote()
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    if remotes then
+        local col = remotes:FindFirstChild("Collision")
+        if col and col:FindFirstChild("EnableCollision") then
+            return col.EnableCollision
+        end
+    end
+    for _, desc in ipairs(ReplicatedStorage:GetDescendants()) do
+        if desc.Name == "EnableCollision" and (desc:IsA("RemoteEvent") or desc:IsA("UnreliableRemoteEvent")) then
+            return desc
+        end
+    end
+    return nil
+end
+
+-- Resilient helper to locate Mechanics.ChangeAttribute remote
+local function getChangeAttributeRemote()
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    if remotes then
+        local mech = remotes:FindFirstChild("Mechanics")
+        if mech and mech:FindFirstChild("ChangeAttribute") then
+            return mech.ChangeAttribute
+        end
+    end
+    for _, desc in ipairs(ReplicatedStorage:GetDescendants()) do
+        if desc.Name == "ChangeAttribute" and (desc:IsA("RemoteEvent") or desc:IsA("UnreliableRemoteEvent")) then
+            return desc
+        end
+    end
+    return nil
+end
+
+local function fireDisableCollision()
+    local r = getDisableCollisionRemote()
+    if r then
+        pcall(function() r:FireServer() end)
+    end
+end
+
+local function fireEnableCollision()
+    local r = getEnableCollisionRemote()
+    if r then
+        pcall(function() r:FireServer() end)
+    end
+end
+
+local function fireChangeAttribute(attrName, val)
+    local r = getChangeAttributeRemote()
+    if r then
+        pcall(function() r:FireServer(attrName, val) end)
+    end
 end
 
 -- ============================================================
@@ -4629,6 +4704,15 @@ local function updateNoClip(state)
         noClipConn = nil
     end
 
+    -- Server Collision sync (p_u_310.disableCollisionEvent:FireServer())
+    if state then
+        fireDisableCollision()
+    else
+        if not serverDisableCollisionEnabled then
+            fireEnableCollision()
+        end
+    end
+
     if not state then
         if player.Character then
             for _, part in ipairs(player.Character:GetDescendants()) do
@@ -4654,14 +4738,234 @@ local function updateNoClip(state)
 end
 
 -- ============================================================
--- KILLER AUTOMATION (AUTO CATCH, AUTO AIM & AUTO HIT)
+-- SERVER REMOTES & ATTRIBUTE EXPLOITS (MECHANICS & COLLISION)
 -- ============================================================
--- ============================================================
--- KILLER AUTOMATION (AUTO CATCH, AUTO AIM & AUTO HIT)
--- ============================================================
--- ============================================================
--- KILLER AUTOMATION (AUTO CATCH, STANDALONE AUTO AIM & AUTO HIT)
--- ============================================================
+local V_ServerRemotesSection = ViolenceTab:Section({
+    Title = "Server Remotes & Attribute Exploits"
+})
+
+local serverDisableCollisionEnabled = false
+local serverCrouchEnabled = false
+local serverSpeedboostEnabled = false
+local speedboostMultiplier = 2.0
+local serverNoStunEnabled = false
+local antiCarryEnabled = false
+local antiImmobileEnabled = false
+
+-- 1. Server Disable Collision (p_u_310.disableCollisionEvent:FireServer())
+V_ServerRemotesSection:Toggle({
+    Title = "Server Disable Collision (Ghost Mode)",
+    Description = "Fires Collision.DisableCollision to disable character collisions on the server",
+    Default = false,
+    Callback = function(v)
+        serverDisableCollisionEnabled = v
+        if v then
+            fireDisableCollision()
+            WindUI:Notify({ Title = "Server Collision", Content = "Server-side collision disabled!", Duration = 2 })
+        else
+            if not noClipEnabled then
+                fireEnableCollision()
+            end
+            WindUI:Notify({ Title = "Server Collision", Content = "Server-side collision restored.", Duration = 2 })
+        end
+    end
+})
+
+V_ServerRemotesSection:Button({
+    Title = "⚡ Fire Disable Collision (Once)",
+    Description = "Directly invokes p_u_310.disableCollisionEvent:FireServer() once",
+    Callback = function()
+        fireDisableCollision()
+        WindUI:Notify({ Title = "Remote Executed", Content = "Collision.DisableCollision:FireServer() fired!", Duration = 2 })
+    end
+})
+
+-- 2. Server Stealth Crouch (Crouchingserver)
+V_ServerRemotesSection:Toggle({
+    Title = "Server Stealth Crouch (Crouchingserver)",
+    Description = "Fires Mechanics.ChangeAttribute('Crouchingserver', boolean) for reduced hitbox & stealth",
+    Default = false,
+    Callback = function(v)
+        serverCrouchEnabled = v
+        fireChangeAttribute("Crouchingserver", v)
+        WindUI:Notify({ Title = "Server Crouch", Content = v and "Server Crouch active (Crouchingserver = true)!" or "Server Crouch disabled.", Duration = 2 })
+    end
+})
+
+-- 3. Server Speedboost (speedboost)
+V_ServerRemotesSection:Toggle({
+    Title = "Server Speedboost (speedboost)",
+    Description = "Fires Mechanics.ChangeAttribute('speedboost', value) to multiply movement speed",
+    Default = false,
+    Callback = function(v)
+        serverSpeedboostEnabled = v
+        if v then
+            fireChangeAttribute("speedboost", speedboostMultiplier)
+            WindUI:Notify({ Title = "Server Speedboost", Content = string.format("Speedboost active (%.1fx multiplier)!", speedboostMultiplier), Duration = 2 })
+        else
+            fireChangeAttribute("speedboost", 1)
+            WindUI:Notify({ Title = "Server Speedboost", Content = "Speedboost reset to normal (1.0x).", Duration = 2 })
+        end
+    end
+})
+
+V_ServerRemotesSection:Slider({
+    Title = "Speedboost Multiplier",
+    Description = "Server-side speed multiplier attribute (1.0x - 5.0x)",
+    Step = 0.5,
+    Value = {
+        Min = 1.0,
+        Max = 5.0,
+        Default = 2.0,
+    },
+    Callback = function(val)
+        speedboostMultiplier = tonumber(val) or 2.0
+        if serverSpeedboostEnabled then
+            fireChangeAttribute("speedboost", speedboostMultiplier)
+        end
+    end
+})
+
+-- 4. Server No-Stun (nostun)
+V_ServerRemotesSection:Toggle({
+    Title = "Server No-Stun (nostun)",
+    Description = "Fires Mechanics.ChangeAttribute('nostun', true) to prevent all stun penalties",
+    Default = false,
+    Callback = function(v)
+        serverNoStunEnabled = v
+        if v then
+            fireChangeAttribute("nostun", true)
+            fireChangeAttribute("isStunned", false)
+            fireChangeAttribute("IsStunned", false)
+            fireChangeAttribute("Stunned", false)
+            WindUI:Notify({ Title = "Server No-Stun", Content = "No-Stun active (nostun = true)!", Duration = 2 })
+        else
+            fireChangeAttribute("nostun", false)
+            WindUI:Notify({ Title = "Server No-Stun", Content = "Server No-Stun disabled.", Duration = 2 })
+        end
+    end
+})
+
+-- 5. Anti-Carry / Instant Force Drop (IsCarried)
+V_ServerRemotesSection:Toggle({
+    Title = "Anti-Carry / Force Drop (IsCarried)",
+    Description = "Fires Mechanics.ChangeAttribute('IsCarried', false) to break free from Killer carry instantly",
+    Default = false,
+    Callback = function(v)
+        antiCarryEnabled = v
+        if v then
+            fireChangeAttribute("IsCarried", false)
+            fireChangeAttribute("isCarried", false)
+            fireChangeAttribute("BeingCarried", false)
+            WindUI:Notify({ Title = "Anti-Carry Active", Content = "Will force drop immediately if picked up by Killer!", Duration = 2.5 })
+        else
+            WindUI:Notify({ Title = "Anti-Carry Disabled", Content = "Anti-Carry disabled.", Duration = 2 })
+        end
+    end
+})
+
+V_ServerRemotesSection:Button({
+    Title = "⚡ Force Drop / Break Carry Now",
+    Description = "Immediately fires ChangeAttribute('IsCarried', false) to escape current carry",
+    Callback = function()
+        fireChangeAttribute("IsCarried", false)
+        fireChangeAttribute("isCarried", false)
+        fireChangeAttribute("BeingCarried", false)
+        WindUI:Notify({ Title = "Carry Escape Fired", Content = "Fired ChangeAttribute('IsCarried', false)!", Duration = 2 })
+    end
+})
+
+-- 6. Anti-Immobile / Anti-Root (Immobile)
+V_ServerRemotesSection:Toggle({
+    Title = "Anti-Immobile / Anti-Root (Immobile)",
+    Description = "Fires Mechanics.ChangeAttribute('Immobile', false) to unlock movement from bear traps & hits",
+    Default = false,
+    Callback = function(v)
+        antiImmobileEnabled = v
+        if v then
+            fireChangeAttribute("Immobile", false)
+            fireChangeAttribute("Rooted", false)
+            fireChangeAttribute("Trapped", false)
+            WindUI:Notify({ Title = "Anti-Immobile Active", Content = "Movement freeze locks automatically bypassed!", Duration = 2.5 })
+        else
+            WindUI:Notify({ Title = "Anti-Immobile Disabled", Content = "Anti-Immobile disabled.", Duration = 2 })
+        end
+    end
+})
+
+V_ServerRemotesSection:Button({
+    Title = "⚡ Clear Immobile / Unfreeze Now",
+    Description = "Immediately fires ChangeAttribute('Immobile', false) to restore movement",
+    Callback = function()
+        fireChangeAttribute("Immobile", false)
+        fireChangeAttribute("Rooted", false)
+        fireChangeAttribute("Trapped", false)
+        WindUI:Notify({ Title = "Movement Unlocked", Content = "Fired ChangeAttribute('Immobile', false)!", Duration = 2 })
+    end
+})
+
+-- Continuous Server Attribute & Collision Maintenance Loop
+task.spawn(function()
+    while scriptRunning do
+        pcall(function()
+            local myChar = player.Character
+            if not myChar then return end
+
+            -- 1. Server collision maintenance
+            if serverDisableCollisionEnabled or noClipEnabled then
+                fireDisableCollision()
+            end
+
+            -- 2. Server Crouch maintenance
+            if serverCrouchEnabled then
+                if myChar:GetAttribute("Crouchingserver") ~= true then
+                    fireChangeAttribute("Crouchingserver", true)
+                end
+            end
+
+            -- 3. Speedboost maintenance
+            if serverSpeedboostEnabled then
+                local currentBoost = myChar:GetAttribute("speedboost")
+                if currentBoost ~= speedboostMultiplier then
+                    fireChangeAttribute("speedboost", speedboostMultiplier)
+                end
+            end
+
+            -- 4. No-Stun maintenance
+            if serverNoStunEnabled then
+                if myChar:GetAttribute("nostun") ~= true then
+                    fireChangeAttribute("nostun", true)
+                end
+                if myChar:GetAttribute("isStunned") == true or myChar:GetAttribute("IsStunned") == true or myChar:GetAttribute("Stunned") == true then
+                    fireChangeAttribute("isStunned", false)
+                    fireChangeAttribute("IsStunned", false)
+                    fireChangeAttribute("Stunned", false)
+                    fireChangeAttribute("nostun", true)
+                end
+            end
+
+            -- 5. Anti-Carry maintenance
+            if antiCarryEnabled then
+                if myChar:GetAttribute("IsCarried") == true or myChar:GetAttribute("isCarried") == true or myChar:GetAttribute("BeingCarried") == true then
+                    fireChangeAttribute("IsCarried", false)
+                    fireChangeAttribute("isCarried", false)
+                    fireChangeAttribute("BeingCarried", false)
+                end
+            end
+
+            -- 6. Anti-Immobile / Anti-Root maintenance
+            if antiImmobileEnabled then
+                if myChar:GetAttribute("Immobile") == true or myChar:GetAttribute("Rooted") == true or myChar:GetAttribute("Trapped") == true then
+                    fireChangeAttribute("Immobile", false)
+                    fireChangeAttribute("Rooted", false)
+                    fireChangeAttribute("Trapped", false)
+                end
+            end
+        end)
+        task.wait(0.25)
+    end
+end)
+
 -- ============================================================
 -- KILLER AUTOMATION (AUTO CATCH, STANDALONE AIM/HIT & AUTO HOOK)
 -- ============================================================
