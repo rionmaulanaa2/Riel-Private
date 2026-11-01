@@ -1,5 +1,22 @@
-local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
-repeat task.wait() until WindUI and WindUI.CreateWindow
+local WindUI = nil
+pcall(function()
+    WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+end)
+if not WindUI or not WindUI.CreateWindow then
+    pcall(function()
+        WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+    end)
+end
+
+local windUiWait = tick()
+while (not WindUI or not WindUI.CreateWindow) and (tick() - windUiWait) < 10 do
+    task.wait(0.1)
+end
+
+if not WindUI or not WindUI.CreateWindow then
+    warn("[Riel Private] WindUI library could not be loaded. Please check your internet connection or executor HTTP permissions.")
+    return
+end
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
@@ -8,8 +25,14 @@ local RunService = game:GetService("RunService")
 local weathers = {"Cloudy", "Snow", "Storm", "Radiant", "SharkHunt", "Wind"}
 
 local player = Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoid = character:WaitForChild("Humanoid")
+local character = player.Character
+local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+-- Non-blocking character watcher to prevent startup hang
+player.CharacterAdded:Connect(function(newChar)
+    character = newChar
+    humanoid = newChar:WaitForChild("Humanoid", 5)
+end)
 
 
 local autoFarmSpeedThread
@@ -168,7 +191,7 @@ local function createFloatingWidget()
         parentGui = gethui() or game:GetService("CoreGui")
     end)
     if not parentGui or not pcall(function() return parentGui.Name end) then
-        parentGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui")
+        parentGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
     end
 
     floatingGui = Instance.new("ScreenGui")
@@ -3492,7 +3515,6 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
 
         isTraveling = false
         return (myHrp.Position - targetPos).Magnitude <= (reach + 1.5)
-    end
     -- 4. SMART FLYING TRAVEL (3D AIR TRAVERSAL OVER WALLS & MAZES WHEN NO CEILING)
     elseif travelMode == "Flying" then
         local safeEndPos = getSafeInteractPosition(targetPart, targetPos)
@@ -3554,6 +3576,7 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
         stopTravelNoClip()
         isTraveling = false
         return (myHrp.Position - targetPos).Magnitude <= (reach + 1.5)
+    end
 
     stopTravelNoClip()
     isTraveling = false
