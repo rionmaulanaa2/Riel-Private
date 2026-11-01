@@ -25,15 +25,35 @@ local selectedEgg = "Red Crystal"
 
 local Window = WindUI:CreateWindow({
     Title = " Riel Private",
+    Icon = "shield",
     Size = UDim2.fromOffset(500, 450),
     Transparent = false,
     Theme = "Dark",
-    IgnoreAlerts = true
+    IgnoreAlerts = true,
+    OpenButton = {
+        Enabled = true,
+        OnlyMobile = false,
+        Title = "Riel Private",
+        Icon = "shield",
+        Position = UDim2.new(0, 20, 0.45, 0),
+        Draggable = true,
+        OnlyIcon = false
+    }
 })
 
 -- Master script running state
 local scriptRunning = true
 local charAddedConn = nil
+local floatingGui = nil
+
+-- Force floating open button to be enabled across all platforms (Mobile, PC, Emulators)
+Window.IsPC = false
+Window.IsOpenButtonEnabled = true
+if Window.OpenButtonMain then
+    pcall(function()
+        Window.OpenButtonMain:Visible(false)
+    end)
+end
 
 -- Global Clean Shutdown & Script Stopper
 local function stopScript()
@@ -109,7 +129,11 @@ local function stopScript()
     if cleanGenESP then pcall(cleanGenESP) end
     if cleanSurvivorESP then pcall(cleanSurvivorESP) end
 
-    -- 6. Destroy WindUI Window & ScreenGuis
+    -- 6. Destroy Floating Widget, WindUI Window & ScreenGuis
+    if floatingGui then
+        pcall(function() floatingGui:Destroy() end)
+        floatingGui = nil
+    end
     pcall(function()
         if Window and not Window.Destroyed then
             Window:Destroy()
@@ -132,13 +156,168 @@ local function stopScript()
     print("[Riel Private] Script stopped and UI closed successfully.")
 end
 
--- Connect Window Close & Destroy Events
+-- ============================================================
+-- FLOATING TOGGLE ICON (MINIMIZE RE-OPEN WIDGET)
+-- ============================================================
+local function createFloatingWidget()
+    if floatingGui and floatingGui.Parent then return floatingGui end
+
+    local parentGui = nil
+    pcall(function()
+        local gethui = gethui or function() return nil end
+        parentGui = gethui() or game:GetService("CoreGui")
+    end)
+    if not parentGui or not pcall(function() return parentGui.Name end) then
+        parentGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui")
+    end
+
+    floatingGui = Instance.new("ScreenGui")
+    floatingGui.Name = "RielFloatingWidget"
+    floatingGui.ResetOnSpawn = false
+    floatingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+    local pill = Instance.new("TextButton")
+    pill.Name = "FloatingPill"
+    pill.Size = UDim2.new(0, 140, 0, 36)
+    pill.Position = UDim2.new(0, 20, 0.45, 0)
+    pill.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+    pill.BorderSizePixel = 0
+    pill.Text = "🛡️ Riel Private"
+    pill.TextColor3 = Color3.fromRGB(255, 255, 255)
+    pill.TextSize = 14
+    pill.Font = Enum.Font.GothamMedium
+    pill.AutoButtonColor = false
+    pill.Parent = floatingGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = pill
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1.5
+    stroke.Color = Color3.fromRGB(80, 160, 255)
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Parent = pill
+
+    local gradient = Instance.new("UIGradient")
+    gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(64, 201, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(232, 28, 255))
+    })
+    gradient.Parent = stroke
+
+    -- Make pill draggable across touch and mouse
+    local dragging, dragInput, dragStart, startPos
+    pill.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = pill.Position
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    pill.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            pill.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    -- Tap/click to restore window
+    pill.MouseButton1Click:Connect(function()
+        if Window and not Window.Destroyed then
+            pcall(function()
+                Window:Open()
+            end)
+            pill.Visible = false
+        end
+    end)
+
+    pill.Visible = false
+    floatingGui.Parent = parentGui
+    return floatingGui
+end
+
+local function ensureFloatingButtonVisible(show)
+    if not scriptRunning then
+        if floatingGui then pcall(function() floatingGui:Destroy() end) floatingGui = nil end
+        return
+    end
+
+    if show then
+        -- Check if WindUI native OpenButtonMain is visible on screen
+        local isNativeShowing = false
+        pcall(function()
+            if Window.OpenButtonMain and Window.OpenButtonMain.Button and Window.OpenButtonMain.Button.Visible then
+                if Window.OpenButtonMain.Button.Parent and Window.OpenButtonMain.Button.Parent.Visible then
+                    isNativeShowing = true
+                end
+            end
+        end)
+
+        if not isNativeShowing then
+            local fg = createFloatingWidget()
+            if fg and fg:FindFirstChild("FloatingPill") then
+                fg.FloatingPill.Visible = true
+            end
+        end
+    else
+        if floatingGui and floatingGui:FindFirstChild("FloatingPill") then
+            floatingGui.FloatingPill.Visible = false
+        end
+    end
+end
+
+-- Connect Window Close, Minimize & Destroy Events
 Window:OnDestroy(function()
+    -- "X" Close button clicked: completely stop script and close UI
     stopScript()
 end)
 
 Window:OnClose(function()
-    stopScript()
+    -- "-" Minimize button clicked: DO NOT stop script! Show floating open button
+    task.spawn(function()
+        task.wait(0.4)
+        if Window and not Window.Destroyed and Window.Closed then
+            if Window.OpenButtonMain then
+                pcall(function()
+                    Window.OpenButtonMain:Visible(true)
+                end)
+            end
+            pcall(function()
+                ensureFloatingButtonVisible(true)
+            end)
+        end
+    end)
+end)
+
+Window:OnOpen(function()
+    -- Window reopened: hide floating button
+    if Window.OpenButtonMain then
+        pcall(function()
+            Window.OpenButtonMain:Visible(false)
+        end)
+    end
+    pcall(function()
+        ensureFloatingButtonVisible(false)
+    end)
 end)
 
 -- Topbar direct button hook
