@@ -1377,6 +1377,67 @@ local V_RescueSection = ViolenceTab:Section({
     Title = "Rescue & Team"
 })
 
+local V_RoleSection = ViolenceTab:Section({
+    Title = "Role Detection & Mode Switcher"
+})
+
+local autoRoleAdaptEnabled = true
+local lastDetectedRole = nil
+
+V_RoleSection:Toggle({
+    Title = "Auto Role Adapt",
+    Description = "Automatically detects Killer/Survivor role and auto-disables opposing features",
+    Default = true,
+    Callback = function(v)
+        autoRoleAdaptEnabled = v
+        WindUI:Notify({ Title = "Role Adapt", Content = v and "Auto Role Adapt active!" or "Auto Role Adapt disabled.", Duration = 2 })
+    end
+})
+
+-- Background Auto-Role Monitor Thread (runs every 1 second)
+task.spawn(function()
+    while true do
+        pcall(function()
+            if autoRoleAdaptEnabled then
+                local isKiller = isPlayerKiller and isPlayerKiller()
+                local currentRole = isKiller and "Killer" or "Survivor"
+
+                if currentRole ~= lastDetectedRole then
+                    lastDetectedRole = currentRole
+                    if currentRole == "Killer" then
+                        -- Disable all survivor-only automation features
+                        if autoRepairEnabled then
+                            autoRepairEnabled = false
+                            if currentRepairPoint then
+                                local remotes = getVDRemotes()
+                                if remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
+                                    pcall(function()
+                                        remotes.Generator.RepairEvent:FireServer(currentRepairPoint, false, nil, HttpService:GenerateGUID(false), player.Character)
+                                    end)
+                                end
+                                currentRepairPoint = nil
+                            end
+                        end
+                        autoDodgeEnabled = false
+                        autoPalletEnabled = false
+                        autoParryEnabled = false
+                        autoSaveEnabled = false
+                        WindUI:Notify({ Title = "👹 Role: KILLER", Content = "Detected Killer role. Survivor automation auto-disabled.", Duration = 2.5 })
+
+                    elseif currentRole == "Survivor" then
+                        -- Disable all killer-only automation features
+                        autoCatchEnabled = false
+                        currentKillerTarget = nil
+                        WindUI:Notify({ Title = "🏃 Role: SURVIVOR", Content = "Detected Survivor role. Killer automation auto-disabled.", Duration = 2.5 })
+                    end
+                end
+            end
+        end)
+        task.wait(1)
+    end
+end)
+
+
 local HttpService = game:GetService("HttpService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
@@ -2874,36 +2935,23 @@ end
 -- ============================================================
 -- KILLER AUTOMATION (AUTO CATCH, AUTO AIM & AUTO HIT)
 -- ============================================================
+-- ============================================================
+-- KILLER AUTOMATION (AUTO CATCH, STANDALONE AUTO AIM & AUTO HIT)
+-- ============================================================
 local V_KillerSection = ViolenceTab:Section({
     Title = "Killer Automation (Catch & Hit)"
 })
 
 local autoCatchEnabled = false
-local autoAimSurvivorEnabled = true
-local autoHitSurvivorEnabled = true
+local autoAimSurvivorEnabled = false
+local autoHitSurvivorEnabled = false
 local killerTravelMode = "Safe Teleport"
 local hitReachDistance = 10
 local lastKillerHitTime = 0
 local currentKillerTarget = nil
 local killerAimConn = nil
 
-local function isPlayerKiller()
-    local myChar = player.Character
-    if not myChar then return false end
-    if myChar:GetAttribute("Butcher") or myChar:GetAttribute("isAttacking") ~= nil or myChar:GetAttribute("isLunging") ~= nil then
-        return true
-    end
-    if myChar.Name:lower():find("killer") or myChar.Name:lower():find("butcher") or myChar.Name:lower():find("slasher") or myChar.Name:lower():find("cure") or myChar.Name:lower():find("jason") then
-        return true
-    end
-    local k = getKiller()
-    if k and k == myChar then
-        return true
-    end
-    return false
-end
-
--- Validates that target is an active Survivor (EXCLUDES knocked down, hooked & carried)
+-- Validates that target is an active Survivor (EXCLUDES Lobby players, knocked down, hooked & carried)
 local function isSurvivorValidTarget(c)
     if not c or not c.Parent then return false end
     if c == player.Character then return false end
@@ -2916,7 +2964,34 @@ local function isSurvivorValidTarget(c)
         return false
     end
 
-    -- 1. Exclude Knocked Down / Downed survivors
+    -- 1. EXCLUDE LOBBY PLAYERS
+    -- Check if character model is inside workspace.Lobby folder or ancestor
+    local lobbyFolder = workspace:FindFirstChild("Lobby")
+    if lobbyFolder and c:IsDescendantOf(lobbyFolder) then
+        return false
+    end
+    if c.Parent and c.Parent.Name:lower():find("lobby") then
+        return false
+    end
+    if c:FindFirstAncestor("Lobby") then
+        return false
+    end
+
+    -- Check player team & attributes
+    local plr = Players:GetPlayerFromCharacter(c)
+    if plr then
+        if plr.Team and (plr.Team.Name == "Lobby" or plr.Team.Name:lower():find("lobby") or plr.Team.Name == "Choosing" or plr.Team.Name:lower():find("intermission")) then
+            return false
+        end
+        if plr:GetAttribute("InLobby") == true or plr:GetAttribute("Lobby") == true then
+            return false
+        end
+    end
+    if c:GetAttribute("InLobby") == true or c:GetAttribute("Lobby") == true then
+        return false
+    end
+
+    -- 2. Exclude Knocked Down / Downed survivors
     local isKnocked = c:GetAttribute("Knocked") == true
         or c:GetAttribute("isKnocked") == true
         or c:GetAttribute("Downed") == true
@@ -2929,7 +3004,7 @@ local function isSurvivorValidTarget(c)
 
     if isKnocked then return false end
 
-    -- 2. Exclude Hooked survivors
+    -- 3. Exclude Hooked survivors
     local isHooked = c:GetAttribute("IsHooked") == true
         or c:GetAttribute("isHooked") == true
         or c:GetAttribute("HookPhase") ~= nil
@@ -2938,7 +3013,7 @@ local function isSurvivorValidTarget(c)
 
     if isHooked then return false end
 
-    -- 3. Exclude Carried survivors
+    -- 4. Exclude Carried survivors
     local isCarried = c:GetAttribute("IsCarried") == true
         or c:GetAttribute("isCarried") == true
         or c:GetAttribute("BeingCarried") == true
@@ -2988,38 +3063,6 @@ local function findNearestSurvivor()
     end
 
     return bestTarget, bestDist
-end
-
--- Continuous frame-locked Auto Aim for Killer
-local function updateKillerAim(state)
-    if killerAimConn then
-        pcall(function() killerAimConn:Disconnect() end)
-        killerAimConn = nil
-    end
-
-    if not state then return end
-
-    killerAimConn = RunService.RenderStepped:Connect(function()
-        if not autoAimSurvivorEnabled or not autoCatchEnabled then return end
-        pcall(function()
-            local myChar = player.Character
-            local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-            if not myHrp or not currentKillerTarget or not currentKillerTarget.Parent then return end
-
-            local sHrp = currentKillerTarget:FindFirstChild("HumanoidRootPart")
-            if not sHrp then return end
-
-            local cam = workspace.CurrentCamera
-            local aimPos = sHrp.Position + Vector3.new(0, 1.2, 0)
-
-            -- Lock Camera smoothly directly at Survivor
-            cam.CFrame = CFrame.lookAt(cam.CFrame.Position, aimPos)
-
-            -- Lock Killer body towards Survivor for server hit validation
-            local lookTarget = Vector3.new(sHrp.Position.X, myHrp.Position.Y, sHrp.Position.Z)
-            myHrp.CFrame = CFrame.lookAt(myHrp.Position, lookTarget)
-        end)
-    end)
 end
 
 -- Comprehensive Auto Hit execution across Android executors and PC
@@ -3079,6 +3122,82 @@ local function executeKillerHit(targetChar)
     end)
 end
 
+-- Continuous frame-locked Auto Aim for Killer (Works whether Auto Catch is ON or OFF)
+local function updateKillerAim()
+    if killerAimConn then
+        pcall(function() killerAimConn:Disconnect() end)
+        killerAimConn = nil
+    end
+
+    if not autoAimSurvivorEnabled then return end
+
+    killerAimConn = RunService.RenderStepped:Connect(function()
+        if not autoAimSurvivorEnabled then return end
+        if not isPlayerKiller() then return end
+
+        pcall(function()
+            local myChar = player.Character
+            local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            if not myHrp then return end
+
+            local target = currentKillerTarget
+            if not target or not target.Parent or not isSurvivorValidTarget(target) then
+                local nearest, nDist = findNearestSurvivor()
+                if nearest and nDist <= (hitReachDistance + 6) then
+                    target = nearest
+                    currentKillerTarget = nearest
+                else
+                    return
+                end
+            end
+
+            local sHrp = target:FindFirstChild("HumanoidRootPart")
+            if not sHrp then return end
+
+            local cam = workspace.CurrentCamera
+            local aimPos = sHrp.Position + Vector3.new(0, 1.2, 0)
+
+            -- Lock Camera smoothly directly at Survivor
+            cam.CFrame = CFrame.lookAt(cam.CFrame.Position, aimPos)
+
+            -- Lock Killer body towards Survivor for server hit validation
+            local lookTarget = Vector3.new(sHrp.Position.X, myHrp.Position.Y, sHrp.Position.Z)
+            myHrp.CFrame = CFrame.lookAt(myHrp.Position, lookTarget)
+        end)
+    end)
+end
+
+-- Standalone Killer Combat Loop (Runs when Auto Aim or Auto Hit is ON, even if Auto Catch is OFF!)
+task.spawn(function()
+    while true do
+        pcall(function()
+            if (autoAimSurvivorEnabled or autoHitSurvivorEnabled) and isPlayerKiller() then
+                local myChar = player.Character
+                local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                if myHrp then
+                    local targetSurvivor, dist = findNearestSurvivor()
+                    if targetSurvivor and dist <= (hitReachDistance + 4) then
+                        currentKillerTarget = targetSurvivor
+
+                        -- Auto Hit trigger when in reach
+                        if autoHitSurvivorEnabled and dist <= hitReachDistance then
+                            if tick() - lastKillerHitTime > 0.75 then
+                                lastKillerHitTime = tick()
+                                executeKillerHit(targetSurvivor)
+                            end
+                        end
+                    else
+                        if not autoCatchEnabled then
+                            currentKillerTarget = nil
+                        end
+                    end
+                end
+            end
+        end)
+        task.wait(0.04)
+    end
+end)
+
 local function travelToSurvivor(targetChar)
     local myChar = player.Character
     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -3116,7 +3235,7 @@ local function travelToSurvivor(targetChar)
             if not noClipEnabled then
                 local hasWall, hitPart = checkWallCollision(currentPos, nextPos, myChar)
                 if hasWall then
-                                        return false
+                    return false
                 end
             end
 
@@ -3201,20 +3320,22 @@ V_KillerSection:Slider({
 
 V_KillerSection:Toggle({
     Title = "Auto Aim to Survivor",
-    Description = "Locks camera directly at target Survivor when in reach",
-    Default = true,
+    Description = "Locks camera directly at target Survivor when in reach (Active even without Auto Catch)",
+    Default = false,
     Callback = function(v)
         autoAimSurvivorEnabled = v
-        updateKillerAim(v and autoCatchEnabled)
+        updateKillerAim()
+        WindUI:Notify({ Title = "Auto Aim", Content = v and "Killer Auto Aim active!" or "Killer Auto Aim disabled.", Duration = 2 })
     end
 })
 
 V_KillerSection:Toggle({
     Title = "Auto Hit Survivor",
-    Description = "Automatically executes basic attack when in reach",
-    Default = true,
+    Description = "Automatically executes attack when survivor is in reach (Active even without Auto Catch)",
+    Default = false,
     Callback = function(v)
         autoHitSurvivorEnabled = v
+        WindUI:Notify({ Title = "Auto Hit", Content = v and "Killer Auto Hit active!" or "Killer Auto Hit disabled.", Duration = 2 })
     end
 })
 
@@ -3224,7 +3345,6 @@ V_KillerSection:Toggle({
     Default = false,
     Callback = function(v)
         autoCatchEnabled = v
-        updateKillerAim(v and autoAimSurvivorEnabled)
 
         if not v then
             currentKillerTarget = nil
@@ -3245,7 +3365,7 @@ V_KillerSection:Toggle({
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
                     if not myHrp then task.wait(1) return end
 
-                    -- Excludes knocked down, hooked, and carried survivors
+                    -- Excludes lobby players, knocked down, hooked, and carried survivors
                     local survivor, dist = findNearestSurvivor()
                     if not survivor or not survivor:FindFirstChild("HumanoidRootPart") then
                         currentKillerTarget = nil
@@ -3266,7 +3386,7 @@ V_KillerSection:Toggle({
                         if autoHitSurvivorEnabled and (tick() - lastKillerHitTime > 0.75) then
                             lastKillerHitTime = tick()
                             executeKillerHit(survivor)
-                                                    end
+                        end
                     end
                 end)
                 task.wait(0.1)
