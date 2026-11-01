@@ -1857,8 +1857,7 @@ V_ObjectiveSection:Toggle({
                                 VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
                                 task.wait(0.05)
                                 VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-                                WindUI:Notify({ Title = "Skillcheck", Content = "🌟 Perfect Skillcheck Hit!", Duration = 1.5 })
-                                task.wait(0.5)
+                                                                task.wait(0.5)
                             end
                         end
                     end
@@ -1973,7 +1972,102 @@ local function isGeneratorCompleted(point)
     return false, 0
 end
 
-local function findNextUnfinishedGenerator()
+-- ============================================================
+-- 4. AUTO REPAIR GENERATOR (AUTO SEARCH, SAFE FAR TRAVEL & RETRY LOGIC)
+-- ============================================================
+local autoRepairEnabled = false
+local currentRepairPoint = nil
+local repairSafeDistance = 25
+local travelMode = "Safe Teleport"
+local safeTeleportStep = 0.5
+local isTraveling = false
+local completedGenerators = {}
+
+-- Resolves the true Generator Model from any point or child part
+local function getGeneratorModel(part)
+    if not part then return nil end
+    local curr = part.Parent
+    while curr and curr ~= workspace do
+        if curr:IsA("Model") and (curr.Name:lower():find("gen") or curr:FindFirstChild("GeneratorBody") or curr:GetAttribute("RepairProgress") ~= nil or curr:GetAttribute("Progress") ~= nil) then
+            return curr
+        end
+        curr = curr.Parent
+    end
+    return part:FindFirstAncestorOfClass("Model") or part.Parent
+end
+
+-- Comprehensive generator completion validator for Violence District
+local function isGeneratorCompleted(point)
+    if not point or not point.Parent then return true end
+    local CollectionService = game:GetService("CollectionService")
+    local genModel = getGeneratorModel(point) or point.Parent
+
+    -- Check session completed blacklist
+    if completedGenerators[point] or (genModel and completedGenerators[genModel]) then
+        return true, 100
+    end
+
+    -- 1. Check CollectionService Tags (Official Violence District: "Blocked" tag marks finished generator)
+    if CollectionService:HasTag(point, "Blocked") or CollectionService:HasTag(point, "Repaired") or CollectionService:HasTag(point, "Completed") then
+        return true, 100
+    end
+    if genModel and (CollectionService:HasTag(genModel, "Blocked") or CollectionService:HasTag(genModel, "Repaired") or CollectionService:HasTag(genModel, "Completed")) then
+        return true, 100
+    end
+    if point.Parent and CollectionService:HasTag(point.Parent, "Blocked") then
+        return true, 100
+    end
+
+    -- 2. Check Violence District "RepairProgress" attribute (0 to 100)
+    local rawProgress = (genModel and genModel:GetAttribute("RepairProgress"))
+        or (point.Parent and point.Parent:GetAttribute("RepairProgress"))
+        or point:GetAttribute("RepairProgress")
+        or (genModel and genModel:GetAttribute("Progress"))
+        or (point.Parent and point.Parent:GetAttribute("Progress"))
+        or point:GetAttribute("Progress")
+
+    if rawProgress and tonumber(rawProgress) then
+        local pVal = tonumber(rawProgress)
+        if pVal >= 99.5 or (pVal >= 1 and pVal <= 1.01 and pVal > 0) then
+            return true, 100
+        else
+            return false, pVal
+        end
+    end
+
+    -- 3. Check Boolean completion attributes
+    local boolAttrs = {"Completed", "completed", "Repaired", "repaired", "Fixed", "fixed", "Blocked", "Done", "done"}
+    for _, attr in ipairs(boolAttrs) do
+        if (genModel and genModel:GetAttribute(attr) == true)
+            or (point.Parent and point.Parent:GetAttribute(attr) == true)
+            or (point:GetAttribute(attr) == true) then
+            return true, 100
+        end
+    end
+
+    -- 4. Check NumberValue or BoolValue children
+    for _, obj in ipairs({genModel, point.Parent, point}) do
+        if obj then
+            local rpVal = obj:FindFirstChild("RepairProgress") or obj:FindFirstChild("Progress")
+            if rpVal and (rpVal:IsA("NumberValue") or rpVal:IsA("IntValue")) then
+                if rpVal.Value >= 99.5 then
+                    return true, 100
+                else
+                    return false, rpVal.Value
+                end
+            end
+            local compVal = obj:FindFirstChild("Completed") or obj:FindFirstChild("Repaired") or obj:FindFirstChild("Fixed")
+            if compVal and compVal:IsA("BoolValue") and compVal.Value == true then
+                return true, 100
+            end
+        end
+    end
+
+    return false, 0
+end
+
+-- Finds the next unfinished generator, actively avoiding generators near the Killer
+local function findNextUnfinishedGenerator(killer)
     local myChar = player.Character
     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
     if not myHrp then return nil end
@@ -1982,39 +2076,80 @@ local function findNextUnfinishedGenerator()
     local candidatePoints = {}
     local processedGenerators = {}
 
+    local function addPoint(pt)
+        if pt:IsA("BasePart") and not pt:IsDescendantOf(myChar) then
+            local genModel = getGeneratorModel(pt) or pt.Parent
+            if not processedGenerators[genModel] then
+                local isCompleted = isGeneratorCompleted(pt)
+                if not isCompleted then
+                    table.insert(candidatePoints, pt)
+                    processedGenerators[genModel] = true
+                end
+            end
+        end
+    end
+
     -- 1. Check CollectionService "GeneratorPoint"
     pcall(function()
         for _, point in ipairs(CollectionService:GetTagged("GeneratorPoint")) do
-            if point:IsA("BasePart") and not point:IsDescendantOf(myChar) then
-                local genModel = getGeneratorModel(point) or point.Parent
-                if not processedGenerators[genModel] then
-                    local isCompleted, _ = isGeneratorCompleted(point)
-                    if not isCompleted then
-                        table.insert(candidatePoints, point)
-                        processedGenerators[genModel] = true
-                    end
-                end
-            end
+            addPoint(point)
         end
     end)
 
     -- 2. Fallback check for parts named RepairPoint / GeneratorPoint in Workspace
     if #candidatePoints == 0 then
         for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("BasePart") and (obj.Name == "RepairPoint" or obj.Name == "GeneratorPoint") and not obj:IsDescendantOf(myChar) then
-                local genModel = getGeneratorModel(obj) or obj.Parent
-                if not processedGenerators[genModel] then
-                    local isCompleted, _ = isGeneratorCompleted(obj)
-                    if not isCompleted then
-                        table.insert(candidatePoints, obj)
-                        processedGenerators[genModel] = true
-                    end
-                end
+            if obj:IsA("BasePart") and (obj.Name == "RepairPoint" or obj.Name == "GeneratorPoint") then
+                addPoint(obj)
             end
         end
     end
 
-    -- Find closest unfinished generator point
+    if #candidatePoints == 0 then return nil, math.huge end
+
+    local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
+    local isThreatened = kHrp and ((myHrp.Position - kHrp.Position).Magnitude < (repairSafeDistance + 5))
+
+    -- When Killer is present, evaluate safety of all generators!
+    if kHrp then
+        local safeCandidates = {}
+        for _, pt in ipairs(candidatePoints) do
+            local kDist = (kHrp.Position - pt.Position).Magnitude
+            local myDist = (myHrp.Position - pt.Position).Magnitude
+            -- A generator is safe if killer is far from it
+            if kDist >= (repairSafeDistance + 15) then
+                table.insert(safeCandidates, { point = pt, myDist = myDist, kDist = kDist })
+            end
+        end
+
+        if #safeCandidates > 0 then
+            -- Sort safe candidates: if in danger, choose furthest from killer; otherwise closest safe one
+            table.sort(safeCandidates, function(a, b)
+                if isThreatened then
+                    return a.kDist > b.kDist
+                else
+                    return a.myDist < b.myDist
+                end
+            end)
+            return safeCandidates[1].point, safeCandidates[1].myDist
+        else
+            -- If all generators are within killer range, pick the one FURTHEST from killer
+            local furthestPt = nil
+            local maxKDist = -1
+            for _, pt in ipairs(candidatePoints) do
+                local kDist = (kHrp.Position - pt.Position).Magnitude
+                if kDist > maxKDist then
+                    maxKDist = kDist
+                    furthestPt = pt
+                end
+            end
+            if furthestPt then
+                return furthestPt, (myHrp.Position - furthestPt.Position).Magnitude
+            end
+        end
+    end
+
+    -- No killer detected or no danger: choose closest unfinished generator
     local bestPoint = nil
     local bestDist = math.huge
     for _, pt in ipairs(candidatePoints) do
@@ -2072,29 +2207,49 @@ local function travelToPoint(targetPart)
 
     isTraveling = true
 
+    -- 1. INSTANT TELEPORT WITH RELIABLE RETRY & UNANCHOR/VELOCITY RESET
     if travelMode == "Instant Teleport" then
-        myHrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 1.5, 0), targetPos)
-        task.wait(0.1)
-        isTraveling = false
-        return true
+        local maxRetries = 6
+        for attempt = 1, maxRetries do
+            if not autoRepairEnabled or not targetPart or not targetPart.Parent then break end
 
+            pcall(function()
+                if myHrp.Anchored then myHrp.Anchored = false end
+                if hum and hum.Sit then hum.Sit = false end
+                myHrp.AssemblyLinearVelocity = Vector3.zero
+                myHrp.AssemblyAngularVelocity = Vector3.zero
+
+                local destCFrame = CFrame.new(targetPos + Vector3.new(0, 1.2, 0), targetPos)
+                myHrp.CFrame = destCFrame
+            end)
+
+            task.wait(0.08)
+
+            if (myHrp.Position - targetPos).Magnitude <= 4.5 then
+                isTraveling = false
+                return true
+            end
+        end
+
+        isTraveling = false
+        return (myHrp.Position - targetPos).Magnitude <= 4.5
+
+    -- 2. SAFE TELEPORT WITH CONTINUOUS KILLER ESCAPE & OBSTACLE AVOIDANCE
     elseif travelMode == "Safe Teleport" then
         local step = math.clamp(safeTeleportStep or 0.5, 0.1, 2.0)
         while autoRepairEnabled and targetPart and targetPart.Parent and (myHrp.Position - targetPos).Magnitude > 4 do
-            -- High-speed killer proximity check during travel
+            -- Killer proximity check during travel
             local killer = getKiller()
             if killer and killer:FindFirstChild("HumanoidRootPart") then
                 local kDist = (myHrp.Position - killer.HumanoidRootPart.Position).Magnitude
                 if kDist < repairSafeDistance then
-                    WindUI:Notify({ Title = "⚠️ Travel Aborted", Content = string.format("Killer nearby (%.0f studs)! Halting safe travel.", kDist), Duration = 2.5 })
                     isTraveling = false
                     return false
                 end
             end
 
-            -- Abort if generator was completed by teammates while traveling
+            -- Abort if generator was completed while traveling
             if isGeneratorCompleted(targetPart) then
-                WindUI:Notify({ Title = "⚡ Generator Already Done", Content = "Generator was finished! Re-routing...", Duration = 2 })
                 isTraveling = false
                 return false
             end
@@ -2114,7 +2269,6 @@ local function travelToPoint(targetPart)
             if not noClipEnabled then
                 local hasWall, hitPart = checkWallCollision(currentPos, nextPos, myChar)
                 if hasWall then
-                    WindUI:Notify({ Title = "⚠️ Wall Detected", Content = "Wall blocking path! Enable NoClip to phase through.", Duration = 2.5 })
                     isTraveling = false
                     return false
                 end
@@ -2124,8 +2278,9 @@ local function travelToPoint(targetPart)
             task.wait(0.01)
         end
         isTraveling = false
-        return true
+        return (myHrp.Position - targetPos).Magnitude <= 5
 
+    -- 3. RUN NORMALLY WITH PATHFINDING
     elseif travelMode == "Run Normally" then
         local PathfindingService = game:GetService("PathfindingService")
         local path = PathfindingService:CreatePath({
@@ -2149,7 +2304,6 @@ local function travelToPoint(targetPart)
                 local kDist = (myHrp.Position - killer.HumanoidRootPart.Position).Magnitude
                 if kDist < repairSafeDistance then
                     if hum then hum:MoveTo(myHrp.Position) end
-                    WindUI:Notify({ Title = "⚠️ Run Aborted", Content = string.format("Killer nearby (%.0f studs)! Halting run.", kDist), Duration = 2.5 })
                     isTraveling = false
                     return false
                 end
@@ -2257,7 +2411,7 @@ V_ObjectiveSection:Toggle({
         end
 
         completedGenerators = {}
-        WindUI:Notify({ Title = "Auto Repair", Content = "Auto repair & search started with Killer Safe Guard!", Duration = 2.5 })
+        WindUI:Notify({ Title = "Auto Repair", Content = "Auto repair active! (Auto-avoids Killer)", Duration = 2 })
 
         -- 1. High-frequency independent Proximity Safe Guard thread (runs every 0.12s)
         task.spawn(function()
@@ -2275,7 +2429,6 @@ V_ObjectiveSection:Toggle({
                                         remotes.Generator.RepairEvent:FireServer(currentRepairPoint, false, nil, HttpService:GenerateGUID(false), myChar)
                                     end
                                     currentRepairPoint = nil
-                                    WindUI:Notify({ Title = "⚠️ Killer Approaching!", Content = string.format("Killer within %.0f studs! Proximity safe guard aborted repair.", kDist), Duration = 2.5 })
                                 end
                             end
                         end
@@ -2293,33 +2446,49 @@ V_ObjectiveSection:Toggle({
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
                     if not myHrp then task.wait(1) return end
 
-                    -- Pre-check killer proximity
                     local killer = getKiller()
+
+                    -- If Killer is nearby, IMMEDIATELY find and travel to a far, safe generator!
                     if killer and killer:FindFirstChild("HumanoidRootPart") then
                         local killerDist = (myHrp.Position - killer.HumanoidRootPart.Position).Magnitude
                         if killerDist < repairSafeDistance then
-                            WindUI:Notify({ Title = "⚠️ Killer Nearby!", Content = string.format("Pausing repair — Killer within %.0f studs!", killerDist), Duration = 2 })
-                            task.wait(2)
+                            if currentRepairPoint and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
+                                remotes.Generator.RepairEvent:FireServer(currentRepairPoint, false, nil, HttpService:GenerateGUID(false), myChar)
+                                currentRepairPoint = nil
+                            end
+
+                            -- Find safe generator far away from the killer
+                            local safeTarget, safeDist = findNextUnfinishedGenerator(killer)
+                            if safeTarget then
+                                travelToPoint(safeTarget)
+                            end
+                            task.wait(0.5)
                             return
                         end
                     end
 
-                    -- Search for next unfinished generator
-                    local targetPoint, dist = findNextUnfinishedGenerator()
+                    -- Search for next unfinished generator (safe from killer)
+                    local targetPoint, dist = findNextUnfinishedGenerator(killer)
                     if not targetPoint then
-                        task.wait(2.5)
+                        task.wait(2)
                         return
                     end
 
                     -- Travel if not yet in repair range
-                    if dist > 4.5 then
-                        local _, pVal = isGeneratorCompleted(targetPoint)
-                        WindUI:Notify({ Title = "Auto Generator", Content = string.format("Going to Generator [%.0f%%] (%.0f studs) via %s...", pVal or 0, dist, travelMode), Duration = 2 })
+                    local curDist = (myHrp.Position - targetPoint.Position).Magnitude
+                    if curDist > 4.5 then
                         local arrived = travelToPoint(targetPoint)
-                        if not arrived then
-                            task.wait(1)
-                            return
+                        -- If failed to reach, retry travel once more
+                        if not arrived or (myHrp.Position - targetPoint.Position).Magnitude > 4.5 then
+                            task.wait(0.15)
+                            travelToPoint(targetPoint)
                         end
+                    end
+
+                    -- Verify we actually reached the generator (within 5 studs) before initiating repair
+                    if (myHrp.Position - targetPoint.Position).Magnitude > 5 then
+                        task.wait(0.4)
+                        return
                     end
 
                     -- Verify generator is still unfinished upon arrival
@@ -2328,7 +2497,7 @@ V_ObjectiveSection:Toggle({
                         completedGenerators[targetPoint] = true
                         local gm = getGeneratorModel(targetPoint)
                         if gm then completedGenerators[gm] = true end
-                        task.wait(0.5)
+                        task.wait(0.3)
                         return
                     end
 
@@ -2337,18 +2506,22 @@ V_ObjectiveSection:Toggle({
                         currentRepairPoint = targetPoint
                         local guid = HttpService:GenerateGUID(false)
                         remotes.Generator.RepairEvent:FireServer(targetPoint, true, nil, guid, myChar)
-                        WindUI:Notify({ Title = "⚡ Repairing Generator", Content = "Fixing generator...", Duration = 1.5 })
 
                         local repairTimeout = tick() + 60
                         while autoRepairEnabled and currentRepairPoint == targetPoint and tick() < repairTimeout do
-                            -- Real-time killer check
+                            -- Real-time killer check: break and flee to far generator if killer approaches
                             local k = getKiller()
                             if k and k:FindFirstChild("HumanoidRootPart") then
                                 local kDist = (myHrp.Position - k.HumanoidRootPart.Position).Magnitude
                                 if kDist < repairSafeDistance then
                                     remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, guid, myChar)
                                     currentRepairPoint = nil
-                                    task.wait(2)
+                                    -- Immediately flee to a safe far generator
+                                    local fleeTarget = findNextUnfinishedGenerator(k)
+                                    if fleeTarget then
+                                        travelToPoint(fleeTarget)
+                                    end
+                                    task.wait(0.5)
                                     break
                                 end
                             end
@@ -2361,8 +2534,8 @@ V_ObjectiveSection:Toggle({
                                 local gm = getGeneratorModel(targetPoint)
                                 if gm then completedGenerators[gm] = true end
                                 currentRepairPoint = nil
-                                WindUI:Notify({ Title = "⚡ Generator 100% Fixed!", Content = "Generator completed! Moving to next...", Duration = 3 })
-                                task.wait(0.5)
+                                WindUI:Notify({ Title = "⚡ Generator Fixed!", Content = "Generator 100% repaired! Moving to next...", Duration = 2.5 })
+                                task.wait(0.3)
                                 break
                             end
 
@@ -2372,7 +2545,7 @@ V_ObjectiveSection:Toggle({
                         end
                     end
                 end)
-                task.wait(0.5)
+                task.wait(0.4)
             end
         end)
     end
@@ -2586,8 +2759,7 @@ V_CombatSection:Toggle({
                                 lastDodgeTime = tick()
                                 -- Instantly teleport 2 studs behind killer facing killer's back
                                 myHrp.CFrame = CFrame.lookAt(behindPos, kHrp.Position)
-                                WindUI:Notify({ Title = "💨 Auto Dodge!", Content = string.format("Teleported behind Killer (was %.0f studs away)!", dist), Duration = 1.2 })
-                            end
+                                                            end
                         end
                     end
                 end)
@@ -2944,8 +3116,7 @@ local function travelToSurvivor(targetChar)
             if not noClipEnabled then
                 local hasWall, hitPart = checkWallCollision(currentPos, nextPos, myChar)
                 if hasWall then
-                    WindUI:Notify({ Title = "⚠️ Wall Blocked", Content = "Wall in path! Enable NoClip to phase through.", Duration = 2 })
-                    return false
+                                        return false
                 end
             end
 
@@ -3095,8 +3266,7 @@ V_KillerSection:Toggle({
                         if autoHitSurvivorEnabled and (tick() - lastKillerHitTime > 0.75) then
                             lastKillerHitTime = tick()
                             executeKillerHit(survivor)
-                            WindUI:Notify({ Title = "⚔️ Hit Executed!", Content = "Struck " .. survivor.Name, Duration = 1.5 })
-                        end
+                                                    end
                     end
                 end)
                 task.wait(0.1)
