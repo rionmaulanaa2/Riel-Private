@@ -1908,8 +1908,86 @@ local function isCharacterKnocked(char)
     return false
 end
 
--- Authoritative killer verification: Prevents misidentifying former survivors as killer
--- and prevents survivors from retaining stale killer flags between games.
+-- ============================================================
+-- AUTHORITATIVE ROLE IDENTIFICATION (KILLER & SURVIVOR)
+-- ============================================================
+local isPlayerKiller
+
+local function checkPlayerKillerStatus()
+    local myChar = player.Character
+    if not myChar then return false end
+
+    -- 1. Check PlayerGui for Killer HUD (Slasher-mob, Slasher, Slasher-con)
+    -- In Violence District, only the Killer possesses these unique controller GUIs
+    local pg = player:FindFirstChild("PlayerGui")
+    if pg then
+        if pg:FindFirstChild("Slasher-mob") or pg:FindFirstChild("Slasher") or pg:FindFirstChild("Slasher-con") then
+            return true
+        end
+        for _, gui in ipairs(pg:GetChildren()) do
+            local gName = gui.Name:lower()
+            if gName:find("slasher") or gName:find("killer") then
+                return true
+            end
+        end
+    end
+
+    -- 2. Check Backpack for Killer weapons
+    local bp = player:FindFirstChild("Backpack")
+    if bp then
+        for _, item in ipairs(bp:GetChildren()) do
+            if item:IsA("Tool") then
+                local iName = item.Name:lower()
+                if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
+                    or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
+                    or iName:find("axe") or iName:find("blade") then
+                    return true
+                end
+            end
+        end
+    end
+
+    -- 3. Explicit Team verification
+    if player.Team then
+        local tName = player.Team.Name:lower()
+        if tName:find("killer") or tName:find("slasher") then
+            return true
+        end
+        if tName:find("survivor") then
+            return false
+        end
+    end
+
+    -- 4. CollectionService & Attributes
+    if CollectionService:HasTag(myChar, "Killer") or CollectionService:HasTag(player, "Killer") then
+        return true
+    end
+    if myChar:GetAttribute("Butcher") == true 
+        or myChar:GetAttribute("IsKiller") == true 
+        or myChar:GetAttribute("KillerName") ~= nil 
+        or myChar:GetAttribute("ChainBusy") ~= nil 
+        or player:GetAttribute("IsKiller") == true 
+        or player:GetAttribute("Role") == "Killer" then
+        return true
+    end
+
+    -- 5. Killer weapons / tools equipped in character
+    for _, item in ipairs(myChar:GetChildren()) do
+        if item:IsA("Tool") or item:IsA("BasePart") or item:IsA("Model") then
+            local iName = item.Name:lower()
+            if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
+                or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
+                or iName:find("axe") or iName:find("blade") then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+isPlayerKiller = checkPlayerKillerStatus
+
 local function isCharacterKiller(char, plr)
     local valid, hum, hrp = isValidCharacter(char)
     if not valid then return false end
@@ -1920,14 +1998,24 @@ local function isCharacterKiller(char, plr)
         return false
     end
 
+    -- If checking local player, use comprehensive killer check
+    if char == player.Character then
+        return isPlayerKiller()
+    end
+
+    -- RANKED MODE & MATCH GUARANTEE:
+    -- In a 1v4 match, if the local player IS the Killer, NO other character can be the Killer!
+    if isPlayerKiller() then
+        return false
+    end
+
     -- 1. Explicit Team verification
     if plr and plr.Team then
         local tName = plr.Team.Name:lower()
-        -- In Violence District, survivors are explicitly on "Survivors" team
         if tName == "survivors" or tName:find("survivor") then
             return false
         end
-        if tName == "killer" or tName:find("killer") then
+        if tName == "killer" or tName:find("killer") or tName:find("slasher") then
             return true
         end
     end
@@ -1961,27 +2049,28 @@ local function isCharacterKiller(char, plr)
 
     -- 5. Active Killer combat states
     if char:GetAttribute("isAttacking") == true 
-        or char:GetAttribute("isLunging") == true 
-        or char:GetAttribute("isStunned") == true then
+        or char:GetAttribute("isLunging") == true then
         return true
     end
 
-    -- 6. Known killer model names in workspace
-    local cName = char.Name:lower()
-    if cName:find("butcher") or cName:find("slasher") or cName:find("cure") 
-        or cName:find("jason") or cName:find("abysswalker") or cName:find("veil") 
-        or cName:find("stalker") or cName:find("masked") or cName:find("hidden") then
-        return true
-    end
-
-    -- 7. Killer weapons / tools held
+    -- 6. Killer weapons / tools held
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA("Tool") or item:IsA("BasePart") or item:IsA("Model") then
             local iName = item.Name:lower()
             if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
-                or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher") then
+                or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
+                or iName:find("axe") or iName:find("blade") then
                 return true
             end
+        end
+    end
+
+    -- 7. Known killer model names in workspace (Only for unlinked NPC killers)
+    if not plr then
+        local cName = char.Name:lower()
+        if cName:find("butcher") or cName:find("slasher") or cName:find("jason") 
+            or cName:find("abysswalker") or cName:find("masked") then
+            return true
         end
     end
 
@@ -2005,10 +2094,16 @@ local function isCharacterSurvivor(char, plr)
         return false
     end
 
+    -- RANKED MODE GUARANTEE:
+    -- If local player is the Killer, any other living character in workspace not in lobby IS a Survivor!
+    if isPlayerKiller() then
+        return true
+    end
+
     -- If player is on Killer team
     if plr and plr.Team then
         local tName = plr.Team.Name:lower()
-        if tName == "killer" or tName:find("killer") then
+        if tName == "killer" or tName:find("killer") or tName:find("slasher") then
             return false
         end
         if tName == "survivors" or tName:find("survivor") then
@@ -2046,6 +2141,11 @@ end
 local function getKiller()
     local myChar = player.Character
 
+    -- If local player is the Killer, return their character directly!
+    if isPlayerKiller() then
+        return myChar
+    end
+
     -- 1. Check all other players in Players
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= player and plr.Character and plr.Character ~= myChar then
@@ -2079,12 +2179,6 @@ local function getKiller()
     end
 
     return nil
-end
-
-local function isPlayerKiller()
-    local myChar = player.Character
-    if not myChar then return false end
-    return isCharacterKiller(myChar, player)
 end
 
 -- ============================================================
@@ -2395,26 +2489,61 @@ V_ESPSection:Toggle({
                 cleanSurvivorESP()
                 local myChar = player.Character
                 local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-                local killerChar = getKiller()
+                local isKiller = isPlayerKiller()
+                local killerChar = isKiller and myChar or getKiller()
 
                 local candidateChars = {}
                 for _, plr in ipairs(Players:GetPlayers()) do
                     if plr ~= player and plr.Character and plr.Character ~= myChar and plr.Character ~= killerChar then
-                        if isCharacterSurvivor(plr.Character, plr) and not isCharacterKiller(plr.Character, plr) then
-                            table.insert(candidateChars, { char = plr.Character, name = plr.DisplayName or plr.Name, plr = plr })
+                        if isKiller then
+                            -- When local player is Killer, every other alive player in workspace is an enemy survivor!
+                            local valid, hum, hrp = isValidCharacter(plr.Character)
+                            if valid and not isEntityInLobbyOrSpectating(plr.Character, plr) then
+                                table.insert(candidateChars, { char = plr.Character, name = plr.DisplayName or plr.Name, plr = plr })
+                            end
+                        else
+                            if isCharacterSurvivor(plr.Character, plr) and not isCharacterKiller(plr.Character, plr) then
+                                table.insert(candidateChars, { char = plr.Character, name = plr.DisplayName or plr.Name, plr = plr })
+                            end
                         end
                     end
                 end
 
-                for _, obj in ipairs(workspace:GetChildren()) do
-                    if obj:IsA("Model") and obj ~= myChar and obj ~= killerChar and not Players:GetPlayerFromCharacter(obj) then
-                        if isCharacterSurvivor(obj) and not isCharacterKiller(obj) then
-                            local alreadyAdded = false
-                            for _, c in ipairs(candidateChars) do
-                                if c.char == obj then alreadyAdded = true break end
-                            end
-                            if not alreadyAdded then
-                                table.insert(candidateChars, { char = obj, name = obj.Name, plr = nil })
+                -- Also search potential survivor containers in workspace (Survivors, Players, Match, Characters)
+                local searchContainers = { workspace }
+                for _, fName in ipairs({ "Survivors", "Players", "Characters", "Match", "Entities" }) do
+                    local folder = workspace:FindFirstChild(fName)
+                    if folder and (folder:IsA("Folder") or folder:IsA("Model")) then
+                        table.insert(searchContainers, folder)
+                    end
+                end
+
+                for _, container in ipairs(searchContainers) do
+                    for _, obj in ipairs(container:GetChildren()) do
+                        if obj:IsA("Model") and obj ~= myChar and obj ~= killerChar and not Players:GetPlayerFromCharacter(obj) then
+                            local valid, hum, hrp = isValidCharacter(obj)
+                            if valid then
+                                if isKiller then
+                                    if not isEntityInLobbyOrSpectating(obj) then
+                                        local alreadyAdded = false
+                                        for _, c in ipairs(candidateChars) do
+                                            if c.char == obj then alreadyAdded = true break end
+                                        end
+                                        if not alreadyAdded then
+                                            table.insert(candidateChars, { char = obj, name = obj.Name, plr = nil })
+                                        end
+                                    end
+                                else
+                                    if isCharacterSurvivor(obj) and not isCharacterKiller(obj) then
+                                        local alreadyAdded = false
+                                        for _, c in ipairs(candidateChars) do
+                                            if c.char == obj then alreadyAdded = true break end
+                                        end
+                                        if not alreadyAdded then
+                                            table.insert(candidateChars, { char = obj, name = obj.Name, plr = nil })
+                                        end
+                                    end
+                                end
                             end
                         end
                     end
@@ -4551,6 +4680,98 @@ local lastKillerHitTime = 0
 local currentKillerTarget = nil
 local killerAimConn = nil
 
+-- Helper to detect if Killer is currently stunned, parried, shot, or recovering (e.g. Flare/Revolver/Dagger/Shield)
+local function isKillerStunnedOrLocked(char)
+    if not char or not char.Parent then return false end
+
+    -- 1. Game attributes set by Violence District on stun/parry/shot
+    if char:GetAttribute("isStunned") == true 
+        or char:GetAttribute("IsStunned") == true 
+        or char:GetAttribute("Stunned") == true 
+        or char:GetAttribute("AttackLock") == true 
+        or char:GetAttribute("Immobile") == true 
+        or char:GetAttribute("Blinded") == true 
+        or char:GetAttribute("Stun") == true 
+        or char:GetAttribute("ChainBusy") == true then
+        return true
+    end
+
+    -- 2. CollectionService stun tags
+    if CollectionService and (CollectionService:HasTag(char, "Stunned") or CollectionService:HasTag(char, "Stun")) then
+        return true
+    end
+
+    -- 3. Stun child marker instances
+    if char:FindFirstChild("Stunned") or char:FindFirstChild("Stun") or char:FindFirstChild("AttackLock") then
+        return true
+    end
+
+    -- 4. Humanoid physical states during stun / parry recovery
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        if hum.WalkSpeed == 0 or hum.PlatformStand or hum.Sit then
+            return true
+        end
+        local animator = hum:FindFirstChildOfClass("Animator")
+        if animator then
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                local tName = track.Name:lower()
+                if tName:find("stun") or tName:find("parried") or tName:find("hitreact") or tName:find("flinch") or tName:find("blind") then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+-- Helper to detect if target survivor is currently parrying (ParryingDagger) or blocking (RiotShield)
+local function isSurvivorParryingOrShielded(sChar)
+    if not sChar or not sChar.Parent then return false end
+
+    -- Violence District adds "doing action" tag to survivors during active parry frames
+    if CollectionService and CollectionService:HasTag(sChar, "doing action") then
+        return true
+    end
+
+    if sChar:GetAttribute("isParrying") == true 
+        or sChar:GetAttribute("Parrying") == true 
+        or sChar:GetAttribute("IsParrying") == true 
+        or sChar:GetAttribute("ShieldActive") == true 
+        or sChar:GetAttribute("Blocking") == true then
+        return true
+    end
+
+    -- Check equipped parry/shield tools
+    for _, item in ipairs(sChar:GetChildren()) do
+        if item:IsA("Tool") then
+            local iName = item.Name:lower()
+            if iName:find("parry") or iName:find("dagger") or iName:find("shield") or iName:find("riot") then
+                if item:GetAttribute("Active") == true or item:GetAttribute("Blocking") == true or item:GetAttribute("Parrying") == true then
+                    return true
+                end
+            end
+        end
+    end
+
+    -- Check playing parry/shield animations
+    local hum = sChar:FindFirstChildOfClass("Humanoid")
+    if hum then
+        local animator = hum:FindFirstChildOfClass("Animator")
+        if animator then
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                local tName = track.Name:lower()
+                if tName:find("parry") or tName:find("shield") or tName:find("block") or tName:find("deflect") then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
 -- Validates that target is an active upright Survivor (EXCLUDES Killer, Lobby players, knocked down, hooked & carried)
 local function isSurvivorValidTarget(c)
     if not c or not c.Parent then return false end
@@ -4773,9 +4994,21 @@ end
 
 -- Comprehensive Auto Hit execution across Android executors and PC (Guaranteed Hit Delivery)
 local function executeKillerHit(targetChar)
-    local remotes = getVDRemotes()
     local myChar = player.Character
-    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myChar then return end
+
+    -- DO NOT swing if killer is currently stunned, shot, parried, or in recovery lock
+    if isKillerStunnedOrLocked(myChar) then
+        return
+    end
+
+    -- DO NOT swing directly into active survivor parry or riot shield frames
+    if targetChar and isSurvivorParryingOrShielded(targetChar) then
+        return
+    end
+
+    local remotes = getVDRemotes()
+    local myHrp = myChar:FindFirstChild("HumanoidRootPart")
     if not myHrp then return end
 
     local sHrp = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
@@ -4917,14 +5150,15 @@ task.spawn(function()
             if not scriptRunning then return end
             if (autoAimSurvivorEnabled or autoHitSurvivorEnabled) and isPlayerKiller() then
                 local myChar = player.Character
+                if isKillerStunnedOrLocked(myChar) then return end
                 local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
                 if myHrp then
                     local targetSurvivor, dist = findNearestSurvivor()
                     if targetSurvivor and dist <= (hitReachDistance + 4) then
                         currentKillerTarget = targetSurvivor
 
-                        -- Auto Hit trigger when within melee striking distance (<= 4.5 studs)
-                        if autoHitSurvivorEnabled and dist <= 4.8 then
+                        -- Auto Hit trigger when within melee striking distance (<= 4.8 studs) and survivor not parrying
+                        if autoHitSurvivorEnabled and dist <= 4.8 and not isSurvivorParryingOrShielded(targetSurvivor) then
                             if (tick() - lastKillerHitTime) > 0.45 then
                                 lastKillerHitTime = tick()
                                 executeKillerHit(targetSurvivor)
@@ -5111,13 +5345,13 @@ local function travelToSurvivor(targetChar)
     -- 2. SAFE TELEPORT (WAYPOINTS CLOSING IN TO 2.8 STUDS)
     elseif killerTravelMode == "Safe Teleport" then
         return travelToTargetLocation(targetHrp.Position, 2.8, function()
-            return autoCatchEnabled and targetChar.Parent and isSurvivorValidTarget(targetChar)
+            return autoCatchEnabled and targetChar.Parent and isSurvivorValidTarget(targetChar) and not isKillerStunnedOrLocked(myChar)
         end)
 
     -- 3. RUN NORMALLY (WAYPOINTS CLOSING IN TO 3.2 STUDS)
     elseif killerTravelMode == "Run Normally" then
         return travelToTargetLocation(targetHrp.Position, 3.2, function()
-            return autoCatchEnabled and targetChar.Parent and isSurvivorValidTarget(targetChar)
+            return autoCatchEnabled and targetChar.Parent and isSurvivorValidTarget(targetChar) and not isKillerStunnedOrLocked(myChar)
         end)
     end
 
@@ -5276,6 +5510,134 @@ V_KillerSection:Dropdown({
     end
 })
 
+-- ============================================================
+-- TELEPORT TO SPECIFIC SURVIVOR (CHOOSE FROM LIST)
+-- ============================================================
+local selectedTeleportSurvivor = nil
+local survivorDropdownRef = nil
+
+local function getAliveSurvivorList()
+    local result = {}
+    local myChar = player.Character
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and plr.Character and plr.Character ~= myChar then
+            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+            local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+            if hum and hrp and hum.Health > 0 and plr.Character:IsDescendantOf(workspace) then
+                local label = string.format("%s (@%s)", plr.DisplayName or plr.Name, plr.Name)
+                table.insert(result, {
+                    label = label,
+                    player = plr,
+                    character = plr.Character,
+                    name = plr.Name
+                })
+            end
+        end
+    end
+    return result
+end
+
+local function getAliveSurvivorLabels()
+    local list = getAliveSurvivorList()
+    local labels = {}
+    for _, s in ipairs(list) do
+        table.insert(labels, s.label)
+    end
+    if #labels == 0 then
+        table.insert(labels, "No Survivors Found")
+    end
+    return labels
+end
+
+local initialSurvivorLabels = getAliveSurvivorLabels()
+survivorDropdownRef = V_KillerSection:Dropdown({
+    Title = "Select Survivor (Teleport Target)",
+    Description = "Choose an active survivor from the match to teleport to",
+    Values = initialSurvivorLabels,
+    Value = initialSurvivorLabels[1],
+    Callback = function(v)
+        selectedTeleportSurvivor = v
+    end
+})
+
+V_KillerSection:Button({
+    Title = "🔄 Refresh Survivor List",
+    Description = "Scans match and refreshes the survivor list in the dropdown above",
+    Callback = function()
+        local newLabels = getAliveSurvivorLabels()
+        pcall(function()
+            if survivorDropdownRef and survivorDropdownRef.SetValues then
+                survivorDropdownRef:SetValues(newLabels)
+            elseif survivorDropdownRef and survivorDropdownRef.Refresh then
+                survivorDropdownRef:Refresh(newLabels)
+            end
+        end)
+        local count = (newLabels[1] == "No Survivors Found") and 0 or #newLabels
+        WindUI:Notify({ Title = "Survivor List Refreshed", Content = string.format("Found %d active survivor(s).", count), Duration = 2.5 })
+    end
+})
+
+V_KillerSection:Button({
+    Title = "⚡ Teleport to Chosen Survivor",
+    Description = "Instantly teleports 2.5 studs directly behind the selected survivor facing their back",
+    Callback = function()
+        local myChar = player.Character
+        local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if not myHrp then
+            WindUI:Notify({ Title = "Teleport Failed", Content = "Your character is not available!", Duration = 2 })
+            return
+        end
+
+        local survivors = getAliveSurvivorList()
+        if #survivors == 0 then
+            WindUI:Notify({ Title = "Teleport Failed", Content = "No alive survivors detected in the match!", Duration = 2.5 })
+            return
+        end
+
+        local targetEntry = nil
+        if selectedTeleportSurvivor and selectedTeleportSurvivor ~= "No Survivors Found" then
+            for _, s in ipairs(survivors) do
+                if s.label == selectedTeleportSurvivor or s.name == selectedTeleportSurvivor or s.label:find(selectedTeleportSurvivor, 1, true) then
+                    targetEntry = s
+                    break
+                end
+            end
+        end
+
+        -- If none selected or selection not found, default to first available survivor
+        if not targetEntry then
+            targetEntry = survivors[1]
+        end
+
+        if not targetEntry or not targetEntry.character or not targetEntry.character:FindFirstChild("HumanoidRootPart") then
+            WindUI:Notify({ Title = "Teleport Failed", Content = "Target survivor character not found!", Duration = 2.5 })
+            return
+        end
+
+        local tChar = targetEntry.character
+        local tHrp = tChar.HumanoidRootPart
+
+        -- Teleport 2.5 studs behind survivor facing their back
+        local behindPos = tHrp.Position - (tHrp.CFrame.LookVector * 2.5) + Vector3.new(0, 0.2, 0)
+        local behindCF = CFrame.lookAt(behindPos, tHrp.Position)
+
+        for attempt = 1, 3 do
+            myHrp.CFrame = behindCF
+            myHrp.AssemblyLinearVelocity = Vector3.zero
+            myHrp.AssemblyAngularVelocity = Vector3.zero
+            task.wait(0.03)
+        end
+
+        currentKillerTarget = tChar
+
+        WindUI:Notify({
+            Title = "⚡ Teleported to Survivor",
+            Content = string.format("Warped behind %s!", targetEntry.player.DisplayName or targetEntry.name),
+            Duration = 2.5
+        })
+    end
+})
+
 V_KillerSection:Slider({
     Title = "Hit Reach Distance",
     Description = "Distance in studs to trigger Auto Aim & Auto Hit (6 - 20 studs)",
@@ -5347,38 +5709,62 @@ V_KillerSection:Toggle({
 
         task.spawn(function()
             while autoCatchEnabled do
-                pcall(function()
+                local ok, err = pcall(function()
                     local myChar = player.Character
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-                    if not myHrp then task.wait(1) return end
+                    if not myHrp then task.wait(0.5) return end
 
-                    -- Excludes lobby players, knocked down, hooked, and carried survivors
+                    -- 1. STUN & SHOT RECOVERY CHECK
+                    -- If killer was shot (revolver/flare) or parried (parrying dagger/riot shield),
+                    -- pause pursuit and DO NOT swing or force teleport until stun clears!
+                    if isKillerStunnedOrLocked(myChar) then
+                        task.wait(0.15)
+                        return
+                    end
+
+                    -- 2. ACQUIRE TARGET SURVIVOR
                     local survivor, dist = findNearestSurvivor()
                     if not survivor or not survivor:FindFirstChild("HumanoidRootPart") then
                         currentKillerTarget = nil
-                        task.wait(2)
+                        task.wait(0.3)
                         return
                     end
 
                     currentKillerTarget = survivor
                     local sHrp = survivor.HumanoidRootPart
 
-                    -- Pursue survivor until in close melee reach (<= 2.8 studs)
+                    -- 3. PURSUE SURVIVOR
                     local curDist = (myHrp.Position - sHrp.Position).Magnitude
                     if curDist > 2.8 then
                         travelToSurvivor(survivor)
                     end
 
-                    -- When within melee reach (<= 4.8 studs): execute Auto Hit!
+                    -- Re-verify killer is not stunned after travel
+                    if isKillerStunnedOrLocked(myChar) then
+                        task.wait(0.15)
+                        return
+                    end
+
+                    -- 4. PARRY EVASION CHECK
+                    -- If target survivor is actively parrying or blocking with shield, hold off swing!
+                    if isSurvivorParryingOrShielded(survivor) then
+                        -- Wait for survivor's parry active frames to drop (~0.35s) so they waste their parry!
+                        task.wait(0.35)
+                    end
+
+                    -- 5. EXECUTE HIT WHEN IN RANGE
                     local finalDist = (myHrp.Position - sHrp.Position).Magnitude
-                    if finalDist <= 4.8 then
+                    if finalDist <= 4.8 and not isKillerStunnedOrLocked(myChar) and not isSurvivorParryingOrShielded(survivor) then
                         if (tick() - lastKillerHitTime) > 0.45 then
                             lastKillerHitTime = tick()
                             executeKillerHit(survivor)
                         end
                     end
                 end)
-                task.wait(0.1)
+                if not ok then
+                    task.wait(0.2)
+                end
+                task.wait(0.05)
             end
             currentKillerTarget = nil
         end)
