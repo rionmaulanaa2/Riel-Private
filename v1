@@ -1464,6 +1464,30 @@ local function getKiller()
     return nil
 end
 
+local function isPlayerKiller()
+    local myChar = player.Character
+    if not myChar then return false end
+    local CollectionService = game:GetService("CollectionService")
+
+    if CollectionService:HasTag(myChar, "Killer") or CollectionService:HasTag(player, "Killer") then
+        return true
+    end
+    if player.Team and (player.Team.Name == "Killer" or player.Team.Name:lower():find("killer") or (player.Team.Name ~= "Survivors" and player.Team.Name ~= "Lobby" and player.Team.Name ~= "Choosing")) then
+        return true
+    end
+    if myChar:GetAttribute("IsKiller") == true or player:GetAttribute("IsKiller") == true or myChar:GetAttribute("Butcher") == true or myChar:GetAttribute("isAttacking") ~= nil or myChar:GetAttribute("isLunging") ~= nil then
+        return true
+    end
+    if myChar.Name:lower():find("killer") or myChar.Name:lower():find("butcher") or myChar.Name:lower():find("slasher") or myChar.Name:lower():find("cure") or myChar.Name:lower():find("jason") then
+        return true
+    end
+    local k = getKiller()
+    if k and k == myChar then
+        return true
+    end
+    return false
+end
+
 -- ============================================================
 -- 1. KILLER ESP
 -- ============================================================
@@ -2512,6 +2536,78 @@ V_CombatSection:Toggle({
                 end
             end)
         end)
+    end
+})
+
+-- ============================================================
+-- AUTO DODGE KILLER (INSTANT TELEPORT BEHIND KILLER)
+-- ============================================================
+local autoDodgeEnabled = false
+local autoDodgeDistance = 15
+local autoDodgeCooldown = 0.35
+local lastDodgeTime = 0
+
+V_CombatSection:Toggle({
+    Title = "Auto Dodge Killer",
+    Description = "Instantly teleports 2 studs behind Killer when detected nearby",
+    Default = false,
+    Callback = function(v)
+        autoDodgeEnabled = v
+        if not v then
+            WindUI:Notify({ Title = "Auto Dodge", Content = "Auto Dodge disabled.", Duration = 2 })
+            return
+        end
+
+        WindUI:Notify({ Title = "Auto Dodge", Content = "Auto Dodge active! (Behind Killer 2 studs)", Duration = 2 })
+
+        task.spawn(function()
+            while autoDodgeEnabled do
+                pcall(function()
+                    local myChar = player.Character
+                    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                    local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+                    if not myHrp or not hum or hum.Health <= 0 then return end
+
+                    -- Do not dodge if player is currently the Killer
+                    if isPlayerKiller and isPlayerKiller() then return end
+
+                    local killer = getKiller()
+                    if killer and killer:FindFirstChild("HumanoidRootPart") and killer ~= myChar then
+                        local kHrp = killer.HumanoidRootPart
+                        local dist = (myHrp.Position - kHrp.Position).Magnitude
+
+                        if dist <= autoDodgeDistance and (tick() - lastDodgeTime >= autoDodgeCooldown) then
+                            -- Calculate position 2 studs directly behind killer
+                            local behindPos = kHrp.Position - (kHrp.CFrame.LookVector * 2)
+                            local distToBehind = (myHrp.Position - behindPos).Magnitude
+                            local isFacingMe = kHrp.CFrame.LookVector:Dot((myHrp.Position - kHrp.Position).Unit) > -0.2
+
+                            if distToBehind > 1.2 or isFacingMe then
+                                lastDodgeTime = tick()
+                                -- Instantly teleport 2 studs behind killer facing killer's back
+                                myHrp.CFrame = CFrame.lookAt(behindPos, kHrp.Position)
+                                WindUI:Notify({ Title = "💨 Auto Dodge!", Content = string.format("Teleported behind Killer (was %.0f studs away)!", dist), Duration = 1.2 })
+                            end
+                        end
+                    end
+                end)
+                task.wait(0.03)
+            end
+        end)
+    end
+})
+
+V_CombatSection:Slider({
+    Title = "Dodge Trigger Distance",
+    Description = "Distance in studs to trigger auto dodge behind Killer (1 - 40 studs)",
+    Step = 1,
+    Value = {
+        Min = 1,
+        Max = 40,
+        Default = 15,
+    },
+    Callback = function(val)
+        autoDodgeDistance = tonumber(val) or 15
     end
 })
 
