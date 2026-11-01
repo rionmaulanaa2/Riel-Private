@@ -3701,7 +3701,7 @@ local function isSurvivorValidTarget(c)
         return false
     end
 
-    -- 2. Exclude Knocked Down / Downed survivors
+    -- 2. Exclude Knocked Down / Downed survivors (Do NOT exclude injured survivors)
     local isKnocked = c:GetAttribute("Knocked") == true
         or c:GetAttribute("isKnocked") == true
         or c:GetAttribute("Downed") == true
@@ -3710,7 +3710,6 @@ local function isSurvivorValidTarget(c)
         or c:FindFirstChild("Knocked") ~= nil
         or (CollectionService and CollectionService:HasTag(c, "Knocked"))
         or (c:GetAttribute("State") and tostring(c:GetAttribute("State")):lower():find("down"))
-        or hum.Health < 30
 
     if isKnocked then return false end
 
@@ -3784,7 +3783,6 @@ local function isSurvivorDowned(c)
         or c:FindFirstChild("Knocked") ~= nil
         or (CollectionService and CollectionService:HasTag(c, "Knocked"))
         or (c:GetAttribute("State") and tostring(c:GetAttribute("State")):lower():find("down"))
-        or hum.Health < 30
 
     return isDowned
 end
@@ -3950,7 +3948,7 @@ local function findNearestAvailableHook()
     return bestHook, bestDist
 end
 
--- Comprehensive Auto Hit execution across Android executors and PC
+-- Comprehensive Auto Hit execution across Android executors and PC (Guaranteed Hit Delivery)
 local function executeKillerHit(targetChar)
     local remotes = getVDRemotes()
     local myChar = player.Character
@@ -3959,11 +3957,19 @@ local function executeKillerHit(targetChar)
 
     local sHrp = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
     if sHrp then
+        -- 1. Snap Killer body directly towards survivor
         local lookTarget = Vector3.new(sHrp.Position.X, myHrp.Position.Y, sHrp.Position.Z)
         myHrp.CFrame = CFrame.lookAt(myHrp.Position, lookTarget)
+
+        -- 2. Melee Range Step: If slightly far (> 3.2 studs), nudge into physical weapon reach
+        local curDist = (myHrp.Position - sHrp.Position).Magnitude
+        if curDist > 3.2 and curDist <= 6.0 then
+            local toSurvivor = (sHrp.Position - myHrp.Position).Unit
+            myHrp.CFrame = CFrame.lookAt(myHrp.Position + toSurvivor * 1.2, lookTarget)
+        end
     end
 
-    -- 1. Violence District Remote Events
+    -- 3. Fire Official Violence District Attack Remotes
     if remotes.Attacks then
         if remotes.Attacks:FindFirstChild("BasicAttack") then
             pcall(function() remotes.Attacks.BasicAttack:FireServer() end)
@@ -3971,25 +3977,28 @@ local function executeKillerHit(targetChar)
         if remotes.Attacks:FindFirstChild("Lunge") then
             pcall(function() remotes.Attacks.Lunge:FireServer() end)
         end
-        if remotes.Attacks:FindFirstChild("LungeDetect") and targetChar then
-            pcall(function() remotes.Attacks.LungeDetect:FireServer(targetChar) end)
-        end
     end
 
-    -- 2. Character Equipped Tool Activation
-    for _, item in ipairs(myChar:GetChildren()) do
-        if item:IsA("Tool") then
-            pcall(function() item:Activate() end)
-        end
-    end
-
-    -- 3. Mobile Touch GUI Button Activation (Delta/Fluxus/Arceus/Codex on Android)
+    -- 4. Fire Mobile Attack GUI Button (Slasher-mob / Slasher Controls.attack)
     pcall(function()
         local pg = player:FindFirstChild("PlayerGui")
         if pg then
-            for _, name in ipairs({"basicattack", "Attack", "Punch", "AttackButton", "Slash", "Swing"}) do
-                local btn = pg:FindFirstChild(name, true)
-                if btn and btn:IsA("GuiButton") then
+            for _, guiName in ipairs({"Slasher-mob", "Slasher", "Slasher-con", "MobileGui"}) do
+                local g = pg:FindFirstChild(guiName)
+                if g then
+                    for _, btn in ipairs(g:GetDescendants()) do
+                        if btn:IsA("GuiButton") and (btn.Name:lower() == "attack" or btn.Name:lower():find("slash")) then
+                            if typeof(firesignal) == "function" then
+                                firesignal(btn.MouseButton1Down)
+                                firesignal(btn.Activated)
+                                firesignal(btn.MouseButton1Click)
+                            end
+                        end
+                    end
+                end
+            end
+            for _, btn in ipairs(pg:GetDescendants()) do
+                if btn:IsA("GuiButton") and (btn.Name:lower() == "attack" or btn.Name:lower():find("basicattack")) then
                     if typeof(firesignal) == "function" then
                         firesignal(btn.MouseButton1Down)
                         firesignal(btn.Activated)
@@ -3999,7 +4008,33 @@ local function executeKillerHit(targetChar)
         end
     end)
 
-    -- 4. PC VirtualInputManager Click Fallback
+    -- 5. Physical Weapon & Arm Hitbox Collision Simulation (firetouchinterest)
+    if typeof(firetouchinterest) == "function" and sHrp then
+        pcall(function()
+            local rightArm = myChar:FindFirstChild("Right Arm") or myChar:FindFirstChild("RightHand")
+            for _, part in ipairs(myChar:GetDescendants()) do
+                if part:IsA("BasePart") and (part.Name:lower():find("weapon") or part.Name:lower():find("blade") or part.Name:lower():find("knife") or part.Name:lower():find("machete") or part.Name:lower():find("axe") or part.Name:lower():find("cleaver") or part == rightArm) then
+                    firetouchinterest(part, sHrp, 0)
+                    task.wait(0.01)
+                    firetouchinterest(part, sHrp, 1)
+                end
+            end
+            if rightArm then
+                firetouchinterest(rightArm, sHrp, 0)
+                task.wait(0.01)
+                firetouchinterest(rightArm, sHrp, 1)
+            end
+        end)
+    end
+
+    -- 6. Equipped Tool Activation
+    for _, item in ipairs(myChar:GetChildren()) do
+        if item:IsA("Tool") then
+            pcall(function() item:Activate() end)
+        end
+    end
+
+    -- 7. PC Mouse Click Fallback
     pcall(function()
         VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
         task.wait(0.02)
@@ -4065,9 +4100,9 @@ task.spawn(function()
                     if targetSurvivor and dist <= (hitReachDistance + 4) then
                         currentKillerTarget = targetSurvivor
 
-                        -- Auto Hit trigger when in reach
-                        if autoHitSurvivorEnabled and dist <= hitReachDistance then
-                            if tick() - lastKillerHitTime > 0.75 then
+                        -- Auto Hit trigger when within melee striking distance (<= 4.5 studs)
+                        if autoHitSurvivorEnabled and dist <= 4.8 then
+                            if (tick() - lastKillerHitTime) > 0.45 then
                                 lastKillerHitTime = tick()
                                 executeKillerHit(targetSurvivor)
                             end
@@ -4080,7 +4115,7 @@ task.spawn(function()
                 end
             end
         end)
-        task.wait(0.04)
+        task.wait(0.03)
     end
 end)
 
@@ -4098,17 +4133,26 @@ local function travelToTargetLocation(targetPos, stopReach, activeCheck)
     local checkActive = activeCheck or function() return true end
 
     if killerTravelMode == "Instant Teleport" then
-        local targetCF = CFrame.new(targetPos + Vector3.new(0, 0.5, 0), targetPos)
-        for attempt = 1, 4 do
+        local fromPos = myHrp.Position
+        local dir = (targetPos - fromPos)
+        local horiz = Vector3.new(dir.X, 0, dir.Z)
+        local standPos
+        if horiz.Magnitude > 0.5 then
+            standPos = targetPos - horiz.Unit * 2.5 + Vector3.new(0, 0.5, 0)
+        else
+            standPos = targetPos + Vector3.new(0, 0.5, 2.5)
+        end
+        local targetCF = CFrame.lookAt(standPos, Vector3.new(targetPos.X, standPos.Y, targetPos.Z))
+        for attempt = 1, 3 do
             myHrp.CFrame = targetCF
             myHrp.AssemblyLinearVelocity = Vector3.zero
             myHrp.AssemblyAngularVelocity = Vector3.zero
             task.wait(0.04)
-            if (myHrp.Position - targetPos).Magnitude <= (reach + 2.5) then
+            if (myHrp.Position - targetPos).Magnitude <= (reach + 1.5) then
                 break
             end
         end
-        return (myHrp.Position - targetPos).Magnitude <= (reach + 3.0)
+        return (myHrp.Position - targetPos).Magnitude <= (reach + 2.0)
 
     elseif killerTravelMode == "Safe Teleport" then
         local step = math.clamp(safeTeleportStep or 0.6, 0.1, 2.0)
@@ -4219,13 +4263,42 @@ local function travelToTargetLocation(targetPos, stopReach, activeCheck)
 end
 
 local function travelToSurvivor(targetChar)
-    if not targetChar then return false end
+    local myChar = player.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+    if not myHrp or not targetChar then return false end
+
     local targetHrp = targetChar:FindFirstChild("HumanoidRootPart")
     if not targetHrp then return false end
 
-    return travelToTargetLocation(targetHrp.Position, hitReachDistance, function()
-        return autoCatchEnabled and targetChar.Parent and isSurvivorValidTarget(targetChar)
-    end)
+    local targetPos = targetHrp.Position
+    local dist = (myHrp.Position - targetPos).Magnitude
+    if dist <= 2.8 then return true end
+
+    -- 1. INSTANT TELEPORT (ALWAYS BEHIND SURVIVOR AT 2.5 STUDS FACING THEIR BACK)
+    if killerTravelMode == "Instant Teleport" then
+        local behindPos = targetPos - (targetHrp.CFrame.LookVector * 2.5) + Vector3.new(0, 0.2, 0)
+        local behindCF = CFrame.lookAt(behindPos, targetPos)
+        myHrp.CFrame = behindCF
+        myHrp.AssemblyLinearVelocity = Vector3.zero
+        myHrp.AssemblyAngularVelocity = Vector3.zero
+        task.wait(0.04)
+        return (myHrp.Position - targetPos).Magnitude <= 3.8
+
+    -- 2. SAFE TELEPORT (WAYPOINTS CLOSING IN TO 2.8 STUDS)
+    elseif killerTravelMode == "Safe Teleport" then
+        return travelToTargetLocation(targetHrp.Position, 2.8, function()
+            return autoCatchEnabled and targetChar.Parent and isSurvivorValidTarget(targetChar)
+        end)
+
+    -- 3. RUN NORMALLY (WAYPOINTS CLOSING IN TO 3.2 STUDS)
+    elseif killerTravelMode == "Run Normally" then
+        return travelToTargetLocation(targetHrp.Position, 3.2, function()
+            return autoCatchEnabled and targetChar.Parent and isSurvivorValidTarget(targetChar)
+        end)
+    end
+
+    return false
 end
 
 -- ============================================================
@@ -4397,7 +4470,7 @@ V_KillerSection:Slider({
 V_KillerSection:Toggle({
     Title = "Auto Aim to Survivor",
     Description = "Locks camera directly at target Survivor when in reach (Active even without Auto Catch)",
-    Default = false,
+    Default = true,
     Callback = function(v)
         autoAimSurvivorEnabled = v
         updateKillerAim()
@@ -4408,7 +4481,7 @@ V_KillerSection:Toggle({
 V_KillerSection:Toggle({
     Title = "Auto Hit Survivor",
     Description = "Automatically executes attack when survivor is in reach (Active even without Auto Catch)",
-    Default = false,
+    Default = true,
     Callback = function(v)
         autoHitSurvivorEnabled = v
         WindUI:Notify({ Title = "Auto Hit", Content = v and "Killer Auto Hit active!" or "Killer Auto Hit disabled.", Duration = 2 })
@@ -4438,6 +4511,11 @@ V_KillerSection:Toggle({
             return
         end
 
+        -- Ensure aim & hit are active during Auto Catch
+        autoAimSurvivorEnabled = true
+        autoHitSurvivorEnabled = true
+        updateKillerAim()
+
         if not isPlayerKiller() then
             WindUI:Notify({ Title = "⚠️ Role Warning", Content = "You are currently not the Killer!", Duration = 3 })
         end
@@ -4462,14 +4540,16 @@ V_KillerSection:Toggle({
                     currentKillerTarget = survivor
                     local sHrp = survivor.HumanoidRootPart
 
-                    -- Pursue survivor if outside hit reach
-                    if dist > hitReachDistance then
+                    -- Pursue survivor until in close melee reach (<= 2.8 studs)
+                    local curDist = (myHrp.Position - sHrp.Position).Magnitude
+                    if curDist > 2.8 then
                         travelToSurvivor(survivor)
                     end
 
-                    -- When in reach, execute Auto Hit
-                    if (myHrp.Position - sHrp.Position).Magnitude <= (hitReachDistance + 2) then
-                        if autoHitSurvivorEnabled and (tick() - lastKillerHitTime > 0.75) then
+                    -- When within melee reach (<= 4.8 studs): execute Auto Hit!
+                    local finalDist = (myHrp.Position - sHrp.Position).Magnitude
+                    if finalDist <= 4.8 then
+                        if (tick() - lastKillerHitTime) > 0.45 then
                             lastKillerHitTime = tick()
                             executeKillerHit(survivor)
                         end
