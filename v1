@@ -3742,16 +3742,16 @@ V_CombatSection:Toggle({
 })
 
 -- ============================================================
--- AUTO DODGE KILLER (INSTANT TELEPORT 5 STUDS BEHIND KILLER)
+-- AUTO DODGE KILLER (INSTANT TELEPORT 17 STUDS BEHIND KILLER)
 -- ============================================================
 local autoDodgeEnabled = false
-local autoDodgeDistance = 15
+local autoDodgeDistance = 18
 local autoDodgeCooldown = 0.35
 local lastDodgeTime = 0
 
 V_CombatSection:Toggle({
     Title = "Auto Dodge Killer",
-    Description = "Instantly teleports 5 studs behind Killer when detected nearby",
+    Description = "Instantly teleports always 17 studs behind Killer when detected nearby",
     Default = false,
     Callback = function(v)
         autoDodgeEnabled = v
@@ -3760,7 +3760,7 @@ V_CombatSection:Toggle({
             return
         end
 
-        WindUI:Notify({ Title = "Auto Dodge", Content = "Auto Dodge active! (Behind Killer 5 studs)", Duration = 2 })
+        WindUI:Notify({ Title = "Auto Dodge", Content = "Auto Dodge active! (Always 17 studs behind Killer)", Duration = 2 })
 
         task.spawn(function()
             while autoDodgeEnabled and scriptRunning do
@@ -3780,30 +3780,38 @@ V_CombatSection:Toggle({
                         local dist = (myHrp.Position - kHrp.Position).Magnitude
 
                         if dist <= autoDodgeDistance and (tick() - lastDodgeTime >= autoDodgeCooldown) then
-                            -- Target position: exactly 5 studs directly behind Killer
+                            -- Target position: always 17 studs directly behind Killer
                             local behindDir = -kHrp.CFrame.LookVector
-                            local targetBehind = kHrp.Position + (behindDir * 5)
+                            local targetBehind = kHrp.Position + (behindDir * 17)
+
+                            local rayParams = RaycastParams.new()
+                            rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                            rayParams.FilterDescendantsInstances = { killer, myChar }
+                            rayParams.IgnoreWater = true
 
                             -- Wall & Obstacle detection behind killer to prevent clipping into walls
                             if not noClipEnabled then
-                                local rayParams = RaycastParams.new()
-                                rayParams.FilterType = Enum.RaycastFilterType.Exclude
-                                rayParams.FilterDescendantsInstances = { killer, myChar }
-                                local hit = workspace:Raycast(kHrp.Position, behindDir * 5.2, rayParams)
-                                if hit and hit.Instance and hit.Instance.CanCollide then
-                                    targetBehind = hit.Position + (hit.Normal * 1.5)
+                                local hit = workspace:Raycast(kHrp.Position, behindDir * 17.5, rayParams)
+                                if hit and hit.Instance and hit.Instance.CanCollide and hit.Instance.Transparency < 0.95 and not hit.Instance:IsA("Terrain") then
+                                    targetBehind = hit.Position + (hit.Normal * 2.0)
                                 end
+                            end
+
+                            -- Ground check to ensure valid floor height
+                            local groundRay = workspace:Raycast(targetBehind + Vector3.new(0, 4, 0), Vector3.new(0, -12, 0), rayParams)
+                            if groundRay and groundRay.Position then
+                                targetBehind = groundRay.Position + Vector3.new(0, 1.8, 0)
                             end
 
                             local distToBehind = (myHrp.Position - targetBehind).Magnitude
                             local isFacingMe = kHrp.CFrame.LookVector:Dot((myHrp.Position - kHrp.Position).Unit) > -0.2
 
-                            if distToBehind > 1.5 or isFacingMe then
+                            if distToBehind > 2.0 or isFacingMe then
                                 lastDodgeTime = tick()
                                 -- Reset linear and angular velocities to stop forward momentum
                                 myHrp.AssemblyLinearVelocity = Vector3.zero
                                 myHrp.AssemblyAngularVelocity = Vector3.zero
-                                -- Instantly teleport 5 studs behind killer facing killer's back
+                                -- Instantly teleport 17 studs behind killer facing killer's back
                                 myHrp.CFrame = CFrame.lookAt(targetBehind, kHrp.Position)
                             end
                         end
