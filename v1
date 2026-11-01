@@ -66,6 +66,35 @@ local Window = WindUI:CreateWindow({
 
 -- Master script running state
 local scriptRunning = true
+
+-- Master Automation Session Counters (increments every time a toggle is switched to kill previous threads)
+local repairSession = 0
+local saveSession = 0
+local catchSession = 0
+local palletSession = 0
+local parrySession = 0
+local dodgeSession = 0
+
+-- Master Automation Toggle States (Declared top-level so all functions & threads share upvalues)
+local autoRepairEnabled = false
+local autoSkillCheckEnabled = false
+local autoPalletEnabled = false
+local autoParryEnabled = false
+local autoSaveEnabled = false
+local killerESPEnabled = false
+local genESPEnabled = false
+local survivorESPEnabled = false
+local autoCatchEnabled = false
+local autoAimSurvivorEnabled = false
+local autoHitSurvivorEnabled = false
+local autoHookSurvivorEnabled = false
+local autoDodgeEnabled = false
+local autoRoleAdaptEnabled = true
+local flyEnabled = false
+local didEnabled = false
+local noClipEnabled = false
+local currentRepairPoint = nil
+local currentKillerTarget = nil
 local charAddedConn = nil
 local floatingGui = nil
 
@@ -101,6 +130,14 @@ local function stopScript()
     flyEnabled = false
     didEnabled = false
     noClipEnabled = false
+
+    -- Master Automation Session Invalidation
+    repairSession = (repairSession or 0) + 1
+    saveSession = (saveSession or 0) + 1
+    catchSession = (catchSession or 0) + 1
+    palletSession = (palletSession or 0) + 1
+    parrySession = (parrySession or 0) + 1
+    dodgeSession = (dodgeSession or 0) + 1
 
     -- 2. Restore character state
     pcall(function()
@@ -1721,7 +1758,7 @@ local V_RoleSection = ViolenceTab:Section({
     Title = "Role Detection & Mode Switcher"
 })
 
-local autoRoleAdaptEnabled = true
+autoRoleAdaptEnabled = true
 local lastDetectedRole = nil
 
 V_RoleSection:Toggle({
@@ -1746,6 +1783,13 @@ task.spawn(function()
                 if currentRole ~= lastDetectedRole then
                     lastDetectedRole = currentRole
                     if currentRole == "Killer" then
+                        -- Invalidate all survivor automation sessions immediately
+                        repairSession = (repairSession or 0) + 1
+                        saveSession = (saveSession or 0) + 1
+                        palletSession = (palletSession or 0) + 1
+                        parrySession = (parrySession or 0) + 1
+                        dodgeSession = (dodgeSession or 0) + 1
+
                         -- Disable all survivor-only automation features
                         if autoRepairEnabled then
                             autoRepairEnabled = false
@@ -1766,10 +1810,16 @@ task.spawn(function()
                         WindUI:Notify({ Title = "👹 Role: KILLER", Content = "Detected Killer role. Survivor automation auto-disabled.", Duration = 2.5 })
 
                     elseif currentRole == "Survivor" then
+                        -- Invalidate killer automation sessions immediately
+                        catchSession = (catchSession or 0) + 1
+
                         -- Disable all killer-only automation features
                         autoCatchEnabled = false
                         autoHookSurvivorEnabled = false
+                        autoAimSurvivorEnabled = false
+                        autoHitSurvivorEnabled = false
                         currentKillerTarget = nil
+                        updateKillerAim()
                         WindUI:Notify({ Title = "🏃 Role: SURVIVOR", Content = "Detected Survivor role. Killer automation auto-disabled.", Duration = 2.5 })
                     end
                 end
@@ -2921,8 +2971,8 @@ end
 -- ============================================================
 -- 4. AUTO REPAIR GENERATOR (AUTO SEARCH, TRAVEL & ACCURATE FIX DETECTION)
 -- ============================================================
-local autoRepairEnabled = false
-local currentRepairPoint = nil
+-- Unified autoRepairEnabled & currentRepairPoint
+currentRepairPoint = nil
 local repairSafeDistance = 25
 local travelMode = "Safe Teleport"
 local safeTeleportStep = 0.5
@@ -3014,7 +3064,7 @@ end
 -- ============================================================
 -- 4. AUTO REPAIR GENERATOR (AUTO SEARCH, SAFE FAR TRAVEL & RETRY LOGIC)
 -- ============================================================
-local autoRepairEnabled = false
+autoRepairEnabled = false
 local currentRepairPoint = nil
 local repairSafeDistance = 25
 local travelMode = "Safe Teleport"
@@ -3591,7 +3641,7 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
     if dist <= reach then return true end
 
     local checkActive = activeCheck or function()
-        return (autoRepairEnabled or autoSaveEnabled) and scriptRunning
+        return scriptRunning
     end
     local shouldAvoidKiller = (avoidKiller ~= false)
     local safeDist = customSafeDist or repairSafeDistance or 25
@@ -3959,25 +4009,37 @@ V_ObjectiveSection:Toggle({
     Default = false,
     Callback = function(v)
         autoRepairEnabled = v
+        repairSession = repairSession + 1
+        local thisSession = repairSession
         local remotes = getVDRemotes()
 
         if not v then
+            -- Immediately cancel any ongoing repair on server & clear local state
             if currentRepairPoint and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
                 pcall(function()
                     remotes.Generator.RepairEvent:FireServer(currentRepairPoint, false, nil, HttpService:GenerateGUID(false), player.Character)
                 end)
-                currentRepairPoint = nil
             end
-            WindUI:Notify({ Title = "Auto Repair", Content = "Auto repair stopped.", Duration = 2 })
+            currentRepairPoint = nil
+            pcall(function()
+                if player.Character then
+                    player.Character:SetAttribute("isRepairing", false)
+                end
+            end)
+            WindUI:Notify({ Title = "Auto Repair", Content = "Auto repair stopped immediately.", Duration = 2 })
             return
         end
 
         completedGenerators = {}
         WindUI:Notify({ Title = "Auto Repair", Content = "Auto repair active! (Auto-avoids Killer)", Duration = 2 })
 
+        local function checkRepairActive()
+            return autoRepairEnabled and (repairSession == thisSession) and scriptRunning
+        end
+
         -- 1. High-frequency independent Proximity Safe Guard thread (runs every 0.12s)
         task.spawn(function()
-            while autoRepairEnabled do
+            while checkRepairActive() do
                 pcall(function()
                     local myChar = player.Character
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -4002,11 +4064,11 @@ V_ObjectiveSection:Toggle({
 
         -- 2. Main Auto Repair execution loop
         task.spawn(function()
-            while autoRepairEnabled do
+            while checkRepairActive() do
                 pcall(function()
                     local myChar = player.Character
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-                    if not myHrp then task.wait(1) return end
+                    if not myHrp then task.wait(0.5) return end
 
                     -- PRIORITY CHECK: SAVE TEAMMATE > FIX GENERATOR
                     if autoSaveEnabled and hasHookedTeammates() then
@@ -4033,8 +4095,8 @@ V_ObjectiveSection:Toggle({
 
                             -- Find safe generator far away from the killer
                             local safeTarget, safeDist = findNextUnfinishedGenerator(killer)
-                            if safeTarget then
-                                travelToPoint(safeTarget)
+                            if safeTarget and checkRepairActive() then
+                                travelToPoint(safeTarget, nil, checkRepairActive)
                             end
                             task.wait(0.5)
                             return
@@ -4043,25 +4105,28 @@ V_ObjectiveSection:Toggle({
 
                     -- Search for next unfinished generator (safe from killer)
                     local targetPoint, dist = findNextUnfinishedGenerator(killer)
-                    if not targetPoint then
-                        task.wait(2)
+                    if not targetPoint or not checkRepairActive() then
+                        task.wait(1.5)
                         return
                     end
 
                     -- Travel if not yet in repair range
                     local curDist = (myHrp.Position - targetPoint.Position).Magnitude
                     if curDist > 4.5 then
-                        local arrived = travelToPoint(targetPoint)
-                        -- If failed to reach, retry travel once more
+                        local arrived = travelToPoint(targetPoint, nil, checkRepairActive)
+                        if not checkRepairActive() then return end
                         if not arrived or (myHrp.Position - targetPoint.Position).Magnitude > 4.5 then
                             task.wait(0.15)
-                            travelToPoint(targetPoint)
+                            if not checkRepairActive() then return end
+                            travelToPoint(targetPoint, nil, checkRepairActive)
                         end
                     end
 
-                    -- Verify we actually reached the generator (within 5 studs) before initiating repair
-                    if (myHrp.Position - targetPoint.Position).Magnitude > 5 then
-                        task.wait(0.4)
+                    if not checkRepairActive() then return end
+
+                    -- Verify we actually reached the generator (within 5.2 studs) before initiating repair
+                    if (myHrp.Position - targetPoint.Position).Magnitude > 5.2 then
+                        task.wait(0.3)
                         return
                     end
 
@@ -4076,13 +4141,13 @@ V_ObjectiveSection:Toggle({
                     end
 
                     -- In range: initiate active repair & monitor until finished or interrupted
-                    if targetPoint and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
+                    if targetPoint and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") and checkRepairActive() then
                         currentRepairPoint = targetPoint
                         local guid = HttpService:GenerateGUID(false)
                         remotes.Generator.RepairEvent:FireServer(targetPoint, true, nil, guid, myChar)
 
                         local repairTimeout = tick() + 60
-                        while autoRepairEnabled and currentRepairPoint == targetPoint and tick() < repairTimeout do
+                        while checkRepairActive() and currentRepairPoint == targetPoint and tick() < repairTimeout do
                             -- Priority Interrupt: Teammate was hooked, immediately drop repair to rescue!
                             if autoSaveEnabled and hasHookedTeammates() then
                                 remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, guid, myChar)
@@ -4099,8 +4164,8 @@ V_ObjectiveSection:Toggle({
                                     currentRepairPoint = nil
                                     -- Immediately flee to a safe far generator
                                     local fleeTarget = findNextUnfinishedGenerator(k)
-                                    if fleeTarget then
-                                        travelToPoint(fleeTarget)
+                                    if fleeTarget and checkRepairActive() then
+                                        travelToPoint(fleeTarget, nil, checkRepairActive)
                                     end
                                     task.wait(0.5)
                                     break
@@ -4108,15 +4173,14 @@ V_ObjectiveSection:Toggle({
                             end
 
                             -- Real-time completion check
-                            local done, curProg = isGeneratorCompleted(targetPoint)
-                            if done then
-                                remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, guid, myChar)
+                            local doneNow, _ = isGeneratorCompleted(targetPoint)
+                            if doneNow then
                                 completedGenerators[targetPoint] = true
                                 local gm = getGeneratorModel(targetPoint)
                                 if gm then completedGenerators[gm] = true end
+                                remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, guid, myChar)
                                 currentRepairPoint = nil
-                                WindUI:Notify({ Title = "⚡ Generator Fixed!", Content = "Generator 100% repaired! Moving to next...", Duration = 2.5 })
-                                task.wait(0.3)
+                                task.wait(0.4)
                                 break
                             end
 
@@ -4124,9 +4188,14 @@ V_ObjectiveSection:Toggle({
                             remotes.Generator.RepairEvent:FireServer(targetPoint, true, nil, guid, myChar)
                             task.wait(0.8)
                         end
+
+                        if not checkRepairActive() and currentRepairPoint == targetPoint then
+                            remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, guid, myChar)
+                            currentRepairPoint = nil
+                        end
                     end
                 end)
-                task.wait(0.4)
+                task.wait(0.15)
             end
         end)
     end
@@ -4136,7 +4205,7 @@ V_ObjectiveSection:Toggle({
 -- ============================================================
 -- 5. AUTO PALLET STUN
 -- ============================================================
-local autoPalletEnabled = false
+-- Unified autoPalletEnabled
 
 local function findNearbyPallets()
     local myChar = player.Character
@@ -4161,17 +4230,19 @@ V_CombatSection:Toggle({
     Default = false,
     Callback = function(v)
         autoPalletEnabled = v
+        palletSession = palletSession + 1
+        local thisSession = palletSession
         local remotes = getVDRemotes()
 
         if not v then
-            WindUI:Notify({ Title = "Pallet Stun", Content = "Auto Pallet Stun disabled.", Duration = 2 })
+            WindUI:Notify({ Title = "Pallet Stun", Content = "Auto Pallet Stun disabled immediately.", Duration = 2 })
             return
         end
 
         WindUI:Notify({ Title = "Pallet Stun", Content = "Auto Pallet Stun active!", Duration = 2 })
 
         task.spawn(function()
-            while autoPalletEnabled do
+            while autoPalletEnabled and (palletSession == thisSession) and scriptRunning do
                 pcall(function()
                     local killer = getKiller()
                     local myChar = player.Character
@@ -4202,7 +4273,7 @@ V_CombatSection:Toggle({
 -- ============================================================
 -- 6. AUTO PARRY (PERFECT DIRECTIONAL COUNTER & DEFENSE)
 -- ============================================================
-local autoParryEnabled = false
+-- Unified autoParryEnabled
 local lastParryTime = 0
 
 local function isKillerAttackingState(killer, myHrp)
@@ -4317,17 +4388,19 @@ V_CombatSection:Toggle({
     Default = false,
     Callback = function(v)
         autoParryEnabled = v
+        parrySession = parrySession + 1
+        local thisSession = parrySession
         local remotes = getVDRemotes()
 
         if not v then
-            WindUI:Notify({ Title = "Auto Parry", Content = "Auto Parry disabled.", Duration = 2 })
+            WindUI:Notify({ Title = "Auto Parry", Content = "Auto Parry disabled immediately.", Duration = 2 })
             return
         end
 
         WindUI:Notify({ Title = "Auto Parry", Content = "Auto Parry active! (Directional snap + item defense)", Duration = 2 })
 
         task.spawn(function()
-            while autoParryEnabled do
+            while autoParryEnabled and (parrySession == thisSession) and scriptRunning do
                 pcall(function()
                     if isPlayerKiller and isPlayerKiller() then
                         task.wait(1)
@@ -4471,7 +4544,7 @@ V_CombatSection:Toggle({
 -- ============================================================
 -- AUTO DODGE KILLER (INSTANT TELEPORT 17 STUDS BEHIND KILLER)
 -- ============================================================
-local autoDodgeEnabled = false
+-- Unified autoDodgeEnabled
 local autoDodgeDistance = 18
 local autoDodgeCooldown = 0.35
 local lastDodgeTime = 0
@@ -4482,15 +4555,18 @@ V_CombatSection:Toggle({
     Default = false,
     Callback = function(v)
         autoDodgeEnabled = v
+        dodgeSession = dodgeSession + 1
+        local thisSession = dodgeSession
+
         if not v then
-            WindUI:Notify({ Title = "Auto Dodge", Content = "Auto Dodge disabled.", Duration = 2 })
+            WindUI:Notify({ Title = "Auto Dodge", Content = "Auto Dodge disabled immediately.", Duration = 2 })
             return
         end
 
         WindUI:Notify({ Title = "Auto Dodge", Content = "Auto Dodge active! (Always 17 studs behind Killer)", Duration = 2 })
 
         task.spawn(function()
-            while autoDodgeEnabled and scriptRunning do
+            while autoDodgeEnabled and (dodgeSession == thisSession) and scriptRunning do
                 pcall(function()
                     if not scriptRunning or not autoDodgeEnabled then return end
                     local myChar = player.Character
@@ -4782,18 +4858,33 @@ V_RescueSection:Toggle({
     Default = false,
     Callback = function(v)
         autoSaveEnabled = v
+        saveSession = saveSession + 1
+        local thisSession = saveSession
         local remotes = getVDRemotes()
 
         if not v then
-            WindUI:Notify({ Title = "Auto Save", Content = "Auto Save disabled.", Duration = 2 })
+            pcall(function()
+                if player.Character then
+                    player.Character:SetAttribute("isUnhooking", false)
+                    player.Character:SetAttribute("isHealing", false)
+                end
+                if remotes.Healing and remotes.Healing:FindFirstChild("Reset") then
+                    remotes.Healing.Reset:FireServer(player.Character)
+                end
+            end)
+            WindUI:Notify({ Title = "Auto Save", Content = "Auto Save disabled immediately.", Duration = 2 })
             return
         end
 
         WindUI:Notify({ Title = "Auto Save", Content = string.format("Auto Save active! (Travel: %s)", rescueTravelMode), Duration = 2.5 })
 
+        local function checkSaveActive()
+            return autoSaveEnabled and (saveSession == thisSession) and scriptRunning
+        end
+
         task.spawn(function()
             local lastNoticeTime = 0
-            while autoSaveEnabled do
+            while checkSaveActive() do
                 pcall(function()
                     if isPlayerKiller and isPlayerKiller() then
                         task.wait(1)
@@ -4805,7 +4896,7 @@ V_RescueSection:Toggle({
                     if not myHrp then task.wait(0.5) return end
 
                     local targetChar, targetPlr, targetDist, rescueType = findNearestRescuableTeammate()
-                    if not targetChar or not targetPlr then
+                    if not targetChar or not targetPlr or not checkSaveActive() then
                         task.wait(0.4)
                         return
                     end
@@ -4829,9 +4920,11 @@ V_RescueSection:Toggle({
                         local dist = (myHrp.Position - travelDest.Position).Magnitude
                         if dist > 5.2 then
                             travelToPoint(travelDest, 4.8, function()
-                                return autoSaveEnabled and isCharacterHooked(targetChar)
+                                return checkSaveActive() and isCharacterHooked(targetChar)
                             end, true, 12, rescueTravelMode)
                         end
+
+                        if not checkSaveActive() then return end
 
                         local finalDist = (myHrp.Position - travelDest.Position).Magnitude
                         if finalDist <= 7.5 and isCharacterHooked(targetChar) then
@@ -4860,7 +4953,7 @@ V_RescueSection:Toggle({
                                 end)
 
                                 local rescueTimeout = tick() + 2.8
-                                while isCharacterHooked(targetChar) and tick() < rescueTimeout and autoSaveEnabled do
+                                while isCharacterHooked(targetChar) and tick() < rescueTimeout and checkSaveActive() do
                                     task.wait(0.15)
                                     if unhookPt then
                                         pcall(function() remotes.Carry.UnHookEvent:FireServer(unhookPt, myChar) end)
@@ -4880,9 +4973,11 @@ V_RescueSection:Toggle({
                         local dist = (myHrp.Position - targetHrp.Position).Magnitude
                         if dist > 4.5 then
                             travelToPoint(targetHrp, 4.0, function()
-                                return autoSaveEnabled and isCharacterKnocked(targetChar)
+                                return checkSaveActive() and isCharacterKnocked(targetChar)
                             end, true, 12, rescueTravelMode)
                         end
+
+                        if not checkSaveActive() then return end
 
                         local finalDist = (myHrp.Position - targetHrp.Position).Magnitude
                         if finalDist <= 6.0 and isCharacterKnocked(targetChar) then
@@ -4894,7 +4989,7 @@ V_RescueSection:Toggle({
                                 end)
 
                                 local healTimeout = tick() + 8.0
-                                while isCharacterKnocked(targetChar) and tick() < healTimeout and autoSaveEnabled do
+                                while isCharacterKnocked(targetChar) and tick() < healTimeout and checkSaveActive() do
                                     pcall(function()
                                         remotes.Healing.HealEvent:FireServer(targetHrp, true, healGuid, myChar)
                                     end)
@@ -4921,7 +5016,7 @@ V_RescueSection:Toggle({
                         end
                     end
                 end)
-                task.wait(0.25)
+                task.wait(0.2)
             end
         end)
     end
@@ -4930,7 +5025,7 @@ V_RescueSection:Toggle({
 -- ============================================================
 -- NOCLIP SYSTEM (FOR AUTO REPAIR & AUTO CATCH)
 -- ============================================================
-local noClipEnabled = false
+-- Unified noClipEnabled
 local noClipConn
 
 local function updateNoClip(state)
@@ -5209,10 +5304,11 @@ local V_KillerSection = ViolenceTab:Section({
     Title = "Killer Automation (Catch, Hit & Hook)"
 })
 
-local autoCatchEnabled = false
-local autoAimSurvivorEnabled = false
-local autoHitSurvivorEnabled = false
-local autoHookSurvivorEnabled = false
+-- Unified Killer Automation states (referencing top-level variables)
+autoCatchEnabled = false
+autoAimSurvivorEnabled = false
+autoHitSurvivorEnabled = false
+autoHookSurvivorEnabled = false
 local isHookActionActive = false
 local killerTravelMode = "Instant Teleport"
 local hitReachDistance = 10
@@ -6192,12 +6288,16 @@ V_KillerSection:Slider({
     end
 })
 
+local standaloneAimUserSetting = false
+local standaloneHitUserSetting = false
+
 V_KillerSection:Toggle({
     Title = "Auto Aim to Survivor",
     Description = "Locks camera directly at target Survivor when in reach (Active even without Auto Catch)",
-    Default = true,
+    Default = false,
     Callback = function(v)
-        autoAimSurvivorEnabled = v
+        standaloneAimUserSetting = v
+        autoAimSurvivorEnabled = v or autoCatchEnabled
         updateKillerAim()
         WindUI:Notify({ Title = "Auto Aim", Content = v and "Killer Auto Aim active!" or "Killer Auto Aim disabled.", Duration = 2 })
     end
@@ -6206,9 +6306,10 @@ V_KillerSection:Toggle({
 V_KillerSection:Toggle({
     Title = "Auto Hit Survivor",
     Description = "Automatically executes attack when survivor is in reach (Active even without Auto Catch)",
-    Default = true,
+    Default = false,
     Callback = function(v)
-        autoHitSurvivorEnabled = v
+        standaloneHitUserSetting = v
+        autoHitSurvivorEnabled = v or autoCatchEnabled
         WindUI:Notify({ Title = "Auto Hit", Content = v and "Killer Auto Hit active!" or "Killer Auto Hit disabled.", Duration = 2 })
     end
 })
@@ -6229,14 +6330,24 @@ V_KillerSection:Toggle({
     Default = false,
     Callback = function(v)
         autoCatchEnabled = v
+        catchSession = catchSession + 1
+        local thisSession = catchSession
 
         if not v then
             currentKillerTarget = nil
-            WindUI:Notify({ Title = "Auto Catch", Content = "Auto Catch disabled.", Duration = 2 })
+            -- Immediately shut off aim & hit if not independently enabled by the user
+            if not standaloneAimUserSetting then
+                autoAimSurvivorEnabled = false
+                updateKillerAim()
+            end
+            if not standaloneHitUserSetting then
+                autoHitSurvivorEnabled = false
+            end
+            WindUI:Notify({ Title = "Auto Catch", Content = "Auto Catch disabled immediately.", Duration = 2 })
             return
         end
 
-        -- Ensure aim & hit are active during Auto Catch
+        -- Activate aim & hit during Auto Catch pursuit
         autoAimSurvivorEnabled = true
         autoHitSurvivorEnabled = true
         updateKillerAim()
@@ -6247,8 +6358,12 @@ V_KillerSection:Toggle({
 
         WindUI:Notify({ Title = "Auto Catch", Content = "Hunting nearest active Survivor...", Duration = 2.5 })
 
+        local function checkCatchActive()
+            return autoCatchEnabled and (catchSession == thisSession) and scriptRunning
+        end
+
         task.spawn(function()
-            while autoCatchEnabled do
+            while checkCatchActive() do
                 local ok, err = pcall(function()
                     local myChar = player.Character
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -6276,7 +6391,7 @@ V_KillerSection:Toggle({
                     -- 3. PURSUE SURVIVOR
                     local curDist = (myHrp.Position - sHrp.Position).Magnitude
                     if curDist > 2.8 then
-                        travelToSurvivor(survivor)
+                        if checkCatchActive() then travelToSurvivor(survivor) end
                     end
 
                     -- Re-verify killer is not stunned after travel
@@ -6294,7 +6409,7 @@ V_KillerSection:Toggle({
 
                     -- 5. EXECUTE HIT WHEN IN RANGE
                     local finalDist = (myHrp.Position - sHrp.Position).Magnitude
-                    if finalDist <= 4.8 and not isKillerStunnedOrLocked(myChar) and not isSurvivorParryingOrShielded(survivor) then
+                    if checkCatchActive() and finalDist <= 4.8 and not isKillerStunnedOrLocked(myChar) and not isSurvivorParryingOrShielded(survivor) then
                         if (tick() - lastKillerHitTime) > 0.45 then
                             lastKillerHitTime = tick()
                             executeKillerHit(survivor)
