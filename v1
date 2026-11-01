@@ -27,8 +27,138 @@ local Window = WindUI:CreateWindow({
     Title = " Riel Private",
     Size = UDim2.fromOffset(500, 450),
     Transparent = false,
-    Theme = "Dark"
+    Theme = "Dark",
+    IgnoreAlerts = true
 })
+
+-- Master script running state
+local scriptRunning = true
+local charAddedConn = nil
+
+-- Global Clean Shutdown & Script Stopper
+local function stopScript()
+    if not scriptRunning then return end
+    scriptRunning = false
+
+    -- 1. Disable all automation toggles
+    autoRepairEnabled = false
+    autoSkillCheckEnabled = false
+    autoPalletEnabled = false
+    autoParryEnabled = false
+    autoSaveEnabled = false
+    killerESPEnabled = false
+    genESPEnabled = false
+    survivorESPEnabled = false
+    autoCatchEnabled = false
+    autoAimSurvivorEnabled = false
+    autoHitSurvivorEnabled = false
+    autoHookSurvivorEnabled = false
+    autoDodgeEnabled = false
+    autoRoleAdaptEnabled = false
+    flyEnabled = false
+    didEnabled = false
+    noClipEnabled = false
+
+    -- 2. Restore character state
+    pcall(function()
+        if updateNoClip then updateNoClip(false) end
+    end)
+    pcall(function()
+        if stopFly then stopFly() end
+    end)
+    if currentRepairPoint then
+        pcall(function()
+            local remotes = getVDRemotes and getVDRemotes()
+            if remotes and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
+                local HttpService = game:GetService("HttpService")
+                remotes.Generator.RepairEvent:FireServer(currentRepairPoint, false, nil, HttpService:GenerateGUID(false), player.Character)
+            end
+        end)
+        currentRepairPoint = nil
+    end
+
+    -- 3. Cancel background threads
+    local threadList = {
+        autoFarmSpeedThread,
+        autoMountAnehThread,
+        autoMountBotakThread,
+        autoFarmGemsThread,
+        autoFarmXPThread,
+        autoRebirthThread,
+        autoFishingThread,
+        autoEggThread
+    }
+    for _, th in ipairs(threadList) do
+        if th and typeof(th) == "thread" then
+            pcall(function() task.cancel(th) end)
+        end
+    end
+
+    -- 4. Disconnect connections
+    if killerAimConn then
+        pcall(function() killerAimConn:Disconnect() end)
+        killerAimConn = nil
+    end
+    if charAddedConn then
+        pcall(function() charAddedConn:Disconnect() end)
+        charAddedConn = nil
+    end
+
+    -- 5. Clean up ESP visuals
+    if cleanKillerESP then pcall(cleanKillerESP) end
+    if cleanGenESP then pcall(cleanGenESP) end
+    if cleanSurvivorESP then pcall(cleanSurvivorESP) end
+
+    -- 6. Destroy WindUI Window & ScreenGuis
+    pcall(function()
+        if Window and not Window.Destroyed then
+            Window:Destroy()
+        end
+    end)
+    pcall(function()
+        local coreGui = game:GetService("CoreGui")
+        local playerGui = player:FindFirstChild("PlayerGui")
+        for _, parent in ipairs({coreGui, playerGui}) do
+            if parent then
+                for _, child in ipairs(parent:GetChildren()) do
+                    if child.Name:lower():find("windui") or child.Name:lower():find("riel") then
+                        pcall(function() child:Destroy() end)
+                    end
+                end
+            end
+        end
+    end)
+
+    print("[Riel Private] Script stopped and UI closed successfully.")
+end
+
+-- Connect Window Close & Destroy Events
+Window:OnDestroy(function()
+    stopScript()
+end)
+
+Window:OnClose(function()
+    stopScript()
+end)
+
+-- Topbar direct button hook
+task.spawn(function()
+    task.wait(0.2)
+    pcall(function()
+        if Window and Window.TopBarButtons then
+            for _, btn in pairs(Window.TopBarButtons) do
+                if btn and btn.Name == "Close" and btn.Object then
+                    local b = btn.Object:FindFirstChildWhichIsA("GuiButton", true)
+                    if b then
+                        b.MouseButton1Click:Connect(function()
+                            stopScript()
+                        end)
+                    end
+                end
+            end
+        end
+    end)
+end)
 
 WindUI:Notify({
     Title = "Script Loaded",
@@ -44,6 +174,14 @@ local MainTab = Window:Tab({
 
 local MainSection = MainTab:Section({
     Title = "Auto Farm"
+})
+
+MainSection:Button({
+    Title = "❌ Close UI & Stop Script",
+    Description = "Safely close the UI and terminate all running features & loops",
+    Callback = function()
+        stopScript()
+    end
 })
 
 MainSection:Button({
@@ -1396,8 +1534,9 @@ V_RoleSection:Toggle({
 
 -- Background Auto-Role Monitor Thread (runs every 1 second)
 task.spawn(function()
-    while true do
+    while scriptRunning do
         pcall(function()
+            if not scriptRunning then return end
             if autoRoleAdaptEnabled then
                 local isKiller = isPlayerKiller and isPlayerKiller()
                 local currentRole = isKiller and "Killer" or "Survivor"
@@ -3348,8 +3487,9 @@ end
 
 -- Standalone Killer Combat Loop (Runs when Auto Aim or Auto Hit is ON, even if Auto Catch is OFF!)
 task.spawn(function()
-    while true do
+    while scriptRunning do
         pcall(function()
+            if not scriptRunning then return end
             if (autoAimSurvivorEnabled or autoHitSurvivorEnabled) and isPlayerKiller() then
                 local myChar = player.Character
                 local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -3480,8 +3620,9 @@ end
 -- AUTO HOOK SURVIVOR BACKGROUND LOOP
 -- ============================================================
 task.spawn(function()
-    while true do
+    while scriptRunning do
         pcall(function()
+            if not scriptRunning then return end
             if autoHookSurvivorEnabled and isPlayerKiller() and not isHookActionActive then
                 local myChar = player.Character
                 local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -3752,7 +3893,15 @@ DiscordSection:Button({
     end
 })
 
-player.CharacterAdded:Connect(function(char)
+DiscordSection:Button({
+    Title = "❌ Unload Script & Close UI",
+    Description = "Stops all automation, clears visuals, and closes UI",
+    Callback = function()
+        stopScript()
+    end
+})
+
+charAddedConn = player.CharacterAdded:Connect(function(char)
     character = char
     humanoid = char:WaitForChild("Humanoid")
     if flyEnabled then
