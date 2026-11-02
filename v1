@@ -221,44 +221,33 @@ end)
 print("[Riel Private] [3/5] Loading WindUI library...")
 local WindUI = nil
 
--- Attempt 1: Raw GitHub dist (direct raw content, no 302 redirect)
-pcall(function()
-    print("[Riel Private] -> Trying Source 1: Raw GitHub dist...")
-    local code = game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua")
-    if code and #code > 1000 then
-        WindUI = loadstring(code)()
-        if WindUI and WindUI.CreateWindow then
-            print("[Riel Private] -> Successfully loaded WindUI from Source 1 (Raw GitHub)!")
-        end
-    end
-end)
-
--- Attempt 2: jsDelivr CDN (high performance, unblocked globally)
-if not WindUI or not WindUI.CreateWindow then
-    pcall(function()
-        print("[Riel Private] -> Trying Source 2: jsDelivr CDN...")
-        local code = game:HttpGet("https://cdn.jsdelivr.net/gh/Footagesus/WindUI@main/dist/main.lua")
-        if code and #code > 1000 then
-            WindUI = loadstring(code)()
-            if WindUI and WindUI.CreateWindow then
-                print("[Riel Private] -> Successfully loaded WindUI from Source 2 (jsDelivr CDN)!")
+local function tryLoadWindUI(url, sourceName)
+    local ok, res = pcall(function()
+        print("[Riel Private] -> Trying " .. sourceName .. "...")
+        local src = game:HttpGet(url)
+        if src and #src > 1000 then
+            local fn, compileErr = loadstring(src)
+            if fn then
+                local success, lib = pcall(fn)
+                if success and lib and lib.CreateWindow then
+                    print("[Riel Private] -> Successfully loaded WindUI from " .. sourceName .. "!")
+                    return lib
+                end
+            else
+                warn("[Riel Private] Compile error from " .. sourceName .. ": " .. tostring(compileErr))
             end
         end
+        return nil
     end)
+    return ok and res or nil
 end
 
--- Attempt 3: GitHub Releases latest
+WindUI = tryLoadWindUI("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua", "Source 1 (Raw GitHub dist)")
 if not WindUI or not WindUI.CreateWindow then
-    pcall(function()
-        print("[Riel Private] -> Trying Source 3: GitHub Releases...")
-        local code = game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua")
-        if code and #code > 1000 then
-            WindUI = loadstring(code)()
-            if WindUI and WindUI.CreateWindow then
-                print("[Riel Private] -> Successfully loaded WindUI from Source 3 (GitHub Releases)!")
-            end
-        end
-    end)
+    WindUI = tryLoadWindUI("https://cdn.jsdelivr.net/gh/Footagesus/WindUI@main/dist/main.lua", "Source 2 (jsDelivr CDN)")
+end
+if not WindUI or not WindUI.CreateWindow then
+    WindUI = tryLoadWindUI("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua", "Source 3 (GitHub Releases)")
 end
 
 -- Safety wait loop
@@ -425,7 +414,7 @@ local function createFloatingWidget()
 
     pill.MouseButton1Click:Connect(onPillActivated)
     pcall(function()
-        pill.TouchTap:Connect(onPillActivated)
+        pcall(function() if pill.Activated then pill.Activated:Connect(onPillActivated) end end)
     end)
 
     floatingGui.Parent = parentGui
@@ -444,36 +433,48 @@ local function ensureFloatingButtonVisible(show)
     end
 end
 
--- Connect Window Close, Minimize & Destroy Events
-Window:OnDestroy(function()
-    stopScript()
+-- Connect Window Close, Minimize & Destroy Events safely
+pcall(function()
+    if Window and Window.OnDestroy then
+        Window:OnDestroy(function()
+            stopScript()
+        end)
+    end
 end)
 
-Window:OnClose(function()
-    task.spawn(function()
-        task.wait(0.2)
-        if Window and not Window.Destroyed and Window.Closed then
+pcall(function()
+    if Window and Window.OnClose then
+        Window:OnClose(function()
+            task.spawn(function()
+                task.wait(0.2)
+                if Window and not Window.Destroyed and Window.Closed then
+                    if Window.OpenButtonMain then
+                        pcall(function()
+                            Window.OpenButtonMain:Visible(true)
+                        end)
+                    end
+                    pcall(function()
+                        ensureFloatingButtonVisible(true)
+                    end)
+                end
+            end)
+        end)
+    end
+end)
+
+pcall(function()
+    if Window and Window.OnOpen then
+        Window:OnOpen(function()
             if Window.OpenButtonMain then
                 pcall(function()
-                    Window.OpenButtonMain:Visible(true)
+                    Window.OpenButtonMain:Visible(false)
                 end)
             end
             pcall(function()
-                ensureFloatingButtonVisible(true)
+                ensureFloatingButtonVisible(false)
             end)
-        end
-    end)
-end)
-
-Window:OnOpen(function()
-    if Window.OpenButtonMain then
-        pcall(function()
-            Window.OpenButtonMain:Visible(false)
         end)
     end
-    pcall(function()
-        ensureFloatingButtonVisible(false)
-    end)
 end)
 
 -- Topbar direct button hook
@@ -709,10 +710,7 @@ MainSection:Toggle({
 
             autoFarmSpeedThread = task.spawn(function()
                 while task.wait(2) do
-                    if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
-                        continue
-                    end
-
+                    if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
                     pcall(function()
                         player.Character.HumanoidRootPart.CFrame = CFrame.new(1527, 2589, -987)
 						local player = game.Players.LocalPlayer
@@ -726,7 +724,7 @@ MainSection:Toggle({
 						else
 							content = "No leaderstats found for this player."
 						end
-                        loopCount += 1
+                        loopCount = (loopCount or 0) + 1
                         if loopCount % 20 == 0 then -- show every 20 loops to avoid spam
                             WindUI:Notify({
                                 Title = "📊 Your Stats",
@@ -735,6 +733,7 @@ MainSection:Toggle({
                             })
                         end
                     end)
+                    end
                 end
             end)
         else
@@ -783,10 +782,7 @@ MainSection:Toggle({
 
             autoMountAnehThread = task.spawn(function()
                 while task.wait(2) do
-                    if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
-                        continue
-                    end
-
+                    if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
                     pcall(function()
                         local hrp = player.Character.HumanoidRootPart
                         local leaderstats = player:FindFirstChild("leaderstats")
@@ -819,7 +815,7 @@ MainSection:Toggle({
                             })
                         end
 
-                        loopCount += 1
+                        loopCount = (loopCount or 0) + 1
 
                         -- 📊 Show stats every 20 loops
                         if loopCount % 20 == 0 then
@@ -838,6 +834,7 @@ MainSection:Toggle({
                             })
                         end
                     end)
+                    end
                 end
             end)
         else
@@ -895,14 +892,10 @@ MainSection:Toggle({
 
             autoMountBotakThread = task.spawn(function()
                 while task.wait(2) do
-                    if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
-                        continue
-                    end
-
+                    if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
                     pcall(function()
                         local hrp = player.Character.HumanoidRootPart
                         local leaderstats = player:FindFirstChild("leaderstats")
-
                         if not leaderstats then return end
 
                         local stageStat = leaderstats:FindFirstChild("Stage")
@@ -933,7 +926,7 @@ MainSection:Toggle({
                             })
                         end
 
-                        loopCount += 1
+                        loopCount = (loopCount or 0) + 1
 
                         -- Show stats every 20 loops
                         if loopCount % 20 == 0 then
@@ -948,6 +941,7 @@ MainSection:Toggle({
                             })
                         end
                     end)
+                    end
                 end
             end)
         else
@@ -2779,12 +2773,7 @@ V_ESPSection:Toggle({
                     local hum = c:FindFirstChildOfClass("Humanoid")
                     local hrp = c:FindFirstChild("HumanoidRootPart")
 
-                    if hum and hrp and hum.Health > 0 and myHrp and c:IsDescendantOf(workspace) then
-                        -- Double-check: NEVER draw survivor ESP on the Killer
-                        if c == killerChar or isCharacterKiller(c, item.plr) then
-                            continue
-                        end
-
+                    if hum and hrp and hum.Health > 0 and myHrp and c:IsDescendantOf(workspace) and c ~= killerChar and not isCharacterKiller(c, item.plr) then
                         local dist = (myHrp.Position - hrp.Position).Magnitude
 
                         -- Determine status & color using unified functions
