@@ -1,35 +1,11 @@
 -- ============================================================
 -- CORE ROBLOX SERVICES & INITIALIZATION
 -- ============================================================
-local WindUI = nil
-pcall(function()
-    WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
-end)
-if not WindUI or not WindUI.CreateWindow then
-    pcall(function()
-        WindUI = loadstring(game:HttpGet("https://cdn.jsdelivr.net/gh/Footagesus/WindUI@main/dist/main.lua"))()
-    end)
-end
-if not WindUI or not WindUI.CreateWindow then
-    pcall(function()
-        WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
-    end)
-end
-
-local windUiWait = tick()
-while (not WindUI or not WindUI.CreateWindow) and (tick() - windUiWait) < 10 do
-    task.wait(0.1)
-end
-
-if not WindUI or not WindUI.CreateWindow then
-    warn("[Riel Private] WindUI library could not be loaded. Please check your internet connection or executor HTTP permissions.")
-    return
-end
-
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
 local weathers = {"Cloudy", "Snow", "Storm", "Radiant", "SharkHunt", "Wind"}
 
 local player = Players.LocalPlayer
@@ -42,7 +18,6 @@ end
 local character = player and player.Character
 local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 
--- Non-blocking character watcher to prevent startup hang
 if player then
     player.CharacterAdded:Connect(function(newChar)
         character = newChar
@@ -50,54 +25,74 @@ if player then
     end)
 end
 
--- Reset WindUI Window singleton if previously run in this game session
-if WindUI and WindUI.Window then
-    pcall(function()
-        if typeof(WindUI.Window.Destroy) == "function" then
-            WindUI.Window:Destroy()
-        end
+-- ============================================================
+-- GUARANTEED SAFE GUI CONTAINER & ANDROID PERMISSION RESOLVER
+-- ============================================================
+local function testContainerWritable(container)
+    if not container or typeof(container) ~= "Instance" then return false end
+    local ok = pcall(function()
+        local test = Instance.new("Folder")
+        test.Name = "RielPermissionCheck"
+        test.Parent = container
+        test:Destroy()
     end)
-    WindUI.Window = nil
+    return ok
 end
 
-local autoFarmSpeedThread
-local autoMountAnehThread
-local autoMountBotakThread
-local autoFarmGemsThread
-local autoFarmXPThread
-local autoRebirthThread
-local autoFishingThread
-local autoEggThread
-local didEnabled = false
-local flyEnabled = false
-local selectedEgg = "Red Crystal"
+local safeGuiParent = nil
 
--- Window Creation (Original proven architecture)
-local Window = WindUI:CreateWindow({
-    Title = " Riel Private",
-    Folder = "RielPrivate",
-    Icon = "shield",
-    Size = UDim2.fromOffset(500, 450),
-    Transparent = false,
-    Theme = "Dark",
-    IgnoreAlerts = true,
-    OpenButton = {
-        Enabled = true,
-        OnlyMobile = false,
-        Title = "Riel Private",
-        Icon = "shield",
-        Position = UDim2.new(0, 20, 0.45, 0),
-        Draggable = true,
-        OnlyIcon = false
-    }
-})
+-- 1. Check executor gethui() if valid & writable
+pcall(function()
+    if typeof(gethui) == "function" then
+        local hui = gethui()
+        if testContainerWritable(hui) then
+            safeGuiParent = hui
+        end
+    end
+end)
+
+-- 2. Check CoreGui only if writable (PC executors)
+if not safeGuiParent then
+    pcall(function()
+        local cg = game:GetService("CoreGui")
+        if testContainerWritable(cg) then
+            safeGuiParent = cg
+        end
+    end)
+end
+
+-- 3. Guaranteed Android mobile fallback: PlayerGui
+if not safeGuiParent and player then
+    safeGuiParent = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+end
+
+if not safeGuiParent and player then
+    safeGuiParent = player:WaitForChild("PlayerGui", 10)
+end
+
+-- CRITICAL ANDROID ENGINE FIX:
+-- Inject safe gethui into global environment so external libraries (WindUI)
+-- will ALWAYS parent their ScreenGuis to safeGuiParent (PlayerGui on Android)
+-- instead of falling back to CoreGui and crashing with permission 6 security check!
+if safeGuiParent then
+    pcall(function()
+        if typeof(getgenv) == "function" and getgenv() then
+            getgenv().gethui = function()
+                return safeGuiParent
+            end
+        end
+    end)
+end
 
 -- Master script running state
 local scriptRunning = true
 local charAddedConn = nil
 local floatingGui = nil
+local mobileHubGui = nil
+local mobileMenuFrame = nil
+local mobilePill = nil
 
--- Master Automation Session Counters (increments every time a toggle is switched to kill previous threads)
+-- Master Automation Session Counters
 local repairSession = 0
 local saveSession = 0
 local catchSession = 0
@@ -105,7 +100,7 @@ local palletSession = 0
 local parrySession = 0
 local dodgeSession = 0
 
--- Master Automation Toggle States (Declared top-level so all functions & threads share upvalues)
+-- Master Automation Toggle States
 local autoRepairEnabled = false
 local autoSkillCheckEnabled = false
 local autoPalletEnabled = false
@@ -126,19 +121,45 @@ local noClipEnabled = false
 local currentRepairPoint = nil
 local currentKillerTarget = nil
 
--- Force floating open button to be enabled across all platforms (Mobile, PC, Emulators)
-if Window then
-    Window.IsPC = false
-    Window.IsOpenButtonEnabled = true
-    if Window.OpenButtonMain then
-        pcall(function()
-            Window.OpenButtonMain:Visible(false)
-        end)
-    end
-end
+local autoFarmSpeedThread
+local autoMountAnehThread
+local autoMountBotakThread
+local autoFarmGemsThread
+local autoFarmXPThread
+local autoRebirthThread
+local autoFishingThread
+local autoEggThread
+local selectedEgg = "Red Crystal"
 
--- Global Clean Shutdown & Script Stopper
-local function stopScript()
+-- Feature Callbacks Registry (Bridges WindUI and Native Android Mobile Hub)
+local FeatureRegistry = {
+    AutoRepair = nil,
+    PerfectSkillcheck = nil,
+    AutoParry = nil,
+    AutoDodge = nil,
+    AutoSave = nil,
+    AutoCatch = nil,
+    AutoAim = nil,
+    AutoHit = nil,
+    AutoHook = nil,
+    KillerESP = nil,
+    SurvivorESP = nil,
+    GenESP = nil,
+    AutoRoleAdapt = nil,
+    TeleportGen = nil,
+    TeleportRescue = nil,
+    TeleportSurvivor = nil,
+    DisableCollision = nil,
+    StopScript = nil
+}
+
+-- Forward declaration of stopScript
+local stopScript
+
+-- ============================================================
+-- GLOBAL CLEAN SHUTDOWN & SCRIPT STOPPER
+-- ============================================================
+stopScript = function()
     if not scriptRunning then return end
     scriptRunning = false
 
@@ -180,7 +201,6 @@ local function stopScript()
         pcall(function()
             local remotes = getVDRemotes and getVDRemotes()
             if remotes and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
-                local HttpService = game:GetService("HttpService")
                 remotes.Generator.RepairEvent:FireServer(currentRepairPoint, false, nil, HttpService:GenerateGUID(false), player and player.Character)
             end
         end)
@@ -219,13 +239,19 @@ local function stopScript()
     if cleanGenESP then pcall(cleanGenESP) end
     if cleanSurvivorESP then pcall(cleanSurvivorESP) end
 
-    -- 6. Destroy Floating Widget, WindUI Window & ScreenGuis
+    -- 6. Destroy Native Mobile Hub & Floating Widget
+    if mobileHubGui then
+        pcall(function() mobileHubGui:Destroy() end)
+        mobileHubGui = nil
+    end
     if floatingGui then
         pcall(function() floatingGui:Destroy() end)
         floatingGui = nil
     end
+
+    -- 7. Destroy WindUI Window & Residual ScreenGuis
     pcall(function()
-        if Window and not Window.Destroyed then
+        if Window and not Window.Destroyed and typeof(Window.Destroy) == "function" then
             Window:Destroy()
         end
     end)
@@ -246,204 +272,620 @@ local function stopScript()
     print("[Riel Private] Script stopped and UI closed successfully.")
 end
 
--- ============================================================
--- FLOATING TOGGLE ICON (MINIMIZE RE-OPEN WIDGET)
--- ============================================================
-local function createFloatingWidget()
-    if floatingGui and floatingGui.Parent then return floatingGui end
+-- Forward declaration of Window
+local Window = nil
+local WindUI = nil
 
-    local parentGui = nil
-    pcall(function()
-        local gethui = gethui or function() return nil end
-        parentGui = gethui() or game:GetService("CoreGui")
-    end)
-    if not parentGui or not pcall(function() return parentGui.Name end) then
-        parentGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+-- UI Toggle Handler (Bridges Floating Pill and Mobile Menu)
+local lastToggleTime = 0
+local function toggleAllUI()
+    if (tick() - lastToggleTime) < 0.25 then return end
+    lastToggleTime = tick()
+
+    if mobileMenuFrame then
+        mobileMenuFrame.Visible = not mobileMenuFrame.Visible
     end
-
-    floatingGui = Instance.new("ScreenGui")
-    floatingGui.Name = "RielFloatingWidget"
-    floatingGui.ResetOnSpawn = false
-    floatingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
-    local pill = Instance.new("TextButton")
-    pill.Name = "FloatingPill"
-    pill.Size = UDim2.new(0, 140, 0, 36)
-    pill.Position = UDim2.new(0, 20, 0.45, 0)
-    pill.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
-    pill.BorderSizePixel = 0
-    pill.Text = "🛡️ Riel Private"
-    pill.TextColor3 = Color3.fromRGB(255, 255, 255)
-    pill.TextSize = 14
-    pill.Font = Enum.Font.GothamMedium
-    pill.AutoButtonColor = true
-    pill.Active = true
-    pill.Selectable = true
-    pill.Parent = floatingGui
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(1, 0)
-    corner.Parent = pill
-
-    local stroke = Instance.new("UIStroke")
-    stroke.Thickness = 1.5
-    stroke.Color = Color3.fromRGB(80, 160, 255)
-    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    stroke.Parent = pill
-
-    local gradient = Instance.new("UIGradient")
-    gradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(64, 201, 255)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(232, 28, 255))
-    })
-    gradient.Parent = stroke
-
-    -- Make pill draggable across touch and mouse
-    local dragging, dragInput, dragStart, startPos
-    pill.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = pill.Position
-
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
-            end)
-        end
-    end)
-
-    pill.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            dragInput = input
-        end
-    end)
-
-    UserInputService.InputChanged:Connect(function(input)
-        if input == dragInput and dragging and dragStart then
-            local delta = input.Position - dragStart
-            pill.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
-        end
-    end)
-
-    -- Tap/click to toggle window open/closed
-    local lastToggleTime = 0
-    local function toggleWin()
-        if (tick() - lastToggleTime) < 0.25 then return end
-        lastToggleTime = tick()
-        if Window and not Window.Destroyed then
-            pcall(function()
-                if Window.Closed then
-                    Window:Open()
-                else
-                    Window:Close()
-                end
-            end)
-        end
-    end
-
-    pill.Activated:Connect(toggleWin)
-    pill.MouseButton1Click:Connect(toggleWin)
-
-    pill.Visible = true
-    floatingGui.Parent = parentGui
-    return floatingGui
-end
-
-local function ensureFloatingButtonVisible(show)
-    if not scriptRunning then
-        if floatingGui then pcall(function() floatingGui:Destroy() end) floatingGui = nil end
-        return
-    end
-
-    if show then
-        -- Check if WindUI native OpenButtonMain is visible on screen
-        local isNativeShowing = false
+    if Window and not Window.Destroyed and typeof(Window.Open) == "function" and typeof(Window.Close) == "function" then
         pcall(function()
-            if Window and Window.OpenButtonMain and Window.OpenButtonMain.Button and Window.OpenButtonMain.Button.Visible then
-                if Window.OpenButtonMain.Button.Parent and Window.OpenButtonMain.Button.Parent.Visible then
-                    isNativeShowing = true
-                end
+            if Window.Closed then
+                Window:Open()
+            else
+                Window:Close()
             end
         end)
+    end
+end
 
-        if not isNativeShowing then
-            local fg = createFloatingWidget()
-            if fg and fg:FindFirstChild("FloatingPill") then
-                fg.FloatingPill.Visible = true
-            end
-        end
+-- Feature Trigger Handler
+local function triggerFeature(key, val)
+    if FeatureRegistry[key] then
+        pcall(function()
+            FeatureRegistry[key](val)
+        end)
     else
-        if floatingGui and floatingGui:FindFirstChild("FloatingPill") then
-            floatingGui.FloatingPill.Visible = false
+        -- Direct fallback if callback not registered yet
+        if key == "AutoRepair" then autoRepairEnabled = val
+        elseif key == "PerfectSkillcheck" then perfectSkillcheckEnabled = val
+        elseif key == "AutoParry" then autoParryEnabled = val
+        elseif key == "AutoDodge" then autoDodgeEnabled = val
+        elseif key == "AutoSave" then autoSaveEnabled = val
+        elseif key == "AutoCatch" then autoCatchEnabled = val
+        elseif key == "AutoAim" then autoAimSurvivorEnabled = val
+        elseif key == "AutoHit" then autoHitSurvivorEnabled = val
+        elseif key == "AutoHook" then autoHookSurvivorEnabled = val
+        elseif key == "KillerESP" then killerESPEnabled = val
+        elseif key == "SurvivorESP" then survivorESPEnabled = val
+        elseif key == "GenESP" then genESPEnabled = val
+        elseif key == "AutoRoleAdapt" then autoRoleAdaptEnabled = val
+        elseif key == "StopScript" then stopScript()
         end
     end
 end
 
--- Global Keyboard Shortcut to Toggle UI (RightControl, LeftControl, Insert)
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.KeyCode == Enum.KeyCode.RightControl or input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.Insert then
-        if Window and not Window.Destroyed then
-            pcall(function()
-                if Window.Closed then
-                    Window:Open()
-                else
-                    Window:Close()
-                end
-            end)
-        end
+-- ============================================================
+-- NATIVE ANDROID FLOATING PILL & MOBILE HUB (ZERO DEPENDENCY)
+-- ============================================================
+pcall(function()
+    if safeGuiParent then
+        local old = safeGuiParent:FindFirstChild("RielFloatingWidget")
+        if old then old:Destroy() end
+        local oldHub = safeGuiParent:FindFirstChild("RielMobileHub")
+        if oldHub then oldHub:Destroy() end
     end
 end)
 
--- Connect Window Close, Minimize & Destroy Events
-if Window then
-    Window:OnDestroy(function()
-        stopScript()
-    end)
+mobileHubGui = Instance.new("ScreenGui")
+mobileHubGui.Name = "RielMobileHub"
+mobileHubGui.ResetOnSpawn = false
+mobileHubGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+mobileHubGui.DisplayOrder = 999999
+mobileHubGui.Parent = safeGuiParent
 
-    Window:OnClose(function()
-        -- Minimize button clicked: show floating button
-        task.spawn(function()
-            task.wait(0.3)
-            if Window and not Window.Destroyed and Window.Closed then
-                if Window.OpenButtonMain then
-                    pcall(function()
-                        Window.OpenButtonMain:Visible(true)
-                    end)
+-- 1. Floating Pill Widget (Always visible on mobile & PC from startup)
+mobilePill = Instance.new("TextButton")
+mobilePill.Name = "FloatingPill"
+mobilePill.Size = UDim2.new(0, 140, 0, 36)
+mobilePill.Position = UDim2.new(0, 16, 0.42, 0)
+mobilePill.BackgroundColor3 = Color3.fromRGB(18, 20, 28)
+mobilePill.BackgroundTransparency = 0.12
+mobilePill.BorderSizePixel = 0
+mobilePill.Text = "🛡️ Riel Private"
+mobilePill.TextColor3 = Color3.fromRGB(255, 255, 255)
+mobilePill.TextSize = 13
+mobilePill.Font = Enum.Font.GothamBold
+mobilePill.AutoButtonColor = false
+mobilePill.Active = true
+mobilePill.Selectable = true
+mobilePill.Parent = mobileHubGui
+
+local pillCorner = Instance.new("UICorner")
+pillCorner.CornerRadius = UDim.new(0, 18)
+pillCorner.Parent = mobilePill
+
+local pillStroke = Instance.new("UIStroke")
+pillStroke.Thickness = 1.5
+pillStroke.Color = Color3.fromRGB(56, 189, 248)
+pillStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+pillStroke.Parent = mobilePill
+
+local pillGradient = Instance.new("UIGradient")
+pillGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(56, 189, 248)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(217, 70, 239))
+})
+pillGradient.Parent = pillStroke
+
+-- Draggable & Touch-safe Click Detection on Mobile
+local isDraggingPill = false
+local pillDragStart = Vector3.new()
+local pillStartPos = UDim2.new()
+local pillTouchTime = 0
+
+mobilePill.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        isDraggingPill = true
+        pillDragStart = input.Position
+        pillStartPos = mobilePill.Position
+        pillTouchTime = tick()
+
+        local conn
+        conn = input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                isDraggingPill = false
+                if conn then conn:Disconnect() end
+                local movedDist = (input.Position - pillDragStart).Magnitude
+                local elapsed = tick() - pillTouchTime
+                if movedDist < 8 and elapsed < 0.35 then
+                    toggleAllUI()
                 end
-                pcall(function()
-                    ensureFloatingButtonVisible(true)
-                end)
             end
         end)
-    end)
+    end
+end)
 
-    Window:OnOpen(function()
-        -- Window reopened: hide floating button
-        if Window.OpenButtonMain then
-            pcall(function()
-                Window.OpenButtonMain:Visible(false)
-            end)
-        end
-        pcall(function()
-            ensureFloatingButtonVisible(false)
+UserInputService.InputChanged:Connect(function(input)
+    if isDraggingPill and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - pillDragStart
+        mobilePill.Position = UDim2.new(
+            pillStartPos.X.Scale,
+            pillStartPos.X.Offset + delta.X,
+            pillStartPos.Y.Scale,
+            pillStartPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+-- 2. Native Mobile Hub Modal Window
+mobileMenuFrame = Instance.new("Frame")
+mobileMenuFrame.Name = "MobileMenuFrame"
+mobileMenuFrame.Size = UDim2.new(0, 320, 0, 420)
+mobileMenuFrame.Position = UDim2.new(0.5, -160, 0.5, -210)
+mobileMenuFrame.BackgroundColor3 = Color3.fromRGB(15, 17, 26)
+mobileMenuFrame.BackgroundTransparency = 0.05
+mobileMenuFrame.BorderSizePixel = 0
+mobileMenuFrame.Visible = false
+mobileMenuFrame.Active = true
+mobileMenuFrame.Parent = mobileHubGui
+
+local menuCorner = Instance.new("UICorner")
+menuCorner.CornerRadius = UDim.new(0, 12)
+menuCorner.Parent = mobileMenuFrame
+
+local menuStroke = Instance.new("UIStroke")
+menuStroke.Thickness = 1.5
+menuStroke.Color = Color3.fromRGB(59, 130, 246)
+menuStroke.Parent = mobileMenuFrame
+
+-- Header Bar
+local headerFrame = Instance.new("Frame")
+headerFrame.Name = "HeaderFrame"
+headerFrame.Size = UDim2.new(1, 0, 0, 42)
+headerFrame.BackgroundColor3 = Color3.fromRGB(22, 26, 38)
+headerFrame.BorderSizePixel = 0
+headerFrame.Parent = mobileMenuFrame
+
+local headerCorner = Instance.new("UICorner")
+headerCorner.CornerRadius = UDim.new(0, 12)
+headerCorner.Parent = headerFrame
+
+local headerTitle = Instance.new("TextLabel")
+headerTitle.Size = UDim2.new(1, -50, 1, 0)
+headerTitle.Position = UDim2.new(0, 14, 0, 0)
+headerTitle.BackgroundTransparency = 1
+headerTitle.Text = "🛡️ Riel Private [Mobile Hub]"
+headerTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+headerTitle.TextSize = 13
+headerTitle.Font = Enum.Font.GothamBold
+headerTitle.TextXAlignment = Enum.TextXAlignment.Left
+headerTitle.Parent = headerFrame
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 28, 0, 28)
+closeBtn.Position = UDim2.new(1, -34, 0.5, -14)
+closeBtn.BackgroundColor3 = Color3.fromRGB(239, 68, 68)
+closeBtn.BorderSizePixel = 0
+closeBtn.Text = "X"
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.TextSize = 12
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.Parent = headerFrame
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 6)
+closeCorner.Parent = closeBtn
+
+closeBtn.MouseButton1Click:Connect(function()
+    mobileMenuFrame.Visible = false
+end)
+
+-- Draggable Header
+local isDraggingMenu = false
+local menuDragStart = Vector3.new()
+local menuStartPos = UDim2.new()
+headerFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        isDraggingMenu = true
+        menuDragStart = input.Position
+        menuStartPos = mobileMenuFrame.Position
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                isDraggingMenu = false
+            end
         end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if isDraggingMenu and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - menuDragStart
+        mobileMenuFrame.Position = UDim2.new(
+            menuStartPos.X.Scale,
+            menuStartPos.X.Offset + delta.X,
+            menuStartPos.Y.Scale,
+            menuStartPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+-- Tab Switcher Bar
+local tabBar = Instance.new("Frame")
+tabBar.Size = UDim2.new(1, -20, 0, 32)
+tabBar.Position = UDim2.new(0, 10, 0, 48)
+tabBar.BackgroundTransparency = 1
+tabBar.Parent = mobileMenuFrame
+
+local tabLayout = Instance.new("UIListLayout")
+tabLayout.FillDirection = Enum.FillDirection.Horizontal
+tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+tabLayout.Padding = UDim.new(0, 6)
+tabLayout.Parent = tabBar
+
+local scrollSurvivor = Instance.new("ScrollingFrame")
+local scrollKiller = Instance.new("ScrollingFrame")
+local scrollMisc = Instance.new("ScrollingFrame")
+
+local function setupScrollFrame(sf)
+    sf.Size = UDim2.new(1, -20, 1, -90)
+    sf.Position = UDim2.new(0, 10, 0, 84)
+    sf.BackgroundTransparency = 1
+    sf.BorderSizePixel = 0
+    sf.ScrollBarThickness = 3
+    sf.ScrollBarImageColor3 = Color3.fromRGB(56, 189, 248)
+    sf.Visible = false
+    sf.Parent = mobileMenuFrame
+
+    local list = Instance.new("UIListLayout")
+    list.Padding = UDim.new(0, 6)
+    list.Parent = sf
+
+    list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        sf.CanvasSize = UDim2.new(0, 0, 0, list.AbsoluteContentSize.Y + 16)
+    end)
+    return sf
+end
+
+setupScrollFrame(scrollSurvivor)
+setupScrollFrame(scrollKiller)
+setupScrollFrame(scrollMisc)
+scrollSurvivor.Visible = true
+
+local function createTabButton(title, targetScroll)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.31, 0, 1, 0)
+    btn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+    btn.BorderSizePixel = 0
+    btn.Text = title
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 11
+    btn.Font = Enum.Font.GothamMedium
+    btn.Parent = tabBar
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = btn
+
+    btn.MouseButton1Click:Connect(function()
+        scrollSurvivor.Visible = (targetScroll == scrollSurvivor)
+        scrollKiller.Visible = (targetScroll == scrollKiller)
+        scrollMisc.Visible = (targetScroll == scrollMisc)
+    end)
+    return btn
+end
+
+local tabBtnSurv = createTabButton("🏃 Survivor", scrollSurvivor)
+local tabBtnKill = createTabButton("👹 Killer", scrollKiller)
+local tabBtnMisc = createTabButton("👁️ ESP/Misc", scrollMisc)
+
+-- Row Item Helpers
+local function createMobileToggle(parentScroll, title, defaultVal, callbackKey)
+    local state = defaultVal or false
+
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 40)
+    row.BackgroundColor3 = Color3.fromRGB(24, 28, 40)
+    row.BorderSizePixel = 0
+    row.Parent = parentScroll
+
+    local rowCorner = Instance.new("UICorner")
+    rowCorner.CornerRadius = UDim.new(0, 8)
+    rowCorner.Parent = row
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -70, 1, 0)
+    label.Position = UDim2.new(0, 10, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = title
+    label.TextColor3 = Color3.fromRGB(240, 240, 240)
+    label.TextSize = 12
+    label.Font = Enum.Font.GothamMedium
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = row
+
+    local badge = Instance.new("TextButton")
+    badge.Size = UDim2.new(0, 56, 0, 26)
+    badge.Position = UDim2.new(1, -62, 0.5, -13)
+    badge.BorderSizePixel = 0
+    badge.TextSize = 11
+    badge.Font = Enum.Font.GothamBold
+    badge.Parent = row
+
+    local badgeCorner = Instance.new("UICorner")
+    badgeCorner.CornerRadius = UDim.new(0, 6)
+    badgeCorner.Parent = badge
+
+    local function updateVisual()
+        if state then
+            badge.BackgroundColor3 = Color3.fromRGB(22, 101, 52)
+            badge.TextColor3 = Color3.fromRGB(74, 222, 128)
+            badge.Text = "[ ON ]"
+        else
+            badge.BackgroundColor3 = Color3.fromRGB(55, 65, 81)
+            badge.TextColor3 = Color3.fromRGB(156, 163, 175)
+            badge.Text = "[ OFF ]"
+        end
+    end
+    updateVisual()
+
+    local function toggle()
+        state = not state
+        updateVisual()
+        triggerFeature(callbackKey, state)
+    end
+
+    badge.MouseButton1Click:Connect(toggle)
+    local clickDetector = Instance.new("TextButton")
+    clickDetector.Size = UDim2.new(1, 0, 1, 0)
+    clickDetector.BackgroundTransparency = 1
+    clickDetector.Text = ""
+    clickDetector.Parent = row
+    clickDetector.MouseButton1Click:Connect(toggle)
+end
+
+local function createMobileButton(parentScroll, title, callbackKey)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 0, 36)
+    btn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+    btn.BorderSizePixel = 0
+    btn.Text = title
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 12
+    btn.Font = Enum.Font.GothamBold
+    btn.Parent = parentScroll
+
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 8)
+    btnCorner.Parent = btn
+
+    local btnStroke = Instance.new("UIStroke")
+    btnStroke.Thickness = 1
+    btnStroke.Color = Color3.fromRGB(59, 130, 246)
+    btnStroke.Parent = btn
+
+    btn.MouseButton1Click:Connect(function()
+        triggerFeature(callbackKey)
     end)
 end
+
+-- Populate Survivor Tab
+createMobileToggle(scrollSurvivor, "Auto Repair Generator", false, "AutoRepair")
+createMobileToggle(scrollSurvivor, "Perfect Skillcheck", true, "PerfectSkillcheck")
+createMobileToggle(scrollSurvivor, "Auto Parry Killer", false, "AutoParry")
+createMobileToggle(scrollSurvivor, "Auto Dodge Killer", false, "AutoDodge")
+createMobileToggle(scrollSurvivor, "Auto Save Teammates", false, "AutoSave")
+createMobileButton(scrollSurvivor, "⚡ Safe Teleport to Next Gen", "TeleportGen")
+createMobileButton(scrollSurvivor, "🚑 Rescue Hooked Teammate", "TeleportRescue")
+
+-- Populate Killer Tab
+createMobileToggle(scrollKiller, "Auto Catch Survivor", false, "AutoCatch")
+createMobileToggle(scrollKiller, "Auto Aim Survivor", false, "AutoAim")
+createMobileToggle(scrollKiller, "Auto Hit Survivor", false, "AutoHit")
+createMobileToggle(scrollKiller, "Auto Hook Survivor", false, "AutoHook")
+createMobileButton(scrollKiller, "🎯 Teleport to Survivor", "TeleportSurvivor")
+
+-- Populate ESP / Misc Tab
+createMobileToggle(scrollMisc, "Killer ESP", false, "KillerESP")
+createMobileToggle(scrollMisc, "Survivor ESP", false, "SurvivorESP")
+createMobileToggle(scrollMisc, "Generator ESP", false, "GenESP")
+createMobileToggle(scrollMisc, "Auto Role Adapt", true, "AutoRoleAdapt")
+createMobileButton(scrollMisc, "🚫 Disable Collision (Server)", "DisableCollision")
+createMobileButton(scrollMisc, "❌ Close UI & Stop Script", "StopScript")
+
+-- ============================================================
+-- SAFE WINDUI LOADER & TRANSPARENT PROXY ARCHITECTURE
+-- ============================================================
+pcall(function()
+    WindUI = loadstring(game:HttpGet("https://cdn.jsdelivr.net/gh/Footagesus/WindUI@main/dist/main.lua"))()
+end)
+if not WindUI or not WindUI.CreateWindow then
+    pcall(function()
+        WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+    end)
+end
+if not WindUI or not WindUI.CreateWindow then
+    pcall(function()
+        WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+    end)
+end
+
+-- Reset singleton if previously created
+if WindUI and WindUI.Window then
+    pcall(function()
+        if typeof(WindUI.Window.Destroy) == "function" then
+            WindUI.Window:Destroy()
+        end
+    end)
+    WindUI.Window = nil
+end
+
+-- Safely attempt CreateWindow
+if WindUI and WindUI.CreateWindow then
+    pcall(function()
+        Window = WindUI:CreateWindow({
+            Title = " Riel Private",
+            Folder = "RielPrivate",
+            Icon = "shield",
+            Size = UDim2.fromOffset(500, 450),
+            Transparent = false,
+            Theme = "Dark",
+            IgnoreAlerts = true,
+            OpenButton = {
+                Enabled = true,
+                OnlyMobile = false,
+                Title = "Riel Private",
+                Icon = "shield",
+                Position = UDim2.new(0, 20, 0.45, 0),
+                Draggable = true,
+                OnlyIcon = false
+            }
+        })
+    end)
+end
+
+-- Transparent Fallback Proxy so script NEVER crashes if WindUI fails
+local function createFallbackProxy()
+    local proxy = {}
+    setmetatable(proxy, {
+        __index = function(t, key)
+            if key == "Notify" then
+                return function(self, opt)
+                    if type(opt) == "table" then
+                        print(string.format("[Riel Private] %s: %s", tostring(opt.Title or ""), tostring(opt.Content or "")))
+                    end
+                end
+            end
+            return function(self, ...)
+                return createFallbackProxy()
+            end
+        end
+    })
+    return proxy
+end
+
+if not Window then
+    Window = createFallbackProxy()
+end
+if not WindUI then
+    WindUI = createFallbackProxy()
+end
+
+-- WindUI Window Interceptor to bridge Section:Toggle and Section:Button to FeatureRegistry
+if Window and typeof(Window.Tab) == "function" then
+    local rawTab = Window.Tab
+    Window.Tab = function(self, tabOpt)
+        local realTab = rawTab(self, tabOpt)
+        local wrappedTab = {}
+        setmetatable(wrappedTab, {
+            __index = function(t, k)
+                if k == "Section" then
+                    return function(secSelf, secOpt)
+                        local realSec = realTab:Section(secOpt)
+                        local wrappedSec = {}
+                        setmetatable(wrappedSec, {
+                            __index = function(st, sk)
+                                if sk == "Toggle" then
+                                    return function(tSelf, tOpt)
+                                        if type(tOpt) == "table" and type(tOpt.Callback) == "function" then
+                                            local title = tOpt.Title or ""
+                                            local cb = tOpt.Callback
+                                            if string.find(title, "Auto Repair Generator") then FeatureRegistry.AutoRepair = cb
+                                            elseif string.find(title, "Perfect Skillcheck") then FeatureRegistry.PerfectSkillcheck = cb
+                                            elseif string.find(title, "Auto Parry") then FeatureRegistry.AutoParry = cb
+                                            elseif string.find(title, "Auto Dodge") then FeatureRegistry.AutoDodge = cb
+                                            elseif string.find(title, "Auto Save") then FeatureRegistry.AutoSave = cb
+                                            elseif string.find(title, "Auto Catch") then FeatureRegistry.AutoCatch = cb
+                                            elseif string.find(title, "Auto Aim") then FeatureRegistry.AutoAim = cb
+                                            elseif string.find(title, "Auto Hit") then FeatureRegistry.AutoHit = cb
+                                            elseif string.find(title, "Auto Hook") then FeatureRegistry.AutoHook = cb
+                                            elseif string.find(title, "Killer ESP") then FeatureRegistry.KillerESP = cb
+                                            elseif string.find(title, "Survivor ESP") then FeatureRegistry.SurvivorESP = cb
+                                            elseif string.find(title, "Generator ESP") then FeatureRegistry.GenESP = cb
+                                            elseif string.find(title, "Role Adapt") or string.find(title, "Role Detection") then FeatureRegistry.AutoRoleAdapt = cb
+                                            end
+                                        end
+                                        if realSec and typeof(realSec.Toggle) == "function" then
+                                            return realSec:Toggle(tOpt)
+                                        end
+                                        return wrappedSec
+                                    end
+                                elseif sk == "Button" then
+                                    return function(bSelf, bOpt)
+                                        if type(bOpt) == "table" and type(bOpt.Callback) == "function" then
+                                            local title = bOpt.Title or ""
+                                            local cb = bOpt.Callback
+                                            if string.find(title, "Safe Teleport to Next Gen") then FeatureRegistry.TeleportGen = cb
+                                            elseif string.find(title, "Rescue Teammate") or string.find(title, "Teleport to Hooked") then FeatureRegistry.TeleportRescue = cb
+                                            elseif string.find(title, "Teleport to Survivor") then FeatureRegistry.TeleportSurvivor = cb
+                                            elseif string.find(title, "Disable Collision") then FeatureRegistry.DisableCollision = cb
+                                            elseif string.find(title, "Close UI & Stop Script") then FeatureRegistry.StopScript = cb
+                                            end
+                                        end
+                                        if realSec and typeof(realSec.Button) == "function" then
+                                            return realSec:Button(bOpt)
+                                        end
+                                        return wrappedSec
+                                    end
+                                end
+                                if realSec then
+                                    local v = realSec[sk]
+                                    if typeof(v) == "function" then
+                                        return function(fSelf, ...) return v(realSec, ...) end
+                                    end
+                                    return v
+                                end
+                                return function() return wrappedSec end
+                            end
+                        })
+                        return wrappedSec
+                    end
+                end
+                if realTab then
+                    local v = realTab[k]
+                    if typeof(v) == "function" then
+                        return function(fSelf, ...) return v(realTab, ...) end
+                    end
+                    return v
+                end
+                return function() return wrappedTab end
+            end
+        })
+        return wrappedTab
+    end
+end
+
+-- Keyboard shortcut (PC)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.RightControl or input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.Insert then
+        toggleAllUI()
+    end
+end)
+
+-- Window event listeners if WindUI window is real
+pcall(function()
+    if Window and typeof(Window.OnDestroy) == "function" then
+        Window:OnDestroy(function()
+            stopScript()
+        end)
+    end
+    if Window and typeof(Window.OnClose) == "function" then
+        Window:OnClose(function()
+            if mobileMenuFrame then mobileMenuFrame.Visible = false end
+            if mobilePill then mobilePill.Visible = true end
+        end)
+    end
+    if Window and typeof(Window.OnOpen) == "function" then
+        Window:OnOpen(function()
+            if mobilePill then mobilePill.Visible = true end
+        end)
+    end
+end)
 
 WindUI:Notify({
     Title = "Script Loaded",
     Content = "Riel Private by Noirrr!",
     Duration = 5
 })
-
 
 local MainTab = Window:Tab({
     Title = "Main",
