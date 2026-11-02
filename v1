@@ -6,37 +6,45 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
+local GuiService = game:GetService("GuiService")
 
 local CoreGui = nil
 pcall(function() CoreGui = game:GetService("CoreGui") end)
 
+-- Safe non-hanging LocalPlayer resolver (never hangs on Android executors)
 local player = Players.LocalPlayer
-if not player then
-    pcall(function()
-        player = Players.PlayerAdded:Wait()
-    end)
+local waitStart = tick()
+while not player and (tick() - waitStart) < 8 do
+    task.wait(0.1)
     player = Players.LocalPlayer
 end
 
 local character = player and player.Character
 local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 
--- Non-blocking character watcher to prevent startup hang
-if player then
-    player.CharacterAdded:Connect(function(newChar)
-        character = newChar
-        humanoid = newChar:WaitForChild("Humanoid", 5)
-        task.spawn(function()
-            task.wait(0.5)
-            if createFloatingWidget then pcall(createFloatingWidget) end
-        end)
-    end)
-end
+-- Mobile / Touch Device Detection
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
 -- ============================================================
--- SAFE GUI PARENT RESOLVER (Universal across all Executors)
+-- SAFE GUI PARENT RESOLVER (Hardened for Android & Mobile)
+-- On Android, CoreGui / gethui() does NOT render ScreenGuis.
+-- PlayerGui is strictly required for native mobile rendering.
 -- ============================================================
 local function getSafeGuiParent()
+    local lp = Players.LocalPlayer or player
+    local pGui = nil
+    if lp then
+        pcall(function()
+            pGui = lp:FindFirstChildOfClass("PlayerGui") or lp:WaitForChild("PlayerGui", 5)
+        end)
+    end
+
+    -- Android / Mobile executors MUST use PlayerGui for GUI rendering
+    if (isMobile or UserInputService.TouchEnabled) and pGui then
+        return pGui
+    end
+
+    -- For PC executors, try gethui() or CoreGui with fallback to PlayerGui
     local parent = nil
     if typeof(gethui) == "function" then
         pcall(function()
@@ -55,12 +63,36 @@ local function getSafeGuiParent()
             parent = CoreGui
         end)
     end
-    if not parent and player then
-        pcall(function()
-            parent = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+    return parent or pGui
+end
+
+-- Non-blocking character watcher to re-attach UI upon respawn/round start
+if player then
+    player.CharacterAdded:Connect(function(newChar)
+        character = newChar
+        humanoid = newChar:WaitForChild("Humanoid", 5)
+        task.spawn(function()
+            task.wait(0.5)
+            local currentParent = getSafeGuiParent()
+            if floatingGui and currentParent then
+                pcall(function()
+                    floatingGui.Parent = currentParent
+                    if pill then pill.Visible = true end
+                    floatingGui.Enabled = true
+                end)
+            elseif createFloatingWidget then
+                pcall(createFloatingWidget)
+            end
+
+            if WindUI and WindUI.ScreenGui and currentParent then
+                pcall(function()
+                    WindUI.ScreenGui.Parent = currentParent
+                    WindUI.ScreenGui.DisplayOrder = 99999
+                    WindUI.ScreenGui.Enabled = true
+                end)
+            end
         end)
-    end
-    return parent
+    end)
 end
 
 -- ============================================================
@@ -133,34 +165,66 @@ local selectedEgg = "Red Crystal"
 local weathers = {"Cloudy", "Snow", "Storm", "Radiant", "SharkHunt", "Wind"}
 
 -- ============================================================
+-- MASTER WINDOW TOGGLER (Debounced & Touch-Optimized)
+-- ============================================================
+local lastToggleTime = 0
+local function toggleMainWindow()
+    if (tick() - lastToggleTime) < 0.25 then return end
+    lastToggleTime = tick()
+    if Window and not Window.Destroyed then
+        pcall(function()
+            if Window.Closed then
+                Window:Open()
+            else
+                Window:Close()
+            end
+        end)
+    elseif WindUI and WindUI.Notify then
+        pcall(function()
+            WindUI:Notify({
+                Title = "Riel Private",
+                Content = "Opening UI Menu...",
+                Duration = 2
+            })
+        end)
+    end
+end
+
+-- ============================================================
 -- FLOATING TOGGLE ICON (MINIMIZE RE-OPEN WIDGET)
 -- ============================================================
 createFloatingWidget = function()
+    local parentGui = getSafeGuiParent()
+    if not parentGui then return nil end
+
     if floatingGui and floatingGui.Parent and pill and pill.Parent then
+        floatingGui.Parent = parentGui
         pill.Visible = true
         floatingGui.Enabled = true
         return floatingGui
     end
-
-    local parentGui = getSafeGuiParent()
-    if not parentGui then return nil end
 
     floatingGui = Instance.new("ScreenGui")
     floatingGui.Name = "RielFloatingWidget"
     floatingGui.ResetOnSpawn = false
     floatingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     floatingGui.DisplayOrder = 999999
+    floatingGui.IgnoreGuiInset = true
     floatingGui.Enabled = true
+
+    -- Position safely on mobile (above virtual movement joystick)
+    local defaultPos = isMobile and UDim2.new(0, 25, 0.20, 0) or UDim2.new(0, 20, 0.45, 0)
+    local pillSize = isMobile and UDim2.new(0, 150, 0, 40) or UDim2.new(0, 140, 0, 36)
 
     pill = Instance.new("TextButton")
     pill.Name = "FloatingPill"
-    pill.Size = UDim2.new(0, 140, 0, 36)
-    pill.Position = UDim2.new(0, 20, 0.45, 0)
+    pill.Size = pillSize
+    pill.Position = defaultPos
     pill.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
     pill.BorderSizePixel = 0
     pill.Text = "🛡️ Riel Private"
     pill.TextColor3 = Color3.fromRGB(255, 255, 255)
-    pill.TextSize = 14
+    pill.TextSize = isMobile and 15 or 14
     pill.Font = Enum.Font.GothamMedium
     pill.AutoButtonColor = true
     pill.Active = true
@@ -186,13 +250,19 @@ createFloatingWidget = function()
     })
     gradient.Parent = stroke
 
-    -- Make pill draggable across touch and mouse
-    local dragging, dragInput, dragStart, startPos
+    -- Dragging & Touch Handler (Optimized for Android Touchscreens)
+    local dragging = false
+    local dragInput = nil
+    local dragStart = nil
+    local startPos = nil
+    local totalDragDistance = 0
+
     pill.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = pill.Position
+            totalDragDistance = 0
 
             input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
@@ -209,39 +279,36 @@ createFloatingWidget = function()
     end)
 
     UserInputService.InputChanged:Connect(function(input)
-        if input == dragInput and dragging then
+        if input == dragInput and dragging and dragStart then
             local delta = input.Position - dragStart
-            pill.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
+            totalDragDistance = delta.Magnitude
+            if totalDragDistance > 6 then
+                pill.Position = UDim2.new(
+                    startPos.X.Scale,
+                    startPos.X.Offset + delta.X,
+                    startPos.Y.Scale,
+                    startPos.Y.Offset + delta.Y
+                )
+            end
         end
     end)
 
-    -- Tap/click to toggle window open/closed
-    local lastToggleTime = 0
-    pill.MouseButton1Click:Connect(function()
-        if (tick() - lastToggleTime) < 0.25 then return end
-        lastToggleTime = tick()
-        if Window and not Window.Destroyed then
-            pcall(function()
-                if Window.Closed then
-                    Window:Open()
-                else
-                    Window:Close()
-                end
-            end)
-        elseif WindUI and WindUI.Notify then
-            pcall(function()
-                WindUI:Notify({
-                    Title = "Riel Private",
-                    Content = "Opening UI Menu...",
-                    Duration = 2
-                })
-            end)
+    -- On touch / mouse release, if moved < 10 pixels, treat as a direct tap/click
+    pill.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            if dragging then dragging = false end
+            if totalDragDistance < 10 then
+                toggleMainWindow()
+            end
         end
+    end)
+
+    -- Cross-platform button activation
+    pill.Activated:Connect(function()
+        toggleMainWindow()
+    end)
+    pill.MouseButton1Click:Connect(function()
+        toggleMainWindow()
     end)
 
     pill.Visible = true
@@ -251,6 +318,28 @@ end
 
 -- Create floating widget IMMEDIATELY on script launch
 pcall(createFloatingWidget)
+
+-- ============================================================
+-- ROBUST HTTP FETCHER FOR ANDROID & PC EXECUTORS
+-- ============================================================
+local function safeHttpGet(url)
+    local res = nil
+    pcall(function()
+        res = game:HttpGet(url, true)
+    end)
+    if not res or #res < 500 then
+        pcall(function()
+            local req = (syn and syn.request) or (http and http.request) or http_request or request
+            if req then
+                local resp = req({ Url = url, Method = "GET" })
+                if resp and resp.Body and #resp.Body > 500 then
+                    res = resp.Body
+                end
+            end
+        end)
+    end
+    return res
+end
 
 -- ============================================================
 -- WINDUI LIBRARY LOADER WITH CDN FALLBACKS
@@ -269,7 +358,7 @@ for attempt = 1, 3 do
     for _, url in ipairs(windUI_Mirrors) do
         if WindUI and WindUI.CreateWindow then break end
         pcall(function()
-            local src = game:HttpGet(url .. "?t=" .. tick(), true)
+            local src = safeHttpGet(url .. "?t=" .. tick())
             if src and #src > 1000 then
                 local fn = loadstring(src)
                 if typeof(fn) == "function" then
@@ -299,14 +388,25 @@ if WindUI then
     WindUI.Window = nil
 end
 
--- Create Window with safe folder and error isolation
+-- Responsive Window Sizing (Fits mobile screens without clipping)
+local cam = workspace.CurrentCamera
+local vpSize = cam and cam.ViewportSize or Vector2.new(1280, 720)
+local winW = math.min(500, math.floor(vpSize.X * 0.92))
+local winH = math.min(450, math.floor(vpSize.Y * 0.88))
+if isMobile then
+    winW = math.clamp(winW, 320, 460)
+    winH = math.clamp(winH, 280, 360)
+end
+local responsiveSize = UDim2.fromOffset(winW, winH)
+
+-- Create Window with safe folder, responsive size, and error isolation
 if WindUI and WindUI.CreateWindow then
     local ok, winOrErr = pcall(function()
         return WindUI:CreateWindow({
             Title = "Riel Private",
             Folder = "RielPrivate",
             Icon = "shield",
-            Size = UDim2.fromOffset(500, 450),
+            Size = responsiveSize,
             Transparent = false,
             Theme = "Dark",
             IgnoreAlerts = true,
@@ -315,7 +415,7 @@ if WindUI and WindUI.CreateWindow then
                 OnlyMobile = false,
                 Title = "Riel Private",
                 Icon = "shield",
-                Position = UDim2.new(0, 20, 0.45, 0),
+                Position = isMobile and UDim2.new(0, 25, 0.20, 0) or UDim2.new(0, 20, 0.45, 0),
                 Draggable = true,
                 OnlyIcon = false
             }
@@ -329,16 +429,21 @@ if WindUI and WindUI.CreateWindow then
     end
 end
 
--- Ensure WindUI ScreenGui renders on top of game HUDs
+-- Hardened ScreenGui Re-parenting: Move WindUI.ScreenGui to PlayerGui on Android
 if WindUI and WindUI.ScreenGui then
     pcall(function()
+        local targetParent = getSafeGuiParent()
+        if targetParent then
+            WindUI.ScreenGui.Parent = targetParent
+        end
         WindUI.ScreenGui.DisplayOrder = 99999
         WindUI.ScreenGui.Enabled = true
+        WindUI.ScreenGui.ResetOnSpawn = false
     end)
 end
 
 if Window then
-    Window.IsPC = false
+    Window.IsPC = not isMobile
     Window.IsOpenButtonEnabled = true
     task.spawn(function()
         task.wait(0.2)
@@ -375,6 +480,29 @@ end
 task.spawn(function()
     task.wait(0.1)
     pcall(createFloatingWidget)
+end)
+
+-- Persistent Watchdog: Keeps UI and Floating Widget alive across round transitions & respawns
+task.spawn(function()
+    while scriptRunning do
+        task.wait(2.5)
+        pcall(function()
+            local targetParent = getSafeGuiParent()
+            if targetParent then
+                if not floatingGui or not floatingGui.Parent or not floatingGui:FindFirstChild("FloatingPill") then
+                    createFloatingWidget()
+                elseif floatingGui.Parent ~= targetParent then
+                    floatingGui.Parent = targetParent
+                end
+
+                if WindUI and WindUI.ScreenGui and WindUI.ScreenGui.Parent ~= targetParent then
+                    WindUI.ScreenGui.Parent = targetParent
+                    WindUI.ScreenGui.DisplayOrder = 99999
+                    WindUI.ScreenGui.Enabled = true
+                end
+            end
+        end)
+    end
 end)
 
 -- Global Clean Shutdown & Script Stopper
