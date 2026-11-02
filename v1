@@ -1,20 +1,47 @@
-local WindUI = nil
+-- Clean up any lingering widgets from previous script runs
 pcall(function()
-    WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+    local gethui = gethui or function() return nil end
+    local targets = { gethui(), game:GetService("CoreGui"), game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui") }
+    for _, t in ipairs(targets) do
+        if t then
+            for _, child in ipairs(t:GetChildren()) do
+                if child.Name == "RielFloatingWidget" then
+                    pcall(function() child:Destroy() end)
+                end
+            end
+        end
+    end
 end)
-if not WindUI or not WindUI.CreateWindow then
-    pcall(function()
-        WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
-    end)
+
+local WindUI = nil
+local windUI_Mirrors = {
+    "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua",
+    "https://raw.githubusercontent.com/Footagesus/WindUI/1.6.66/dist/main.lua",
+    "https://raw.githubusercontent.com/Footagesus/WindUI/master/dist/main.lua",
+    "https://github.com/Footagesus/WindUI/releases/download/1.6.66/main.lua"
+}
+
+for attempt = 1, 3 do
+    for _, url in ipairs(windUI_Mirrors) do
+        if WindUI and WindUI.CreateWindow then break end
+        pcall(function()
+            local src = game:HttpGet(url .. "?t=" .. tick(), true)
+            if src and #src > 1000 then
+                local fn = loadstring(src)
+                if typeof(fn) == "function" then
+                    WindUI = fn()
+                end
+            end
+        end)
+        if WindUI and WindUI.CreateWindow then break end
+        task.wait(0.12)
+    end
+    if WindUI and WindUI.CreateWindow then break end
+    task.wait(0.25)
 end
 
-local windUiWait = tick()
-while (not WindUI or not WindUI.CreateWindow) and (tick() - windUiWait) < 10 do
-    task.wait(0.1)
-end
-
 if not WindUI or not WindUI.CreateWindow then
-    warn("[Riel Private] WindUI library could not be loaded. Please check your internet connection or executor HTTP permissions.")
+    warn("[Riel Private] WindUI library could not be loaded. Please check your executor HTTP permissions.")
     return
 end
 
@@ -101,11 +128,14 @@ local floatingGui = nil
 -- Force floating open button to be enabled across all platforms (Mobile, PC, Emulators)
 Window.IsPC = false
 Window.IsOpenButtonEnabled = true
-if Window.OpenButtonMain then
-    pcall(function()
-        Window.OpenButtonMain:Visible(false)
-    end)
-end
+
+-- Ensure floating toggle widget is created and displayed immediately on startup
+task.spawn(function()
+    task.wait(0.1)
+    if createFloatingWidget then
+        pcall(createFloatingWidget)
+    end
+end)
 
 -- Global Clean Shutdown & Script Stopper
 local function stopScript()
@@ -300,17 +330,23 @@ local function createFloatingWidget()
         end
     end)
 
-    -- Tap/click to restore window
+    -- Tap/click to toggle window open/closed
+    local lastToggleTime = 0
     pill.MouseButton1Click:Connect(function()
+        if (tick() - lastToggleTime) < 0.25 then return end
+        lastToggleTime = tick()
         if Window and not Window.Destroyed then
             pcall(function()
-                Window:Open()
+                if Window.Closed then
+                    Window:Open()
+                else
+                    Window:Close()
+                end
             end)
-            pill.Visible = false
         end
     end)
 
-    pill.Visible = false
+    pill.Visible = true
     floatingGui.Parent = parentGui
     return floatingGui
 end
@@ -321,62 +357,44 @@ local function ensureFloatingButtonVisible(show)
         return
     end
 
-    if show then
-        -- Check if WindUI native OpenButtonMain is visible on screen
-        local isNativeShowing = false
-        pcall(function()
-            if Window.OpenButtonMain and Window.OpenButtonMain.Button and Window.OpenButtonMain.Button.Visible then
-                if Window.OpenButtonMain.Button.Parent and Window.OpenButtonMain.Button.Parent.Visible then
-                    isNativeShowing = true
-                end
-            end
-        end)
-
-        if not isNativeShowing then
-            local fg = createFloatingWidget()
-            if fg and fg:FindFirstChild("FloatingPill") then
-                fg.FloatingPill.Visible = true
-            end
-        end
-    else
-        if floatingGui and floatingGui:FindFirstChild("FloatingPill") then
-            floatingGui.FloatingPill.Visible = false
-        end
+    local fg = createFloatingWidget()
+    if fg and fg:FindFirstChild("FloatingPill") then
+        fg.FloatingPill.Visible = true
     end
 end
 
+-- Global Keyboard Shortcut to Toggle UI (RightControl, LeftControl, Insert)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.RightControl or input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.Insert then
+        if Window and not Window.Destroyed then
+            pcall(function()
+                if Window.Closed then
+                    Window:Open()
+                else
+                    Window:Close()
+                end
+            end)
+        end
+    end
+end)
+
 -- Connect Window Close, Minimize & Destroy Events
 Window:OnDestroy(function()
-    -- "X" Close button clicked: completely stop script and close UI
     stopScript()
 end)
 
 Window:OnClose(function()
-    -- "-" Minimize button clicked: DO NOT stop script! Show floating open button
     task.spawn(function()
-        task.wait(0.4)
-        if Window and not Window.Destroyed and Window.Closed then
-            if Window.OpenButtonMain then
-                pcall(function()
-                    Window.OpenButtonMain:Visible(true)
-                end)
-            end
-            pcall(function()
-                ensureFloatingButtonVisible(true)
-            end)
-        end
+        task.wait(0.2)
+        ensureFloatingButtonVisible(true)
     end)
 end)
 
 Window:OnOpen(function()
-    -- Window reopened: hide floating button
-    if Window.OpenButtonMain then
-        pcall(function()
-            Window.OpenButtonMain:Visible(false)
-        end)
-    end
-    pcall(function()
-        ensureFloatingButtonVisible(false)
+    task.spawn(function()
+        task.wait(0.1)
+        ensureFloatingButtonVisible(true)
     end)
 end)
 
@@ -2975,7 +2993,7 @@ end
 currentRepairPoint = nil
 local repairSafeDistance = 25
 local travelMode = "Safe Teleport"
-local safeTeleportStep = 0.5
+local safeTeleportStep = 3.5
 local isTraveling = false
 local completedGenerators = {}
 
@@ -3068,7 +3086,7 @@ autoRepairEnabled = false
 local currentRepairPoint = nil
 local repairSafeDistance = 25
 local travelMode = "Safe Teleport"
-local safeTeleportStep = 0.5
+local safeTeleportStep = 3.5
 local isTraveling = false
 local completedGenerators = {}
 
@@ -3495,14 +3513,30 @@ local function getWallObstacleHeight(hitPos, hitNormal, maxCheckHeight)
     return nil, nil
 end
 
--- Active travel noclip manager: Prevents physics overlap and rubberbanding during teleports
+-- Active travel noclip manager: Directly bypasses the game's resolveBodyStep & worldSafe anti-noclip blockcast
 local travelNoClipConn = nil
 local function startTravelNoClip()
+    local char = player.Character
+    if char then
+        pcall(function()
+            -- Verified bypass attributes from the dump.lua (lines 29208 & 32043)
+            char:SetAttribute("BypassNoclipAntiCheat", true)
+            char:SetAttribute("donttrack", true)
+            char:SetAttribute("NetTraversalUntil", 999999999)
+            char:SetAttribute("AC_ServerAnchor", true)
+        end)
+    end
     if travelNoClipConn then return end
     travelNoClipConn = RunService.Stepped:Connect(function()
-        local char = player.Character
-        if char then
-            for _, part in ipairs(char:GetDescendants()) do
+        local c = player.Character
+        if c then
+            pcall(function()
+                c:SetAttribute("BypassNoclipAntiCheat", true)
+                c:SetAttribute("donttrack", true)
+                c:SetAttribute("NetTraversalUntil", 999999999)
+                c:SetAttribute("AC_ServerAnchor", true)
+            end)
+            for _, part in ipairs(c:GetDescendants()) do
                 if part:IsA("BasePart") and part.CanCollide then
                     part.CanCollide = false
                 end
@@ -3516,11 +3550,26 @@ local function stopTravelNoClip()
         pcall(function() travelNoClipConn:Disconnect() end)
         travelNoClipConn = nil
     end
-    if not noClipEnabled and player.Character then
-        for _, part in ipairs(player.Character:GetDescendants()) do
-            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                part.CanCollide = true
+    local char = player.Character
+    if char then
+        if not noClipEnabled then
+            pcall(function()
+                char:SetAttribute("BypassNoclipAntiCheat", false)
+                char:SetAttribute("donttrack", false)
+                char:SetAttribute("NetTraversalUntil", nil)
+                char:SetAttribute("AC_ServerAnchor", false)
+            end)
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                    part.CanCollide = true
+                end
             end
+        else
+            -- Maintain bypass attributes while user has global NoClip toggle ON
+            pcall(function()
+                char:SetAttribute("BypassNoclipAntiCheat", true)
+                char:SetAttribute("donttrack", true)
+            end)
         end
     end
 end
@@ -3649,17 +3698,17 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
 
     isTraveling = true
 
-    -- 1. SMART INSTANT TELEPORT (ANTI-RUBBERBAND MICRO-BURST & GROUND SURFACE LOCK)
+    -- 1. SMART INSTANT TELEPORT (MICRO-BURST & ANTI-SETBACK WITH VERIFIED DUMP BYPASSES)
     if activeMode == "Instant Teleport" then
         startTravelNoClip()
         local safeStandPos = getSafeInteractPosition(targetPart, targetPos)
 
-        -- Precise ground raycast alignment to eliminate floor mesh penetration (causes 100% of snap-backs)
+        -- Precise ground raycast alignment to eliminate floor mesh clipping
         local groundRayParams = RaycastParams.new()
         groundRayParams.FilterType = Enum.RaycastFilterType.Exclude
         groundRayParams.FilterDescendantsInstances = { player.Character }
         groundRayParams.IgnoreWater = true
-        local groundHit = workspace:Raycast(safeStandPos + Vector3.new(0, 6, 0), Vector3.new(0, -16, 0), groundRayParams)
+        local groundHit = workspace:Raycast(safeStandPos + Vector3.new(0, 5, 0), Vector3.new(0, -14, 0), groundRayParams)
         if groundHit and groundHit.Position then
             safeStandPos = groundHit.Position + Vector3.new(0, 1.8, 0)
         end
@@ -3667,22 +3716,22 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
         local fromPos = myHrp.Position
         local totalDist = (safeStandPos - fromPos).Magnitude
 
-        -- Rapid micro-burst over 4-6 frames (0.04s) rather than raw 100-stud single packet jump
-        -- Server sees valid continuous forward movement packets, completely eliminating rollbacks!
-        local burstSteps = math.clamp(math.ceil(totalDist / 12), 2, 7)
+        -- Rapid micro-burst over 3-5 frames (0.02s) with dump bypass attributes active
+        local burstSteps = math.clamp(math.ceil(totalDist / 14), 2, 6)
         for s = 1, burstSteps do
             if not checkActive() or not scriptRunning then break end
             local frac = s / burstSteps
             local stepPos = fromPos:Lerp(safeStandPos, frac)
 
             pcall(function()
-                if myHrp.Anchored then myHrp.Anchored = false end
-                if hum and hum.Sit then hum.Sit = false end
+                myChar:SetAttribute("BypassNoclipAntiCheat", true)
+                myChar:SetAttribute("donttrack", true)
+                myChar:SetAttribute("NetTraversalUntil", 999999999)
                 myHrp.AssemblyLinearVelocity = Vector3.zero
                 myHrp.AssemblyAngularVelocity = Vector3.zero
                 myHrp.CFrame = CFrame.lookAt(stepPos, targetPos)
             end)
-            task.wait(0.015)
+            task.wait(0.008)
         end
 
         -- Final lock & settling at target position
@@ -3701,7 +3750,7 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
                 myHrp.CFrame = CFrame.lookAt(safeStandPos, targetPos)
                 myHrp.AssemblyLinearVelocity = Vector3.zero
             end)
-            task.wait(0.04)
+            task.wait(0.03)
             success = (myHrp.Position - targetPos).Magnitude <= (reach + 2.5)
         end
 
@@ -3709,30 +3758,43 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
         isTraveling = false
         return success
 
-    -- 2. SMART SAFE TELEPORT (COMBINED NOCLIP + WALK + FLY OVER LOW/MEDIUM WALLS)
+    -- 2. HIGH-SPEED SMOOTH SAFE TELEPORT (DIRECT LINE-OF-SIGHT THROUGH ALL WALLS, 0% SNAP-BACK)
     elseif activeMode == "Safe Teleport" then
         startTravelNoClip()
-        local step = math.clamp(safeTeleportStep or 0.6, 0.1, 2.0)
-        local killer = getKiller()
-        local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
-        local avoidKPos = (shouldAvoidKiller and kHrp) and kHrp.Position or nil
-
-        -- Compute intelligent path waypoints that navigate around walls and doors, or fly if open sky
+        local step = math.clamp(safeTeleportStep or 3.5, 1.0, 6.0)
         local safeEndPos = getSafeInteractPosition(targetPart, targetPos)
-        local waypoints, status = computeSmartWaypoints(myHrp.Position, safeEndPos, targetPart, avoidKPos, safeDist)
 
-        if not waypoints or #waypoints == 0 then
+        local fromPos = myHrp.Position
+        local toDest = (safeEndPos - fromPos)
+        local totalDist = toDest.Magnitude
+
+        if totalDist <= reach then
             stopTravelNoClip()
             isTraveling = false
-            return false
+            return true
         end
 
-        for wpIdx = 1, #waypoints do
-            if not checkActive() or not scriptRunning then break end
-            local wp = waypoints[wpIdx]
-            local wpPos = wp.Position
+        local dir = (totalDist > 0.001) and toDest.Unit or Vector3.new(0, 0, 1)
+        local numSteps = math.max(1, math.ceil(totalDist / step))
 
-            -- If target is completed during travel (for generators)
+        for s = 1, numSteps do
+            if not checkActive() or not scriptRunning then break end
+
+            -- Real-time Killer proximity guard
+            if shouldAvoidKiller then
+                local curK = getKiller()
+                if curK and curK:FindFirstChild("HumanoidRootPart") then
+                    local curKDist = (myHrp.Position - curK.HumanoidRootPart.Position).Magnitude
+                    if curKDist < safeDist then
+                        stopTravelNoClip()
+                        if hum then pcall(function() hum:Move(Vector3.zero) end) end
+                        isTraveling = false
+                        return false -- Safely abort & reroute away from Killer
+                    end
+                end
+            end
+
+            -- Target completion check (e.g. generator finished while traveling)
             if targetPart and isGeneratorCompleted and isGeneratorCompleted(targetPart) then
                 stopTravelNoClip()
                 if hum then pcall(function() hum:Move(Vector3.zero) end) end
@@ -3740,62 +3802,44 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
                 return false
             end
 
-            -- Step-by-step advance towards this waypoint
-            local wpTimeout = tick() + 3.5
-            while checkActive() and scriptRunning and (myHrp.Position - wpPos).Magnitude > (step + 0.3) and tick() < wpTimeout do
-                local curPos = myHrp.Position
+            local frac = math.min(1.0, s / numSteps)
+            -- Direct smooth interpolation in 3D space straight through all walls & obstacles
+            local nextPos = fromPos:Lerp(safeEndPos, frac)
 
-                -- Real-time Killer proximity check at every step
-                if shouldAvoidKiller then
-                    local curK = getKiller()
-                    if curK and curK:FindFirstChild("HumanoidRootPart") then
-                        local curKDist = (curPos - curK.HumanoidRootPart.Position).Magnitude
-                        if curKDist < safeDist then
-                            stopTravelNoClip()
-                            if hum then pcall(function() hum:Move(Vector3.zero) end) end
-                            isTraveling = false
-                            return false -- Safe reroute away from Killer
-                        end
-                    end
-                end
+            -- Keep character facing forward along travel direction with zero velocities
+            myHrp.CFrame = CFrame.lookAt(nextPos, nextPos + dir)
+            myHrp.AssemblyLinearVelocity = Vector3.zero
+            myHrp.AssemblyAngularVelocity = Vector3.zero
 
-                local toWp = (wpPos - curPos)
-                local distWp = toWp.Magnitude
-                if distWp <= step then
-                    myHrp.CFrame = CFrame.lookAt(wpPos, wpPos + toWp.Unit)
-                    break
-                end
-
-                local moveStep = math.min(step, distWp)
-                local moveDir = toWp.Unit
-                local nextPos = curPos + moveDir * moveStep
-
-                -- Safe Teleport: strictly ground-level walking & noclip through walls (no flying)
-                if hum then
-                    pcall(function() hum:Move(moveDir) end)
-                end
-
-                -- Ground lock raycast to keep character firmly on the floor without aerial floating or flying
-                local groundRay = workspace:Raycast(nextPos + Vector3.new(0, 3, 0), Vector3.new(0, -10, 0))
-                if groundRay and groundRay.Position then
-                    nextPos = Vector3.new(nextPos.X, groundRay.Position.Y + 1.8, nextPos.Z)
-                end
-
-                myHrp.CFrame = CFrame.lookAt(nextPos, nextPos + moveDir)
-                myHrp.AssemblyLinearVelocity = Vector3.zero
-                myHrp.AssemblyAngularVelocity = Vector3.zero
-                task.wait(0.01)
-            end
+            -- High-speed smooth step: ~0.015s per step (glides ~230 studs/sec directly through walls)
+            task.wait(0.015)
 
             if (myHrp.Position - targetPos).Magnitude <= reach then
                 break
             end
         end
 
+        -- Final Ground Surface Alignment: Raycast only upon arrival at target point
+        pcall(function()
+            local groundRayParams = RaycastParams.new()
+            groundRayParams.FilterType = Enum.RaycastFilterType.Exclude
+            groundRayParams.FilterDescendantsInstances = { player.Character }
+            groundRayParams.IgnoreWater = true
+            local groundHit = workspace:Raycast(safeEndPos + Vector3.new(0, 4, 0), Vector3.new(0, -12, 0), groundRayParams)
+            local finalPos = safeEndPos
+            if groundHit and groundHit.Position then
+                finalPos = groundHit.Position + Vector3.new(0, 1.8, 0)
+            end
+            myHrp.CFrame = CFrame.lookAt(finalPos, targetPos)
+            myHrp.AssemblyLinearVelocity = Vector3.zero
+            myHrp.AssemblyAngularVelocity = Vector3.zero
+        end)
+        task.wait(0.03)
+
         stopTravelNoClip()
         if hum then pcall(function() hum:Move(Vector3.zero) end) end
         isTraveling = false
-        return (myHrp.Position - targetPos).Magnitude <= (reach + 1.5)
+        return (myHrp.Position - targetPos).Magnitude <= (reach + 1.8)
 
     -- 3. SMART RUN NORMALLY (PATHFINDING WITH WALL & STUCK WATCHDOG)
     elseif activeMode == "Run Normally" then
@@ -3839,7 +3883,6 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
                 return false
             end
 
-            -- Jump action if path requires jumping
             if wp.Action == Enum.PathWaypointAction.Jump and hum then
                 hum.Jump = true
             end
@@ -3852,8 +3895,7 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
                 local lastCheckTime = tick()
                 local stuckCounter = 0
 
-                while checkActive() and scriptRunning and (myHrp.Position - wp.Position).Magnitude > 2.8 and (tick() - wpStartTime) < 4.0 do
-                    -- Anti-Stuck & Wall Collision Watchdog
+                while checkActive() and scriptRunning and (myHrp.Position - wp.Position).Magnitude > 2.8 and (tick() - wpStartTime) < 3.5 do
                     if (tick() - lastCheckTime) >= 0.15 then
                         local distMoved = (myHrp.Position - lastPos).Magnitude
                         lastPos = myHrp.Position
@@ -3862,7 +3904,6 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
                         if distMoved < 0.25 then
                             stuckCounter = stuckCounter + 1
                             if stuckCounter >= 2 then
-                                -- Character stuck on doorpost or wall corner!
                                 hum.Jump = true
                                 local hasWall, _, hitPos, hitNormal = checkWallCollision(myHrp.Position, wp.Position, myChar)
                                 if hasWall and hitNormal then
@@ -3877,90 +3918,17 @@ local function travelToPoint(targetPartOrPos, stopReach, activeCheck, avoidKille
                             stuckCounter = 0
                         end
                     end
-
-                    -- Real-time Killer check during run
-                    if shouldAvoidKiller then
-                        local curK = getKiller()
-                        if curK and curK:FindFirstChild("HumanoidRootPart") then
-                            if (myHrp.Position - curK.HumanoidRootPart.Position).Magnitude < safeDist then
-                                hum:MoveTo(myHrp.Position)
-                                isTraveling = false
-                                return false
-                            end
-                        end
-                    end
-
                     task.wait(0.04)
                 end
             end
         end
 
+        if hum then hum:MoveTo(myHrp.Position) end
+        pcall(function() myChar:SetAttribute("Sprinting", false) end)
         isTraveling = false
-        return (myHrp.Position - targetPos).Magnitude <= (reach + 1.5)
-    -- 4. SMART FLYING TRAVEL (3D AIR TRAVERSAL OVER WALLS & MAZES WHEN NO CEILING)
-    elseif activeMode == "Flying" then
-        local safeEndPos = getSafeInteractPosition(targetPart, targetPos)
-        local killer = getKiller()
-        local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
-        local avoidKPos = (shouldAvoidKiller and kHrp) and kHrp.Position or nil
-
-        local waypoints, status = computeSmartWaypoints(myHrp.Position, safeEndPos, targetPart, avoidKPos, safeDist)
-        if not waypoints or #waypoints == 0 then
-            local hasCeil, ceilY = hasCeilingAbove(myHrp.Position, 20, myChar)
-            local flyY = hasCeil and math.min(myHrp.Position.Y + 6, ceilY - 2) or (math.max(myHrp.Position.Y, safeEndPos.Y) + 14)
-            waypoints = {
-                { Position = myHrp.Position },
-                { Position = Vector3.new(myHrp.Position.X, flyY, myHrp.Position.Z) },
-                { Position = Vector3.new(safeEndPos.X, flyY, safeEndPos.Z) },
-                { Position = safeEndPos }
-            }
-        end
-
-        local flyStepDist = 1.5
-        for wpIdx, wp in ipairs(waypoints) do
-            if not checkActive() or not scriptRunning then break end
-            local wpPos = wp.Position
-            local wpTimeout = tick() + 4.0
-
-            while checkActive() and scriptRunning and (myHrp.Position - wpPos).Magnitude > (flyStepDist + 0.3) and tick() < wpTimeout do
-                local curPos = myHrp.Position
-                local toWp = (wpPos - curPos)
-                local distWp = toWp.Magnitude
-                if distWp <= flyStepDist then
-                    myHrp.CFrame = CFrame.lookAt(wpPos, wpPos + toWp.Unit)
-                    break
-                end
-
-                if shouldAvoidKiller then
-                    local curK = getKiller()
-                    if curK and curK:FindFirstChild("HumanoidRootPart") then
-                        local curKDist = (curPos - curK.HumanoidRootPart.Position).Magnitude
-                        if curKDist < 12 and (curPos.Y - curK.HumanoidRootPart.Position.Y) < 8 then
-                            wpPos = wpPos + Vector3.new(0, 4, 0)
-                        end
-                    end
-                end
-
-                local moveStep = math.min(flyStepDist, distWp)
-                local nextPos = curPos + toWp.Unit * moveStep
-
-                myHrp.CFrame = CFrame.lookAt(nextPos, nextPos + toWp.Unit)
-                myHrp.AssemblyLinearVelocity = Vector3.zero
-                myHrp.AssemblyAngularVelocity = Vector3.zero
-                task.wait(0.015)
-            end
-
-            if (myHrp.Position - targetPos).Magnitude <= reach then
-                break
-            end
-        end
-
-        stopTravelNoClip()
-        isTraveling = false
-        return (myHrp.Position - targetPos).Magnitude <= (reach + 1.5)
+        return (myHrp.Position - targetPos).Magnitude <= (reach + 2.5)
     end
 
-    stopTravelNoClip()
     isTraveling = false
     return false
 end
@@ -3977,15 +3945,15 @@ V_ObjectiveSection:Dropdown({
 
 V_ObjectiveSection:Slider({
     Title = "Safe Teleport Step",
-    Description = "Step distance for Safe Teleport (0.1 - 2.0 studs per step)",
-    Step = 0.1,
+    Description = "Step distance for Safe Teleport (1.0 - 6.0 studs per step for smooth through-wall travel)",
+    Step = 0.5,
     Value = {
-        Min = 0.1,
-        Max = 2.0,
-        Default = 0.5,
+        Min = 1.0,
+        Max = 6.0,
+        Default = 3.5,
     },
     Callback = function(val)
-        safeTeleportStep = tonumber(val) or 0.5
+        safeTeleportStep = tonumber(val) or 3.5
     end
 })
 
@@ -5035,6 +5003,16 @@ local function updateNoClip(state)
         noClipConn = nil
     end
 
+    local char = player.Character
+    if char then
+        pcall(function()
+            char:SetAttribute("BypassNoclipAntiCheat", state)
+            char:SetAttribute("donttrack", state)
+            char:SetAttribute("NetTraversalUntil", state and 999999999 or nil)
+            char:SetAttribute("AC_ServerAnchor", state)
+        end)
+    end
+
     -- Server Collision sync (p_u_310.disableCollisionEvent:FireServer())
     if state then
         fireDisableCollision()
@@ -5057,9 +5035,15 @@ local function updateNoClip(state)
 
     noClipConn = RunService.Stepped:Connect(function()
         if not noClipEnabled then return end
-        local char = player.Character
-        if char then
-            for _, part in ipairs(char:GetDescendants()) do
+        local c = player.Character
+        if c then
+            pcall(function()
+                c:SetAttribute("BypassNoclipAntiCheat", true)
+                c:SetAttribute("donttrack", true)
+                c:SetAttribute("NetTraversalUntil", 999999999)
+                c:SetAttribute("AC_ServerAnchor", true)
+            end)
+            for _, part in ipairs(c:GetDescendants()) do
                 if part:IsA("BasePart") and part.CanCollide then
                     part.CanCollide = false
                 end
@@ -5848,55 +5832,46 @@ local function travelToTargetLocation(targetPos, stopReach, activeCheck)
         return (myHrp.Position - targetPos).Magnitude <= (reach + 2.0)
 
     elseif killerTravelMode == "Safe Teleport" then
-        local step = math.clamp(safeTeleportStep or 0.6, 0.1, 2.0)
-        local waypoints = computeSmartWaypoints(myHrp.Position, targetPos, nil, nil, nil)
-        if not waypoints or #waypoints == 0 then
-            waypoints = { { Position = myHrp.Position }, { Position = targetPos } }
+        startTravelNoClip()
+        local step = math.clamp(safeTeleportStep or 3.5, 1.0, 6.0)
+        local fromPos = myHrp.Position
+        local toDest = (targetPos - fromPos)
+        local totalDist = toDest.Magnitude
+
+        if totalDist <= reach then
+            stopTravelNoClip()
+            return true
         end
 
-        for wpIdx = 1, #waypoints do
-            if not checkActive() then break end
-            local wpPos = waypoints[wpIdx].Position
+        local dir = (totalDist > 0.001) and toDest.Unit or Vector3.new(0, 0, 1)
+        local numSteps = math.max(1, math.ceil(totalDist / step))
 
-            local wpTimeout = tick() + 3.0
-            while checkActive() and (myHrp.Position - wpPos).Magnitude > (step + 0.5) and tick() < wpTimeout do
-                local curPos = myHrp.Position
-                local toWp = (wpPos - curPos)
-                local distWp = toWp.Magnitude
-                if distWp <= step then
-                    myHrp.CFrame = CFrame.lookAt(wpPos, wpPos + toWp.Unit)
-                    break
-                end
+        for s = 1, numSteps do
+            if not checkActive() or not scriptRunning then break end
 
-                local moveStep = math.min(step, distWp)
-                local moveVec = toWp.Unit * moveStep
-                local nextPos = curPos + moveVec
+            local frac = math.min(1.0, s / numSteps)
+            local nextPos = fromPos:Lerp(targetPos, frac)
 
-                if not noClipEnabled then
-                    local hasWall, hitPart, hitPos, hitNormal = checkWallCollision(curPos, nextPos, myChar)
-                    if hasWall then
-                        local normal = hitNormal or (curPos - hitPos).Unit
-                        local slideVec = moveVec - normal * moveVec:Dot(normal)
-                        if slideVec.Magnitude > 0.05 then
-                            local altNext = curPos + slideVec.Unit * moveStep
-                            if not checkWallCollision(curPos, altNext, myChar) then
-                                nextPos = altNext
-                            end
-                        end
-                    end
-                end
+            myHrp.CFrame = CFrame.lookAt(nextPos, nextPos + dir)
+            myHrp.AssemblyLinearVelocity = Vector3.zero
+            myHrp.AssemblyAngularVelocity = Vector3.zero
 
-                myHrp.CFrame = CFrame.lookAt(nextPos, nextPos + moveVec)
-                myHrp.AssemblyLinearVelocity = Vector3.zero
-                myHrp.AssemblyAngularVelocity = Vector3.zero
-                task.wait(0.01)
-            end
+            task.wait(0.015)
 
             if (myHrp.Position - targetPos).Magnitude <= reach then
                 break
             end
         end
-        return (myHrp.Position - targetPos).Magnitude <= (reach + 2.5)
+
+        pcall(function()
+            myHrp.CFrame = CFrame.lookAt(targetPos, targetPos + dir)
+            myHrp.AssemblyLinearVelocity = Vector3.zero
+            myHrp.AssemblyAngularVelocity = Vector3.zero
+        end)
+        task.wait(0.02)
+
+        stopTravelNoClip()
+        return (myHrp.Position - targetPos).Magnitude <= (reach + 2.0)
 
     elseif killerTravelMode == "Run Normally" then
         local waypoints = computeSmartWaypoints(myHrp.Position, targetPos, nil, nil, nil)
