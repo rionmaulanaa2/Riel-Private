@@ -1,11 +1,82 @@
--- Clean up any lingering widgets from previous script runs
+-- ============================================================
+-- CORE ROBLOX SERVICES & SINGLETONS
+-- ============================================================
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+
+local CoreGui = nil
+pcall(function() CoreGui = game:GetService("CoreGui") end)
+
+local player = Players.LocalPlayer
+if not player then
+    pcall(function()
+        player = Players.PlayerAdded:Wait()
+    end)
+    player = Players.LocalPlayer
+end
+
+local character = player and player.Character
+local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+-- Non-blocking character watcher to prevent startup hang
+if player then
+    player.CharacterAdded:Connect(function(newChar)
+        character = newChar
+        humanoid = newChar:WaitForChild("Humanoid", 5)
+        task.spawn(function()
+            task.wait(0.5)
+            if createFloatingWidget then pcall(createFloatingWidget) end
+        end)
+    end)
+end
+
+-- ============================================================
+-- SAFE GUI PARENT RESOLVER (Universal across all Executors)
+-- ============================================================
+local function getSafeGuiParent()
+    local parent = nil
+    if typeof(gethui) == "function" then
+        pcall(function()
+            local h = gethui()
+            if h and typeof(h) == "Instance" then
+                parent = h
+            end
+        end)
+    end
+    if not parent and CoreGui then
+        pcall(function()
+            local f = Instance.new("Folder")
+            f.Name = "RielPermTest"
+            f.Parent = CoreGui
+            f:Destroy()
+            parent = CoreGui
+        end)
+    end
+    if not parent and player then
+        pcall(function()
+            parent = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+        end)
+    end
+    return parent
+end
+
+-- ============================================================
+-- LINGERING WIDGET & PREVIOUS INSTANCE CLEANUP
+-- ============================================================
 pcall(function()
-    local gethui = gethui or function() return nil end
-    local targets = { gethui(), game:GetService("CoreGui"), game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui") }
+    local parent = getSafeGuiParent()
+    local targets = {}
+    if parent then table.insert(targets, parent) end
+    if CoreGui and CoreGui ~= parent then table.insert(targets, CoreGui) end
+    if player and player:FindFirstChild("PlayerGui") and player.PlayerGui ~= parent then table.insert(targets, player.PlayerGui) end
+
     for _, t in ipairs(targets) do
         if t then
             for _, child in ipairs(t:GetChildren()) do
-                if child.Name == "RielFloatingWidget" then
+                if child.Name == "RielFloatingWidget" or child.Name == "WindUI" then
                     pcall(function() child:Destroy() end)
                 end
             end
@@ -13,10 +84,183 @@ pcall(function()
     end
 end)
 
+-- Master UI objects and state variables
+local Window = nil
+local floatingGui = nil
+local pill = nil
+local scriptRunning = true
+local createFloatingWidget = nil
+
+-- Master Automation Session Counters
+local repairSession = 0
+local saveSession = 0
+local catchSession = 0
+local palletSession = 0
+local parrySession = 0
+local dodgeSession = 0
+
+-- Master Automation Toggle States (Shared across all features)
+local autoRepairEnabled = false
+local autoSkillCheckEnabled = false
+local autoPalletEnabled = false
+local autoParryEnabled = false
+local autoSaveEnabled = false
+local killerESPEnabled = false
+local genESPEnabled = false
+local survivorESPEnabled = false
+local autoCatchEnabled = false
+local autoAimSurvivorEnabled = false
+local autoHitSurvivorEnabled = false
+local autoHookSurvivorEnabled = false
+local autoDodgeEnabled = false
+local autoRoleAdaptEnabled = true
+local flyEnabled = false
+local didEnabled = false
+local noClipEnabled = false
+local currentRepairPoint = nil
+local currentKillerTarget = nil
+local charAddedConn = nil
+
+local autoFarmSpeedThread
+local autoMountAnehThread
+local autoMountBotakThread
+local autoFarmGemsThread
+local autoFarmXPThread
+local autoRebirthThread
+local autoFishingThread
+local autoEggThread
+local selectedEgg = "Red Crystal"
+local weathers = {"Cloudy", "Snow", "Storm", "Radiant", "SharkHunt", "Wind"}
+
+-- ============================================================
+-- FLOATING TOGGLE ICON (MINIMIZE RE-OPEN WIDGET)
+-- ============================================================
+createFloatingWidget = function()
+    if floatingGui and floatingGui.Parent and pill and pill.Parent then
+        pill.Visible = true
+        floatingGui.Enabled = true
+        return floatingGui
+    end
+
+    local parentGui = getSafeGuiParent()
+    if not parentGui then return nil end
+
+    floatingGui = Instance.new("ScreenGui")
+    floatingGui.Name = "RielFloatingWidget"
+    floatingGui.ResetOnSpawn = false
+    floatingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    floatingGui.DisplayOrder = 999999
+    floatingGui.Enabled = true
+
+    pill = Instance.new("TextButton")
+    pill.Name = "FloatingPill"
+    pill.Size = UDim2.new(0, 140, 0, 36)
+    pill.Position = UDim2.new(0, 20, 0.45, 0)
+    pill.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+    pill.BorderSizePixel = 0
+    pill.Text = "🛡️ Riel Private"
+    pill.TextColor3 = Color3.fromRGB(255, 255, 255)
+    pill.TextSize = 14
+    pill.Font = Enum.Font.GothamMedium
+    pill.AutoButtonColor = true
+    pill.Active = true
+    pill.Selectable = true
+    pill.Visible = true
+    pill.ZIndex = 100
+    pill.Parent = floatingGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = pill
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1.5
+    stroke.Color = Color3.fromRGB(80, 160, 255)
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Parent = pill
+
+    local gradient = Instance.new("UIGradient")
+    gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(64, 201, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(232, 28, 255))
+    })
+    gradient.Parent = stroke
+
+    -- Make pill draggable across touch and mouse
+    local dragging, dragInput, dragStart, startPos
+    pill.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = pill.Position
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    pill.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            pill.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    -- Tap/click to toggle window open/closed
+    local lastToggleTime = 0
+    pill.MouseButton1Click:Connect(function()
+        if (tick() - lastToggleTime) < 0.25 then return end
+        lastToggleTime = tick()
+        if Window and not Window.Destroyed then
+            pcall(function()
+                if Window.Closed then
+                    Window:Open()
+                else
+                    Window:Close()
+                end
+            end)
+        elseif WindUI and WindUI.Notify then
+            pcall(function()
+                WindUI:Notify({
+                    Title = "Riel Private",
+                    Content = "Opening UI Menu...",
+                    Duration = 2
+                })
+            end)
+        end
+    end)
+
+    pill.Visible = true
+    floatingGui.Parent = parentGui
+    return floatingGui
+end
+
+-- Create floating widget IMMEDIATELY on script launch
+pcall(createFloatingWidget)
+
+-- ============================================================
+-- WINDUI LIBRARY LOADER WITH CDN FALLBACKS
+-- ============================================================
 local WindUI = nil
 local windUI_Mirrors = {
     "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua",
+    "https://cdn.jsdelivr.net/gh/Footagesus/WindUI@main/dist/main.lua",
     "https://raw.githubusercontent.com/Footagesus/WindUI/1.6.66/dist/main.lua",
+    "https://cdn.jsdelivr.net/gh/Footagesus/WindUI@1.6.66/dist/main.lua",
     "https://raw.githubusercontent.com/Footagesus/WindUI/master/dist/main.lua",
     "https://github.com/Footagesus/WindUI/releases/download/1.6.66/main.lua"
 }
@@ -40,101 +284,97 @@ for attempt = 1, 3 do
     task.wait(0.25)
 end
 
-if not WindUI or not WindUI.CreateWindow then
-    warn("[Riel Private] WindUI library could not be loaded. Please check your executor HTTP permissions.")
-    return
+-- Pre-clear any previous Window in WindUI singleton to prevent "You cannot create more than one window" error
+if WindUI then
+    pcall(function()
+        if WindUI.Window then
+            pcall(function()
+                if typeof(WindUI.Window.Destroy) == "function" then
+                    WindUI.Window:Destroy()
+                end
+            end)
+            WindUI.Window = nil
+        end
+    end)
+    WindUI.Window = nil
 end
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local weathers = {"Cloudy", "Snow", "Storm", "Radiant", "SharkHunt", "Wind"}
+-- Create Window with safe folder and error isolation
+if WindUI and WindUI.CreateWindow then
+    local ok, winOrErr = pcall(function()
+        return WindUI:CreateWindow({
+            Title = "Riel Private",
+            Folder = "RielPrivate",
+            Icon = "shield",
+            Size = UDim2.fromOffset(500, 450),
+            Transparent = false,
+            Theme = "Dark",
+            IgnoreAlerts = true,
+            OpenButton = {
+                Enabled = true,
+                OnlyMobile = false,
+                Title = "Riel Private",
+                Icon = "shield",
+                Position = UDim2.new(0, 20, 0.45, 0),
+                Draggable = true,
+                OnlyIcon = false
+            }
+        })
+    end)
 
-local player = Players.LocalPlayer
-local character = player.Character
-local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if ok and winOrErr then
+        Window = winOrErr
+    else
+        warn("[Riel Private] CreateWindow error:", tostring(winOrErr))
+    end
+end
 
--- Non-blocking character watcher to prevent startup hang
-player.CharacterAdded:Connect(function(newChar)
-    character = newChar
-    humanoid = newChar:WaitForChild("Humanoid", 5)
-end)
+-- Ensure WindUI ScreenGui renders on top of game HUDs
+if WindUI and WindUI.ScreenGui then
+    pcall(function()
+        WindUI.ScreenGui.DisplayOrder = 99999
+        WindUI.ScreenGui.Enabled = true
+    end)
+end
 
+if Window then
+    Window.IsPC = false
+    Window.IsOpenButtonEnabled = true
+    task.spawn(function()
+        task.wait(0.2)
+        pcall(function() Window:Open() end)
+    end)
+else
+    -- Fallback mock window to guarantee entire script runs even if WindUI HTTP fails
+    local mockSection = {}
+    function mockSection:Button() return mockSection end
+    function mockSection:Toggle() return mockSection end
+    function mockSection:Slider() return mockSection end
+    function mockSection:Dropdown() return mockSection end
+    function mockSection:Colorpicker() return mockSection end
+    function mockSection:Keybind() return mockSection end
 
-local autoFarmSpeedThread
-local autoMountAnehThread
-local autoFarmGemsThread
-local autoFarmXPThread
-local autoRebirthThread
-local autoFishingThread
-local autoEggThread
-local didEnabled = false
-local flyEnabled = false
-local selectedEgg = "Red Crystal"
+    local mockTab = {}
+    function mockTab:Section() return mockSection end
 
-local Window = WindUI:CreateWindow({
-    Title = " Riel Private",
-    Icon = "shield",
-    Size = UDim2.fromOffset(500, 450),
-    Transparent = false,
-    Theme = "Dark",
-    IgnoreAlerts = true,
-    OpenButton = {
-        Enabled = true,
-        OnlyMobile = false,
-        Title = "Riel Private",
-        Icon = "shield",
-        Position = UDim2.new(0, 20, 0.45, 0),
-        Draggable = true,
-        OnlyIcon = false
+    Window = {
+        Tab = function() return mockTab end,
+        SelectTab = function() end,
+        Open = function() end,
+        Close = function() end,
+        Toggle = function() end,
+        OnDestroy = function() end,
+        OnClose = function() end,
+        OnOpen = function() end,
+        Destroyed = false,
+        Closed = false,
     }
-})
+end
 
--- Master script running state
-local scriptRunning = true
-
--- Master Automation Session Counters (increments every time a toggle is switched to kill previous threads)
-local repairSession = 0
-local saveSession = 0
-local catchSession = 0
-local palletSession = 0
-local parrySession = 0
-local dodgeSession = 0
-
--- Master Automation Toggle States (Declared top-level so all functions & threads share upvalues)
-local autoRepairEnabled = false
-local autoSkillCheckEnabled = false
-local autoPalletEnabled = false
-local autoParryEnabled = false
-local autoSaveEnabled = false
-local killerESPEnabled = false
-local genESPEnabled = false
-local survivorESPEnabled = false
-local autoCatchEnabled = false
-local autoAimSurvivorEnabled = false
-local autoHitSurvivorEnabled = false
-local autoHookSurvivorEnabled = false
-local autoDodgeEnabled = false
-local autoRoleAdaptEnabled = true
-local flyEnabled = false
-local didEnabled = false
-local noClipEnabled = false
-local currentRepairPoint = nil
-local currentKillerTarget = nil
-local charAddedConn = nil
-local floatingGui = nil
-
--- Force floating open button to be enabled across all platforms (Mobile, PC, Emulators)
-Window.IsPC = false
-Window.IsOpenButtonEnabled = true
-
--- Ensure floating toggle widget is created and displayed immediately on startup
+-- Ensure floating widget is displayed immediately on startup
 task.spawn(function()
     task.wait(0.1)
-    if createFloatingWidget then
-        pcall(createFloatingWidget)
-    end
+    pcall(createFloatingWidget)
 end)
 
 -- Global Clean Shutdown & Script Stopper
@@ -247,109 +487,10 @@ local function stopScript()
 end
 
 -- ============================================================
--- FLOATING TOGGLE ICON (MINIMIZE RE-OPEN WIDGET)
+-- FLOATING TOGGLE ICON ALIAS (Initialized at top of script)
 -- ============================================================
-local function createFloatingWidget()
-    if floatingGui and floatingGui.Parent then return floatingGui end
+-- Note: createFloatingWidget is defined and displayed at startup
 
-    local parentGui = nil
-    pcall(function()
-        local gethui = gethui or function() return nil end
-        parentGui = gethui() or game:GetService("CoreGui")
-    end)
-    if not parentGui or not pcall(function() return parentGui.Name end) then
-        parentGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
-    end
-
-    floatingGui = Instance.new("ScreenGui")
-    floatingGui.Name = "RielFloatingWidget"
-    floatingGui.ResetOnSpawn = false
-    floatingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
-    local pill = Instance.new("TextButton")
-    pill.Name = "FloatingPill"
-    pill.Size = UDim2.new(0, 140, 0, 36)
-    pill.Position = UDim2.new(0, 20, 0.45, 0)
-    pill.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
-    pill.BorderSizePixel = 0
-    pill.Text = "🛡️ Riel Private"
-    pill.TextColor3 = Color3.fromRGB(255, 255, 255)
-    pill.TextSize = 14
-    pill.Font = Enum.Font.GothamMedium
-    pill.AutoButtonColor = false
-    pill.Parent = floatingGui
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(1, 0)
-    corner.Parent = pill
-
-    local stroke = Instance.new("UIStroke")
-    stroke.Thickness = 1.5
-    stroke.Color = Color3.fromRGB(80, 160, 255)
-    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    stroke.Parent = pill
-
-    local gradient = Instance.new("UIGradient")
-    gradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(64, 201, 255)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(232, 28, 255))
-    })
-    gradient.Parent = stroke
-
-    -- Make pill draggable across touch and mouse
-    local dragging, dragInput, dragStart, startPos
-    pill.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = pill.Position
-
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
-            end)
-        end
-    end)
-
-    pill.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            dragInput = input
-        end
-    end)
-
-    UserInputService.InputChanged:Connect(function(input)
-        if input == dragInput and dragging then
-            local delta = input.Position - dragStart
-            pill.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
-        end
-    end)
-
-    -- Tap/click to toggle window open/closed
-    local lastToggleTime = 0
-    pill.MouseButton1Click:Connect(function()
-        if (tick() - lastToggleTime) < 0.25 then return end
-        lastToggleTime = tick()
-        if Window and not Window.Destroyed then
-            pcall(function()
-                if Window.Closed then
-                    Window:Open()
-                else
-                    Window:Close()
-                end
-            end)
-        end
-    end)
-
-    pill.Visible = true
-    floatingGui.Parent = parentGui
-    return floatingGui
-end
 
 local function ensureFloatingButtonVisible(show)
     if not scriptRunning then
