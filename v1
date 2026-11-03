@@ -242,12 +242,18 @@ local function tryLoadWindUI(url, sourceName)
     return ok and res or nil
 end
 
-WindUI = tryLoadWindUI("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua", "Source 1 (Raw GitHub dist)")
+WindUI = tryLoadWindUI("https://raw.githubusercontent.com/rionmaulanaa2/Riel-Private/main/windui.lua", "Source 1 (Self-Hosted Cleaned WindUI)")
 if not WindUI or not WindUI.CreateWindow then
-    WindUI = tryLoadWindUI("https://cdn.jsdelivr.net/gh/Footagesus/WindUI@main/dist/main.lua", "Source 2 (jsDelivr CDN)")
+    WindUI = tryLoadWindUI("https://cdn.jsdelivr.net/gh/rionmaulanaa2/Riel-Private@main/windui.lua", "Source 2 (jsDelivr Mirror)")
 end
 if not WindUI or not WindUI.CreateWindow then
-    WindUI = tryLoadWindUI("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua", "Source 3 (GitHub Releases)")
+    WindUI = tryLoadWindUI("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua", "Source 3 (Raw GitHub dist)")
+end
+if not WindUI or not WindUI.CreateWindow then
+    WindUI = tryLoadWindUI("https://cdn.jsdelivr.net/gh/Footagesus/WindUI@main/dist/main.lua", "Source 4 (jsDelivr CDN)")
+end
+if not WindUI or not WindUI.CreateWindow then
+    WindUI = tryLoadWindUI("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua", "Source 5 (GitHub Releases)")
 end
 
 -- Safety wait loop
@@ -306,7 +312,7 @@ if not winSuccess or not Window then
     return
 end
 
--- Configure Mobile OpenButton
+-- Configure Mobile OpenButton & Enforce Android ScreenGui DisplayOrder & Parenting
 Window.IsPC = false
 Window.IsOpenButtonEnabled = true
 if Window.OpenButtonMain then
@@ -315,24 +321,53 @@ if Window.OpenButtonMain then
     end)
 end
 
+pcall(function()
+    local pGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+    if WindUI.ScreenGui then
+        WindUI.ScreenGui.DisplayOrder = 999999999
+        WindUI.ScreenGui.ResetOnSpawn = false
+        WindUI.ScreenGui.Enabled = true
+        if pGui then
+            WindUI.ScreenGui.Parent = pGui
+        end
+    end
+    if WindUI.NotificationGui then
+        WindUI.NotificationGui.DisplayOrder = 999999999
+        WindUI.NotificationGui.ResetOnSpawn = false
+        WindUI.NotificationGui.Enabled = true
+        if pGui then
+            WindUI.NotificationGui.Parent = pGui
+        end
+    end
+    if WindUI.DropdownGui then
+        WindUI.DropdownGui.DisplayOrder = 999999999
+        WindUI.DropdownGui.ResetOnSpawn = false
+        WindUI.DropdownGui.Enabled = true
+        if pGui then
+            WindUI.DropdownGui.Parent = pGui
+        end
+    end
+end)
+
 -- ============================================================
 -- FLOATING RE-OPEN WIDGET (TOUCH & DRAG COMPATIBLE)
 -- ============================================================
 local function createFloatingWidget()
     if floatingGui and floatingGui.Parent then return floatingGui end
 
-    local parentGui = nil
-    pcall(function()
-        local gethui = gethui or function() return nil end
-        parentGui = gethui() or game:GetService("CoreGui")
-    end)
-    if not parentGui or not pcall(function() return parentGui.Name end) then
-        parentGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+    local parentGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+    if not parentGui then
+        pcall(function()
+            local gethui = gethui or function() return nil end
+            parentGui = gethui() or game:GetService("CoreGui")
+        end)
     end
 
     floatingGui = Instance.new("ScreenGui")
     floatingGui.Name = "RielFloatingWidget"
     floatingGui.ResetOnSpawn = false
+    floatingGui.DisplayOrder = 999999999
+    floatingGui.IgnoreGuiInset = true
     floatingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
     local pill = Instance.new("TextButton")
@@ -471,7 +506,7 @@ pcall(function()
                 end)
             end
             pcall(function()
-                ensureFloatingButtonVisible(false)
+                ensureFloatingButtonVisible(true)
             end)
         end)
     end
