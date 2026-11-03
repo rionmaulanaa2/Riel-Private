@@ -35,6 +35,23 @@ if player then
     end)
 end
 
+-- ============================================================
+-- INITIAL CLEANUP OF PREVIOUS RUNS (RUN ONCE BEFORE MOUNTING NEW UI)
+-- ============================================================
+pcall(function()
+    local coreGui = game:GetService("CoreGui")
+    local playerGui = player and player:FindFirstChild("PlayerGui")
+    for _, parent in ipairs({coreGui, playerGui}) do
+        if parent then
+            for _, child in ipairs(parent:GetChildren()) do
+                if child.Name == "RielFloatingWidget" or child.Name == "RielNativeGUI" or child.Name:lower():find("windui") then
+                    pcall(function() child:Destroy() end)
+                end
+            end
+        end
+    end
+end)
+
 -- Master script running state
 local scriptRunning = true
 local charAddedConn = nil
@@ -135,7 +152,7 @@ local function createFloatingWidget()
         end
     end)
 
-    -- Toggle Window open/closed on tap
+    -- Toggle Window or Native Menu open/closed on tap
     local function onPillActivated()
         if Window and not Window.Destroyed then
             pcall(function()
@@ -145,8 +162,12 @@ local function createFloatingWidget()
                     Window:Close()
                 end
             end)
+        elseif nativeFrame then
+            nativeFrame.Visible = not nativeFrame.Visible
+        elseif launchNativeAndroidUI then
+            launchNativeAndroidUI()
         else
-            print("[Riel Private] Floating pill clicked. Window instance: " .. tostring(Window))
+            print("[Riel Private] Floating pill clicked. Window: " .. tostring(Window) .. ", nativeFrame: " .. tostring(nativeFrame))
         end
     end
 
@@ -328,23 +349,7 @@ stopScript = function()
     print("[Riel Private] Script stopped and UI closed successfully.")
 end
 
--- ============================================================
--- PRE-CLEANUP PRIOR UI INSTANCES & SINGLETONS
--- ============================================================
-print("[Riel Private] [2/5] Cleaning up existing UI & singleton state...")
-pcall(function()
-    local coreGui = game:GetService("CoreGui")
-    local playerGui = player and player:FindFirstChild("PlayerGui")
-    for _, parent in ipairs({coreGui, playerGui}) do
-        if parent then
-            for _, child in ipairs(parent:GetChildren()) do
-                if child.Name == "RielFloatingWidget" or child.Name:lower():find("windui") or child.Name:lower():find("riel") then
-                    pcall(function() child:Destroy() end)
-                end
-            end
-        end
-    end
-end)
+-- (Previous run cleanup already performed at script start)
 
 -- ============================================================
 -- WINDUI MULTI-CDN LOADER
@@ -356,7 +361,17 @@ local function tryLoadWindUI(url, sourceName)
     local ok, res = pcall(function()
         print("[Riel Private] -> Trying " .. sourceName .. "...")
         local fetchUrl = url .. (url:find("%?") and "&" or "?") .. "t=" .. tostring(tick())
-        local src = game:HttpGet(fetchUrl, true)
+        local src = nil
+        local ok1, res1 = pcall(function() return game:HttpGet(fetchUrl) end)
+        if ok1 and res1 and #res1 > 1000 then
+            src = res1
+        else
+            local ok2, res2 = pcall(function() return game:HttpGet(fetchUrl, true) end)
+            if ok2 and res2 and #res2 > 1000 then
+                src = res2
+            end
+        end
+
         if src and #src > 1000 then
             local fn, compileErr = loadstring(src)
             if fn then
@@ -398,14 +413,311 @@ while (not WindUI or not WindUI.CreateWindow) and (tick() - windUiWait) < 8 do
     task.wait(0.2)
 end
 
+local nativeGui = nil
+local nativeFrame = nil
+
+local function launchNativeAndroidUI()
+    if nativeGui and nativeGui.Parent then
+        nativeGui.Enabled = true
+        if nativeFrame then nativeFrame.Visible = true end
+        return
+    end
+
+    print("[Riel Private] 🚀 Launching Native Android Fallback Menu...")
+    local pGui = player and (player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5))
+    if not pGui then
+        pcall(function()
+            local gethui = gethui or function() return nil end
+            pGui = gethui() or game:GetService("CoreGui")
+        end)
+    end
+
+    nativeGui = Instance.new("ScreenGui")
+    nativeGui.Name = "RielNativeGUI"
+    nativeGui.ResetOnSpawn = false
+    nativeGui.DisplayOrder = 999999999
+    nativeGui.IgnoreGuiInset = true
+    nativeGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+    -- Main Container Frame
+    local frame = Instance.new("Frame")
+    frame.Name = "MainFrame"
+    frame.Size = UDim2.new(0, 360, 0, 480)
+    frame.Position = UDim2.new(0.5, -180, 0.5, -240)
+    frame.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+    frame.BorderSizePixel = 0
+    frame.Active = true
+    frame.ClipsDescendants = true
+    frame.Parent = nativeGui
+    nativeFrame = frame
+
+    local frameCorner = Instance.new("UICorner")
+    frameCorner.CornerRadius = UDim.new(0, 12)
+    frameCorner.Parent = frame
+
+    local frameStroke = Instance.new("UIStroke")
+    frameStroke.Thickness = 1.5
+    frameStroke.Color = Color3.fromRGB(70, 140, 240)
+    frameStroke.Parent = frame
+
+    -- Topbar Header
+    local topbar = Instance.new("Frame")
+    topbar.Name = "Topbar"
+    topbar.Size = UDim2.new(1, 0, 0, 42)
+    topbar.BackgroundColor3 = Color3.fromRGB(26, 26, 36)
+    topbar.BorderSizePixel = 0
+    topbar.Parent = frame
+
+    local topbarCorner = Instance.new("UICorner")
+    topbarCorner.CornerRadius = UDim.new(0, 12)
+    topbarCorner.Parent = topbar
+
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Size = UDim2.new(1, -90, 1, 0)
+    titleLabel.Position = UDim2.new(0, 14, 0, 0)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Text = "🛡️ Riel Private (Violence District)"
+    titleLabel.TextColor3 = Color3.fromRGB(240, 240, 255)
+    titleLabel.TextSize = 14
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    titleLabel.Parent = topbar
+
+    -- Minimize Button
+    local minBtn = Instance.new("TextButton")
+    minBtn.Size = UDim2.new(0, 32, 0, 32)
+    minBtn.Position = UDim2.new(1, -74, 0.5, -16)
+    minBtn.BackgroundColor3 = Color3.fromRGB(36, 36, 50)
+    minBtn.Text = "—"
+    minBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+    minBtn.TextSize = 14
+    minBtn.Font = Enum.Font.GothamBold
+    minBtn.Parent = topbar
+    local minCorner = Instance.new("UICorner")
+    minCorner.CornerRadius = UDim.new(0, 6)
+    minCorner.Parent = minBtn
+
+    minBtn.MouseButton1Click:Connect(function()
+        frame.Visible = false
+        if floatingPill then floatingPill.Visible = true end
+    end)
+
+    -- Close Button
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0, 32, 0, 32)
+    closeBtn.Position = UDim2.new(1, -38, 0.5, -16)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 50)
+    closeBtn.Text = "✕"
+    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeBtn.TextSize = 13
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.Parent = topbar
+    local closeCorner = Instance.new("UICorner")
+    closeCorner.CornerRadius = UDim.new(0, 6)
+    closeCorner.Parent = closeBtn
+
+    closeBtn.MouseButton1Click:Connect(function()
+        stopScript()
+    end)
+
+    -- Dragging topbar
+    local dragging, dragInput, dragStart, startPos
+    topbar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    topbar.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+
+    -- Content ScrollFrame
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Size = UDim2.new(1, -16, 1, -54)
+    scroll.Position = UDim2.new(0, 8, 0, 48)
+    scroll.BackgroundTransparency = 1
+    scroll.BorderSizePixel = 0
+    scroll.ScrollBarThickness = 4
+    scroll.ScrollBarImageColor3 = Color3.fromRGB(80, 140, 240)
+    scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    scroll.Parent = frame
+
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 8)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Parent = scroll
+
+    -- Helper: Create Section Header
+    local function addSectionHeader(text, order)
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, 0, 0, 26)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = "  " .. text
+        lbl.TextColor3 = Color3.fromRGB(110, 180, 255)
+        lbl.TextSize = 13
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.LayoutOrder = order
+        lbl.Parent = scroll
+    end
+
+    -- Helper: Create Toggle Button
+    local function addToggle(title, defaultVal, callback, order)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, 0, 0, 38)
+        btn.BackgroundColor3 = Color3.fromRGB(28, 28, 38)
+        btn.Text = ""
+        btn.AutoButtonColor = false
+        btn.LayoutOrder = order
+        btn.Parent = scroll
+
+        local btnCorner = Instance.new("UICorner")
+        btnCorner.CornerRadius = UDim.new(0, 8)
+        btnCorner.Parent = btn
+
+        local btnStroke = Instance.new("UIStroke")
+        btnStroke.Thickness = 1
+        btnStroke.Color = Color3.fromRGB(45, 45, 60)
+        btnStroke.Parent = btn
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, -70, 1, 0)
+        label.Position = UDim2.new(0, 12, 0, 0)
+        label.BackgroundTransparency = 1
+        label.Text = title
+        label.TextColor3 = Color3.fromRGB(230, 230, 235)
+        label.TextSize = 12
+        label.Font = Enum.Font.GothamMedium
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = btn
+
+        local status = Instance.new("TextLabel")
+        status.Size = UDim2.new(0, 50, 0, 24)
+        status.Position = UDim2.new(1, -58, 0.5, -12)
+        status.BackgroundColor3 = defaultVal and Color3.fromRGB(40, 160, 80) or Color3.fromRGB(60, 60, 75)
+        status.Text = defaultVal and "ON" or "OFF"
+        status.TextColor3 = Color3.fromRGB(255, 255, 255)
+        status.TextSize = 11
+        status.Font = Enum.Font.GothamBold
+        status.Parent = btn
+
+        local sCorner = Instance.new("UICorner")
+        sCorner.CornerRadius = UDim.new(0, 6)
+        sCorner.Parent = status
+
+        local state = defaultVal
+        btn.MouseButton1Click:Connect(function()
+            state = not state
+            status.Text = state and "ON" or "OFF"
+            status.BackgroundColor3 = state and Color3.fromRGB(40, 160, 80) or Color3.fromRGB(60, 60, 75)
+            pcall(callback, state)
+        end)
+    end
+
+    -- Helper: Create Action Button
+    local function addButton(title, callback, order)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, 0, 0, 36)
+        btn.BackgroundColor3 = Color3.fromRGB(34, 40, 56)
+        btn.Text = title
+        btn.TextColor3 = Color3.fromRGB(140, 200, 255)
+        btn.TextSize = 12
+        btn.Font = Enum.Font.GothamMedium
+        btn.LayoutOrder = order
+        btn.Parent = scroll
+
+        local btnCorner = Instance.new("UICorner")
+        btnCorner.CornerRadius = UDim.new(0, 8)
+        btnCorner.Parent = btn
+
+        local btnStroke = Instance.new("UIStroke")
+        btnStroke.Thickness = 1
+        btnStroke.Color = Color3.fromRGB(60, 100, 180)
+        btnStroke.Parent = btn
+
+        btn.MouseButton1Click:Connect(function()
+            pcall(callback)
+        end)
+    end
+
+    -- Add All Core Controls
+    addSectionHeader("⚡ Survivor Automation", 1)
+    addToggle("Auto Repair Generators", autoRepairEnabled, function(v) autoRepairEnabled = v end, 2)
+    addToggle("Auto Skill Check (Instant Great)", autoSkillCheckEnabled, function(v) autoSkillCheckEnabled = v end, 3)
+    addToggle("Auto Pallet Drop (Safe Reaction)", autoPalletEnabled, function(v) autoPalletEnabled = v end, 4)
+    addToggle("Auto Parry / Dodge Killer", autoParryEnabled, function(v) autoParryEnabled = v end, 5)
+
+    addSectionHeader("👁️ ESP & Visuals", 6)
+    addToggle("Killer ESP (Chams & Tracer)", killerESPEnabled, function(v)
+        killerESPEnabled = v
+        if not v and cleanKillerESP then pcall(cleanKillerESP) end
+    end, 7)
+    addToggle("Generator ESP (Status & %)", genESPEnabled, function(v)
+        genESPEnabled = v
+        if not v and cleanGenESP then pcall(cleanGenESP) end
+    end, 8)
+    addToggle("Survivor ESP (Health & Role)", survivorESPEnabled, function(v)
+        survivorESPEnabled = v
+        if not v and cleanSurvivorESP then pcall(cleanSurvivorESP) end
+    end, 9)
+
+    addSectionHeader("🗡️ Killer Automation", 10)
+    addToggle("Auto Catch Survivor", autoCatchEnabled, function(v) autoCatchEnabled = v end, 11)
+    addToggle("Auto Aim Survivor (Silent Aim)", autoAimSurvivorEnabled, function(v) autoAimSurvivorEnabled = v end, 12)
+    addToggle("Auto Hit / Attack", autoHitSurvivorEnabled, function(v) autoHitSurvivorEnabled = v end, 13)
+    addToggle("Auto Hook to Nearest Hook", autoHookSurvivorEnabled, function(v) autoHookSurvivorEnabled = v end, 14)
+
+    addSectionHeader("🚀 Movement & Exploits", 15)
+    addToggle("NoClip (Walk Through Walls)", noClipEnabled, function(v)
+        noClipEnabled = v
+        if updateNoClip then pcall(updateNoClip, v) end
+    end, 16)
+    addToggle("Fly Mode", flyEnabled, function(v)
+        flyEnabled = v
+        if v and startFly then pcall(startFly) elseif not v and stopFly then pcall(stopFly) end
+    end, 17)
+    addButton("⚡ Safe Teleport to Nearest Generator", function()
+        pcall(function()
+            if teleportToNearestGenerator then teleportToNearestGenerator() end
+        end)
+    end, 18)
+    addButton("🚪 Safe Teleport to Exit Gate", function()
+        pcall(function()
+            if teleportToNearestExit then teleportToNearestExit() end
+        end)
+    end, 19)
+
+    addSectionHeader("⚙️ Management", 20)
+    addButton("❌ Stop Script & Close All", function()
+        stopScript()
+    end, 21)
+
+    nativeGui.Parent = pGui
+    if floatingPill then
+        floatingPill.Text = "🛡️ Riel Private"
+    end
+    print("[Riel Private] ✅ Native Android Fallback Menu successfully mounted!")
+end
+
 if not WindUI or not WindUI.CreateWindow then
     warn("==================================================")
-    warn("❌ [Riel Private] FATAL ERROR: WindUI library could not be loaded!")
-    warn("❌ [Riel Private] Please check your internet connection or executor HTTP permissions.")
+    warn("⚠️ [Riel Private] WindUI could not be loaded via HTTP. Activating Native Android Fallback UI!")
     warn("==================================================")
-    if floatingPill then
-        floatingPill.Text = "⚠️ UI Load Error"
-    end
+    launchNativeAndroidUI()
     return
 end
 
