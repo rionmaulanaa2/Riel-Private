@@ -14563,7 +14563,8 @@ aa.ScreenGui=at("ScreenGui",{
 Name="WindUI",
 Parent=aw,
 IgnoreGuiInset=true,
-ScreenInsets="None",
+ResetOnSpawn=false,
+
 DisplayOrder = 999999999,
 },{
 
@@ -14591,16 +14592,19 @@ aa.NotificationGui=at("ScreenGui",{
 Name="WindUI/Notifications",
 Parent=aw,
 IgnoreGuiInset=true,
+ResetOnSpawn=false,
 })
 aa.DropdownGui=at("ScreenGui",{
 Name="WindUI/Dropdowns",
 Parent=aw,
 IgnoreGuiInset=true,
+ResetOnSpawn=false,
 })
 aa.TooltipGui=at("ScreenGui",{
 Name="WindUI/Tooltips",
 Parent=aw,
 IgnoreGuiInset=true,
+ResetOnSpawn=false,
 })
 av(aa.ScreenGui)
 av(aa.NotificationGui)
@@ -14743,16 +14747,16 @@ aa:SetLanguage(as.Language)
 
 function aa.CreateWindow(az,aA)local aB=a.load'ae'
 
-if not am:IsStudio()and writefile then
-if not isfolder"WindUI"then
-makefolder"WindUI"
+pcall(function()
+if not am:IsStudio() and writefile then
+if isfolder and not isfolder("WindUI") then
+if makefolder then makefolder("WindUI") end
 end
-if aA.Folder then
+if aA.Folder and makefolder then
 makefolder(aA.Folder)
-else
-makefolder(aA.Title)
 end
 end
+end)
 
 aA.WindUI=aa
 aA.Window=aa.Window

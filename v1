@@ -40,10 +40,141 @@ local scriptRunning = true
 local charAddedConn = nil
 local killerAimConn = nil
 local floatingGui = nil
+local floatingPill = nil
 
 -- Forward declaration of Window & StopScript
 local Window = nil
 local stopScript = nil
+
+-- ============================================================
+-- EARLY FLOATING RE-OPEN WIDGET (MOUNTED IMMEDIATELY FOR ANDROID)
+-- ============================================================
+local function createFloatingWidget()
+    if floatingGui and floatingGui.Parent then return floatingGui end
+
+    local pGui = player and (player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5))
+    local parentGui = pGui
+    if not parentGui then
+        pcall(function()
+            local gethui = gethui or function() return nil end
+            parentGui = gethui() or game:GetService("CoreGui")
+        end)
+    end
+
+    floatingGui = Instance.new("ScreenGui")
+    floatingGui.Name = "RielFloatingWidget"
+    floatingGui.ResetOnSpawn = false
+    floatingGui.DisplayOrder = 999999999
+    floatingGui.IgnoreGuiInset = true
+    floatingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+    local pill = Instance.new("TextButton")
+    pill.Name = "FloatingPill"
+    pill.Size = UDim2.new(0, 150, 0, 36)
+    pill.Position = UDim2.new(0, 20, 0.45, 0)
+    pill.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+    pill.BorderSizePixel = 0
+    pill.Text = "🛡️ Riel Private (Loading...)"
+    pill.TextColor3 = Color3.fromRGB(255, 255, 255)
+    pill.TextSize = 13
+    pill.Font = Enum.Font.GothamMedium
+    pill.AutoButtonColor = false
+    pill.Active = true
+    pill.Visible = true
+    pill.Parent = floatingGui
+    floatingPill = pill
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = pill
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1.5
+    stroke.Color = Color3.fromRGB(80, 160, 255)
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Parent = pill
+
+    local gradient = Instance.new("UIGradient")
+    gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(64, 201, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(232, 28, 255))
+    })
+    gradient.Parent = stroke
+
+    -- Touch and mouse drag logic
+    local dragging, dragInput, dragStart, startPos
+    pill.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = pill.Position
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    pill.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            pill.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    -- Toggle Window open/closed on tap
+    local function onPillActivated()
+        if Window and not Window.Destroyed then
+            pcall(function()
+                if Window.Closed then
+                    Window:Open()
+                else
+                    Window:Close()
+                end
+            end)
+        else
+            print("[Riel Private] Floating pill clicked. Window instance: " .. tostring(Window))
+        end
+    end
+
+    pill.MouseButton1Click:Connect(onPillActivated)
+    pcall(function()
+        if pill.Activated then
+            pill.Activated:Connect(onPillActivated)
+        end
+    end)
+
+    floatingGui.Parent = parentGui
+    return floatingGui
+end
+
+local function ensureFloatingButtonVisible(show)
+    if not scriptRunning then
+        if floatingGui then pcall(function() floatingGui:Destroy() end) floatingGui = nil end
+        return
+    end
+
+    local fg = createFloatingWidget()
+    if fg and fg:FindFirstChild("FloatingPill") then
+        fg.FloatingPill.Visible = (show ~= false)
+    end
+end
+
+-- Immediately mount floating widget so Android executor shows it without any delay
+pcall(createFloatingWidget)
 
 -- Master Automation Session Counters
 local repairSession = 0
@@ -224,18 +355,23 @@ local WindUI = nil
 local function tryLoadWindUI(url, sourceName)
     local ok, res = pcall(function()
         print("[Riel Private] -> Trying " .. sourceName .. "...")
-        local src = game:HttpGet(url)
+        local fetchUrl = url .. (url:find("%?") and "&" or "?") .. "t=" .. tostring(tick())
+        local src = game:HttpGet(fetchUrl, true)
         if src and #src > 1000 then
             local fn, compileErr = loadstring(src)
             if fn then
                 local success, lib = pcall(fn)
-                if success and lib and lib.CreateWindow then
+                if success and lib and type(lib) == "table" and lib.CreateWindow then
                     print("[Riel Private] -> Successfully loaded WindUI from " .. sourceName .. "!")
                     return lib
+                else
+                    warn("[Riel Private] Execution error from " .. sourceName .. ": " .. tostring(lib))
                 end
             else
                 warn("[Riel Private] Compile error from " .. sourceName .. ": " .. tostring(compileErr))
             end
+        else
+            warn("[Riel Private] Empty or failed HTTP response from " .. sourceName .. " (bytes: " .. tostring(src and #src or 0) .. ")")
         end
         return nil
     end)
@@ -267,6 +403,9 @@ if not WindUI or not WindUI.CreateWindow then
     warn("❌ [Riel Private] FATAL ERROR: WindUI library could not be loaded!")
     warn("❌ [Riel Private] Please check your internet connection or executor HTTP permissions.")
     warn("==================================================")
+    if floatingPill then
+        floatingPill.Text = "⚠️ UI Load Error"
+    end
     return
 end
 
@@ -286,11 +425,12 @@ end)
 print("[Riel Private] [4/5] Creating WindUI Window (Dark Theme, 500x450)...")
 local winSuccess, winErr = pcall(function()
     Window = WindUI:CreateWindow({
-        Title = " Riel Private",
+        Title = "Riel Private",
         Icon = "shield",
         Size = UDim2.fromOffset(500, 450),
         Transparent = false,
         Theme = "Dark",
+        Folder = "RielPrivate",
         IgnoreAlerts = true,
         OpenButton = {
             Enabled = true,
@@ -303,6 +443,10 @@ local winSuccess, winErr = pcall(function()
         }
     })
 end)
+
+if winSuccess and Window and floatingPill then
+    floatingPill.Text = "🛡️ Riel Private"
+end
 
 if not winSuccess or not Window then
     warn("==================================================")
@@ -349,124 +493,7 @@ pcall(function()
     end
 end)
 
--- ============================================================
--- FLOATING RE-OPEN WIDGET (TOUCH & DRAG COMPATIBLE)
--- ============================================================
-local function createFloatingWidget()
-    if floatingGui and floatingGui.Parent then return floatingGui end
-
-    local parentGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
-    if not parentGui then
-        pcall(function()
-            local gethui = gethui or function() return nil end
-            parentGui = gethui() or game:GetService("CoreGui")
-        end)
-    end
-
-    floatingGui = Instance.new("ScreenGui")
-    floatingGui.Name = "RielFloatingWidget"
-    floatingGui.ResetOnSpawn = false
-    floatingGui.DisplayOrder = 999999999
-    floatingGui.IgnoreGuiInset = true
-    floatingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
-    local pill = Instance.new("TextButton")
-    pill.Name = "FloatingPill"
-    pill.Size = UDim2.new(0, 140, 0, 36)
-    pill.Position = UDim2.new(0, 20, 0.45, 0)
-    pill.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
-    pill.BorderSizePixel = 0
-    pill.Text = "🛡️ Riel Private"
-    pill.TextColor3 = Color3.fromRGB(255, 255, 255)
-    pill.TextSize = 14
-    pill.Font = Enum.Font.GothamMedium
-    pill.AutoButtonColor = false
-    pill.Parent = floatingGui
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(1, 0)
-    corner.Parent = pill
-
-    local stroke = Instance.new("UIStroke")
-    stroke.Thickness = 1.5
-    stroke.Color = Color3.fromRGB(80, 160, 255)
-    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    stroke.Parent = pill
-
-    local gradient = Instance.new("UIGradient")
-    gradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(64, 201, 255)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(232, 28, 255))
-    })
-    gradient.Parent = stroke
-
-    -- Dragging across touch and mouse
-    local dragging, dragInput, dragStart, startPos
-    pill.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = pill.Position
-
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
-            end)
-        end
-    end)
-
-    pill.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            dragInput = input
-        end
-    end)
-
-    UserInputService.InputChanged:Connect(function(input)
-        if input == dragInput and dragging then
-            local delta = input.Position - dragStart
-            pill.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
-        end
-    end)
-
-    -- Tap/click to restore window
-    local function onPillActivated()
-        if Window and not Window.Destroyed then
-            pcall(function()
-                if Window.Closed then
-                    Window:Open()
-                else
-                    Window:Close()
-                end
-            end)
-        end
-    end
-
-    pill.MouseButton1Click:Connect(onPillActivated)
-    pcall(function()
-        pcall(function() if pill.Activated then pill.Activated:Connect(onPillActivated) end end)
-    end)
-
-    floatingGui.Parent = parentGui
-    return floatingGui
-end
-
-local function ensureFloatingButtonVisible(show)
-    if not scriptRunning then
-        if floatingGui then pcall(function() floatingGui:Destroy() end) floatingGui = nil end
-        return
-    end
-
-    local fg = createFloatingWidget()
-    if fg and fg:FindFirstChild("FloatingPill") then
-        fg.FloatingPill.Visible = show
-    end
-end
+-- (Floating widget definition moved to script start for instant display)
 
 -- Connect Window Close, Minimize & Destroy Events safely
 pcall(function()
