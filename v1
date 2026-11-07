@@ -39,11 +39,9 @@ end
 -- ============================================================
 local function getGuiContainer()
     -- 1. Exploit gethui() (Standard Delta Android container)
-    if typeof(gethui) == "function" then
-        local ok, h = pcall(gethui)
-        if ok and h and typeof(h) == "Instance" then
-            return h
-        end
+    local ok_hui, hui = pcall(function() return gethui() end)
+    if ok_hui and hui and typeof(hui) == "Instance" then
+        return hui
     end
 
     -- 2. LocalPlayer PlayerGui (100% reliable on mobile Roblox)
@@ -245,6 +243,7 @@ function RielUI:CreateWindow(config)
     local titleText = config.Title or "Riel Private"
 
     local guiParent = getGuiContainer()
+    print("[Riel Private] GUI container resolved to: " .. tostring(guiParent and guiParent.Name or "NIL"))
 
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = "RielPrivateUI"
@@ -253,17 +252,19 @@ function RielUI:CreateWindow(config)
     screenGui.IgnoreGuiInset = true
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screenGui.Parent = guiParent
+    print("[Riel Private] ScreenGui created and parented to: " .. tostring(screenGui.Parent and screenGui.Parent.Name or "NIL"))
 
     -- Auto-parenting watchdog: ensure UI never gets unmounted on character death/respawn
     task.spawn(function()
+        task.wait(1)
         while scriptRunning do
-            task.wait(2)
-            if screenGui and (not screenGui.Parent or not screenGui.Parent.Parent) then
-                local p = getGuiContainer()
-                if p then
-                    pcall(function() screenGui.Parent = p end)
+            task.wait(3)
+            pcall(function()
+                if screenGui and not screenGui.Parent then
+                    local p = getGuiContainer()
+                    if p then screenGui.Parent = p end
                 end
-            end
+            end)
         end
     end)
 
@@ -296,6 +297,7 @@ function RielUI:CreateWindow(config)
     floatingPill.AutoButtonColor = false
     floatingPill.Active = true
     floatingPill.Selectable = true
+    floatingPill.Visible = true
     floatingPill.ZIndex = 50
     floatingPill.Parent = screenGui
 
@@ -326,6 +328,7 @@ function RielUI:CreateWindow(config)
     mainFrame.BorderSizePixel = 0
     mainFrame.Active = true
     mainFrame.ClipsDescendants = true
+    mainFrame.Visible = true
     mainFrame.ZIndex = 10
     mainFrame.Parent = screenGui
 
@@ -466,10 +469,10 @@ function RielUI:CreateWindow(config)
     }
 
     local function toggleWindow()
-        if windowObj.Closed then
-            windowObj:Open()
-        else
+        if mainFrame.Visible then
             windowObj:Close()
+        else
+            windowObj:Open()
         end
     end
 
@@ -477,7 +480,7 @@ function RielUI:CreateWindow(config)
     local isDraggingPill = false
     local pillDragStart = Vector2.new()
     local pillStartPos = UDim2.new()
-    local pillTouchTime = 0
+    local pillTouchTime = tick()
 
     floatingPill.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -515,10 +518,9 @@ function RielUI:CreateWindow(config)
         end
     end)
 
+    -- MouseButton1Click as backup for PC/executor environments where InputEnded may not fire
     floatingPill.MouseButton1Click:Connect(function()
-        if tick() - pillTouchTime < 0.45 then
-            toggleWindow()
-        end
+        toggleWindow()
     end)
 
     -- Dragging implementation for Main Window Header
@@ -556,12 +558,14 @@ function RielUI:CreateWindow(config)
     function windowObj:Open()
         self.Closed = false
         mainFrame.Visible = true
+        floatingPill.Visible = true
         for _, cb in ipairs(self._onOpenCbs) do pcall(cb) end
     end
 
     function windowObj:Close()
         self.Closed = true
         mainFrame.Visible = false
+        floatingPill.Visible = true
         for _, cb in ipairs(self._onCloseCbs) do pcall(cb) end
     end
 
@@ -1062,6 +1066,10 @@ function RielUI:CreateWindow(config)
     end)
 
     Window = windowObj
+    print("[Riel Private] ✅ RielUI Window created successfully!")
+    print("[Riel Private] ✅ FloatingPill visible: " .. tostring(floatingPill.Visible))
+    print("[Riel Private] ✅ MainWindow visible: " .. tostring(mainFrame.Visible))
+    print("[Riel Private] ✅ ScreenGui parent: " .. tostring(screenGui.Parent and screenGui.Parent.Name or "NIL"))
     return windowObj
 end
 
