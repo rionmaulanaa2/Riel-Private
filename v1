@@ -308,15 +308,18 @@ function RielUI:CreateWindow(config)
     local pillStroke = Instance.new("UIStroke")
     pillStroke.Thickness = 1.5
     pillStroke.Color = Color3.fromRGB(56, 189, 248)
-    pillStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    pcall(function() pillStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border end)
     pillStroke.Parent = floatingPill
 
-    local pillGrad = Instance.new("UIGradient")
-    pillGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(56, 189, 248)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(217, 70, 239))
-    })
-    pillGrad.Parent = pillStroke
+    -- UIGradient on UIStroke is not supported on all executors; wrap in pcall
+    pcall(function()
+        local pillGrad = Instance.new("UIGradient")
+        pillGrad.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(56, 189, 248)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(217, 70, 239))
+        })
+        pillGrad.Parent = pillStroke
+    end)
 
     -- 2. MAIN WINDOW FRAME (Responsive on mobile & PC)
     local mainFrame = Instance.new("Frame")
@@ -336,10 +339,12 @@ function RielUI:CreateWindow(config)
     mainCorner.CornerRadius = UDim.new(0, 10)
     mainCorner.Parent = mainFrame
 
-    local mainStroke = Instance.new("UIStroke")
-    mainStroke.Thickness = 1.5
-    mainStroke.Color = Color3.fromRGB(37, 99, 235)
-    mainStroke.Parent = mainFrame
+    pcall(function()
+        local mainStroke = Instance.new("UIStroke")
+        mainStroke.Thickness = 1.5
+        mainStroke.Color = Color3.fromRGB(37, 99, 235)
+        mainStroke.Parent = mainFrame
+    end)
 
     -- Bulletproof viewport scale calculation (Never negative!)
     local function adjustWindowScale()
@@ -1131,25 +1136,59 @@ end
 -- Seamless WindUI drop-in alias
 local WindUI = RielUI
 
--- Initialize Window
-Window = WindUI:CreateWindow({
-    Title = "Riel Private",
-    Folder = "RielPrivate",
-    Icon = "shield",
-    Size = UDim2.fromOffset(500, 360),
-    Transparent = false,
-    Theme = "Dark",
-    IgnoreAlerts = true,
-    OpenButton = {
-        Enabled = true,
-        OnlyMobile = false,
+-- Initialize Window (wrapped in pcall so errors are visible in console)
+local winOk, winErr = pcall(function()
+    Window = WindUI:CreateWindow({
         Title = "Riel Private",
+        Folder = "RielPrivate",
         Icon = "shield",
-        Position = UDim2.new(0, 20, 0.45, 0),
-        Draggable = true,
-        OnlyIcon = false
-    }
-})
+        Size = UDim2.fromOffset(500, 360),
+        Transparent = false,
+        Theme = "Dark",
+        IgnoreAlerts = true,
+        OpenButton = {
+            Enabled = true,
+            OnlyMobile = false,
+            Title = "Riel Private",
+            Icon = "shield",
+            Position = UDim2.new(0, 20, 0.45, 0),
+            Draggable = true,
+            OnlyIcon = false
+        }
+    })
+end)
+
+if not winOk then
+    warn("[Riel Private] CRITICAL: CreateWindow FAILED: " .. tostring(winErr))
+    -- Emergency fallback: bare-minimum ScreenGui so user can see the error
+    pcall(function()
+        local eContainer = getGuiContainer()
+        local eSG = Instance.new("ScreenGui")
+        eSG.Name = "RielPrivateUI"
+        eSG.ResetOnSpawn = false
+        eSG.DisplayOrder = 999999999
+        eSG.IgnoreGuiInset = true
+        pcall(function() eSG.ZIndexBehavior = Enum.ZIndexBehavior.Sibling end)
+        eSG.Parent = eContainer
+        local eBtn = Instance.new("TextButton")
+        eBtn.Size = UDim2.new(0, 180, 0, 44)
+        eBtn.Position = UDim2.new(0, 10, 0.45, 0)
+        eBtn.BackgroundColor3 = Color3.fromRGB(220, 38, 38)
+        eBtn.BorderSizePixel = 0
+        eBtn.Text = "⚠️ Riel: UI Error\n(Check Console)"
+        eBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        eBtn.TextSize = 12
+        eBtn.Font = Enum.Font.GothamBold
+        eBtn.ZIndex = 100
+        eBtn.Parent = eSG
+        local eCorner = Instance.new("UICorner")
+        eCorner.CornerRadius = UDim.new(0, 8)
+        eCorner.Parent = eBtn
+        warn("[Riel Private] Emergency UI shown. Error was: " .. tostring(winErr))
+    end)
+elseif not Window then
+    warn("[Riel Private] CRITICAL: CreateWindow returned nil (Window is nil after pcall succeeded)")
+end
 
 
 print("[Riel Private] [5/5] Registering MainTab, ViolenceTab, and automations...")
@@ -1158,6 +1197,11 @@ WindUI:Notify({
     Content = "Riel Private by Noirrr!",
     Duration = 5
 })
+
+if not Window then
+    warn("[Riel Private] Window is nil — skipping all tab/feature registration. Check console for CreateWindow error above.")
+    return
+end
 
 local MainTab = Window:Tab({
     Title = "Main",
