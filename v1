@@ -315,6 +315,13 @@ if Window.OpenButtonMain then
     end)
 end
 
+-- Ensure Window is OPEN and visible on start
+pcall(function()
+    if Window and typeof(Window.Open) == "function" then
+        Window:Open()
+    end
+end)
+
 -- ============================================================
 -- FLOATING TOGGLE ICON (MINIMIZE RE-OPEN WIDGET)
 -- ============================================================
@@ -326,6 +333,8 @@ local function createFloatingWidget()
     floatingGui = Instance.new("ScreenGui")
     floatingGui.Name = "RielFloatingWidget"
     floatingGui.ResetOnSpawn = false
+    floatingGui.DisplayOrder = 999999
+    floatingGui.IgnoreGuiInset = true
     pcall(function() floatingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling end)
 
     local pill = Instance.new("TextButton")
@@ -388,10 +397,8 @@ local function createFloatingWidget()
                         pcall(function()
                             if Window.Closed then
                                 Window:Open()
-                                pill.Visible = false
                             else
                                 Window:Close()
-                                pill.Visible = true
                             end
                         end)
                     end
@@ -419,16 +426,14 @@ local function createFloatingWidget()
             pcall(function()
                 if Window.Closed then
                     Window:Open()
-                    pill.Visible = false
                 else
                     Window:Close()
-                    pill.Visible = true
                 end
             end)
         end
     end)
 
-    pill.Visible = false
+    pill.Visible = true  -- Always visible at startup so user can always tap to toggle
     floatingGui.Parent = parentGui
     return floatingGui
 end
@@ -484,14 +489,12 @@ Window:OnClose(function()
 end)
 
 Window:OnOpen(function()
+    -- Window is open: pill stays visible so user can still tap to minimize
     if Window.OpenButtonMain then
         pcall(function()
             Window.OpenButtonMain:Visible(false)
         end)
     end
-    pcall(function()
-        ensureFloatingButtonVisible(false)
-    end)
 end)
 
 -- Topbar direct button hook
@@ -518,6 +521,17 @@ WindUI:Notify({
     Content = "Riel Private by Noirrr!",
     Duration = 5
 })
+
+-- Always create + show floating pill immediately at startup (Android & PC safety net)
+task.spawn(function()
+    task.wait(0.5)
+    pcall(function()
+        local fg = createFloatingWidget()
+        if fg and fg:FindFirstChild("FloatingPill") then
+            fg.FloatingPill.Visible = true
+        end
+    end)
+end)
 
 local MainTab = Window:Tab({
     Title = "Main",
