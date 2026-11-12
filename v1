@@ -112,6 +112,17 @@ local selectedEgg = "Red Crystal"
 -- Forward declaration of Window & StopScript
 local Window = nil
 local stopScript = nil
+-- ============================================================
+-- FORWARD DECLARATIONS FOR REGISTER SCOPING & STOP SCRIPT
+-- ============================================================
+local updateNoClip = nil
+local stopFly = nil
+local cleanKillerESP = nil
+local cleanGenESP = nil
+local cleanSurvivorESP = nil
+local getVDRemotes = nil
+local isPlayerKiller = nil
+
 
 -- ============================================================
 -- GLOBAL CLEAN SHUTDOWN & SCRIPT STOPPER
@@ -411,6 +422,7 @@ WindUI:Notify({
     Duration = 5
 })
 
+do
 local MainTab = Window:Tab({
     Title = "Main",
     Icon = "home"
@@ -936,6 +948,10 @@ MainSection:Toggle({
     end
 })
 
+
+end
+
+do
 local FishTab = Window:Tab({
     Title = "Fishing",
     Icon = "home"
@@ -1216,6 +1232,10 @@ FishSection:Button({
 
 
 
+
+end
+
+do
 local WeatherTab = Window:Tab({
     Title = "Weather",
     Icon = "egg"
@@ -1388,6 +1408,10 @@ WeatherSection:Toggle({
     end
 })
 
+
+end
+
+do
 local MovementTab = Window:Tab({
     Title = "Movement",
     Icon = "wind"
@@ -1437,7 +1461,7 @@ local function startFly()
     end)
 end
 
-local function stopFly()
+stopFly = function()
     if bodyVelocity then bodyVelocity:Destroy() bodyVelocity = nil end
     if bodyGyro then bodyGyro:Destroy() bodyGyro = nil end
     if flyConnection then flyConnection:Disconnect() flyConnection = nil end
@@ -1535,6 +1559,10 @@ MovementSection:Toggle({
     end
 })
 
+
+end
+
+do
 local DeveloperTab = Window:Tab({
     Title = "Developer",
     Icon = "code"
@@ -1731,28 +1759,41 @@ DeveloperSection:Button({
 -- Auto Aim, Auto Parry.
 -- ============================================================
 
-local ViolenceTab = Window:Tab({
+
+end
+
+local ViolenceTab = nil
+local V_ESPSection = nil
+local V_ObjectiveSection = nil
+local V_CombatSection = nil
+local V_RescueSection = nil
+local V_RoleSection = nil
+local V_ServerRemotesSection = nil
+local V_KillerSection = nil
+
+do
+ViolenceTab = Window:Tab({
     Title = "Violence District",
     Icon = "swords"
 })
 
-local V_ESPSection = ViolenceTab:Section({
+V_ESPSection = ViolenceTab:Section({
     Title = "ESP & Visuals"
 })
 
-local V_ObjectiveSection = ViolenceTab:Section({
+V_ObjectiveSection = ViolenceTab:Section({
     Title = "Objectives & Skillcheck"
 })
 
-local V_CombatSection = ViolenceTab:Section({
+V_CombatSection = ViolenceTab:Section({
     Title = "Combat & Defense"
 })
 
-local V_RescueSection = ViolenceTab:Section({
+V_RescueSection = ViolenceTab:Section({
     Title = "Rescue & Team"
 })
 
-local V_RoleSection = ViolenceTab:Section({
+V_RoleSection = ViolenceTab:Section({
     Title = "Role Detection & Mode Switcher"
 })
 
@@ -1832,7 +1873,7 @@ local HttpService = game:GetService("HttpService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
 -- Remote access helper (Expanded with Collision & Mechanics from the dump.lua)
-local function getVDRemotes()
+getVDRemotes = function()
     local remotes = ReplicatedStorage:FindFirstChild("Remotes")
     if not remotes then return {} end
     return {
@@ -2366,7 +2407,7 @@ local killerESPHighlight = nil
 local killerESPBillboard = nil
 local lastTrackedKiller = nil
 
-local function cleanKillerESP()
+cleanKillerESP = function()
     if killerESPHighlight then
         pcall(function() killerESPHighlight:Destroy() end)
         killerESPHighlight = nil
@@ -2477,7 +2518,7 @@ V_ESPSection:Toggle({
 local genESPEnabled = false
 local genESPObjects = {}
 
-local function cleanGenESP()
+cleanGenESP = function()
     for _, item in ipairs(genESPObjects) do
         pcall(function() item:Destroy() end)
     end
@@ -2586,7 +2627,7 @@ V_ESPSection:Toggle({
 local survivorESPEnabled = false
 local survivorESPObjects = {}
 
-local function cleanSurvivorESP()
+cleanSurvivorESP = function()
     for _, item in ipairs(survivorESPObjects) do
         pcall(function() item:Destroy() end)
     end
@@ -5030,7 +5071,11 @@ end
 -- ============================================================
 -- SERVER REMOTES & ATTRIBUTE EXPLOITS (MECHANICS & COLLISION)
 -- ============================================================
-local V_ServerRemotesSection = ViolenceTab:Section({
+
+end
+
+do
+V_ServerRemotesSection = ViolenceTab:Section({
     Title = "Server Remotes & Attribute Exploits"
 })
 
@@ -5259,7 +5304,11 @@ end)
 -- ============================================================
 -- KILLER AUTOMATION (AUTO CATCH, STANDALONE AIM/HIT & AUTO HOOK)
 -- ============================================================
-local V_KillerSection = ViolenceTab:Section({
+
+end
+
+do
+V_KillerSection = ViolenceTab:Section({
     Title = "Killer Automation (Catch, Hit & Hook)"
 })
 
@@ -6377,6 +6426,10 @@ V_KillerSection:Toggle({
 })
 
 
+
+end
+
+do
 local DiscordTab = Window:Tab({
     Title = "Discord",
     Icon = "message-circle"
@@ -6422,3 +6475,5 @@ print("==================================================")
 print("✅ [Riel Private] All tabs and automations loaded successfully!")
 print("✅ [Riel Private] UI is active and ready.")
 print("==================================================")
+
+end
