@@ -15295,7 +15295,7 @@ Name="WindUI",
 Parent=aw,
 IgnoreGuiInset=true,
 ScreenInsets="None",
-DisplayOrder=999999999,
+DisplayOrder=999990,
 },{
 
 at("Folder",{
@@ -15322,16 +15322,19 @@ aa.NotificationGui=at("ScreenGui",{
 Name="WindUI/Notifications",
 Parent=aw,
 IgnoreGuiInset=true,
+DisplayOrder=999999,
 })
 aa.DropdownGui=at("ScreenGui",{
 Name="WindUI/Dropdowns",
 Parent=aw,
 IgnoreGuiInset=true,
+DisplayOrder=999995,
 })
 aa.TooltipGui=at("ScreenGui",{
 Name="WindUI/Tooltips",
 Parent=aw,
 IgnoreGuiInset=true,
+DisplayOrder=999997,
 })
 av(aa.ScreenGui)
 av(aa.NotificationGui)
