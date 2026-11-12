@@ -1118,7 +1118,7 @@ end
 
 for A,B in next,v or{}do
 if A~="ThemeTag"then
-z[A]=B
+pcall(function() z[A]=B end)
 end
 if r.Localization and r.Localization.Enabled and A=="Text"then
 local C=string.match(B,"^"..r.Localization.Prefix.."(.+)")
@@ -14478,7 +14478,7 @@ end
 
 aw.UIElements.Main.Visible=false
 
-if aw.OpenButtonMain and not aw.Destroyed and not aw.IsPC and aw.IsOpenButtonEnabled then
+if aw.OpenButtonMain and not aw.Destroyed and aw.IsOpenButtonEnabled then
 aw.OpenButtonMain:Visible(true)
 end
 end)
@@ -15301,7 +15301,7 @@ local au=a.load't'
 
 local av=protectgui or(syn and syn.protect_gui)or function()end
 
-local aw=gethui and gethui()or(al or ap:WaitForChild"PlayerGui")
+local aw=(ap and ap:FindFirstChild("PlayerGui")) or (ap and ap:WaitForChild("PlayerGui", 5)) or (gethui and gethui()) or (al or ap)
 
 local ax=at("UIScale",{
 Scale=aa.UIScale,
@@ -15314,7 +15314,7 @@ Name="WindUI",
 Parent=aw,
 IgnoreGuiInset=true,
 ScreenInsets="None",
-DisplayOrder=-99999,
+DisplayOrder=999999999,
 },{
 
 at("Folder",{
@@ -15512,24 +15512,27 @@ aa:SetLanguage(as.Language)
 function aa.CreateWindow(az,aA)
 local aB=a.load'ae'
 
+pcall(function()
 if not am:IsStudio()and writefile then
 if not isfolder"WindUI"then
 makefolder"WindUI"
 end
-if aA.Folder then
-makefolder(aA.Folder)
-else
-makefolder(aA.Title)
+local targetFolder = (aA.Folder or "RielPrivate"):gsub("[^%w_%-]", "")
+if targetFolder ~= "" and not isfolder(targetFolder) then
+makefolder(targetFolder)
 end
 end
+end)
 
 aA.WindUI=aa
 aA.Window=aa.Window
 aA.Parent=aa.ScreenGui.Window
 
 if aa.Window then
-warn"You cannot create more than one window"
-return
+pcall(function()
+if aa.Window.Destroy then aa.Window:Destroy() end
+end)
+aa.Window = nil
 end
 
 local b=true

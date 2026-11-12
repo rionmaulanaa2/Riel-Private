@@ -67,7 +67,7 @@ end
 local scriptRunning = true
 local charAddedConn = nil
 local killerAimConn = nil
-local floatingGui = nil
+-- floating button handled natively by WindUI OpenButton
 
 -- Master Automation Session Counters
 local repairSession = 0
@@ -198,14 +198,15 @@ stopScript = function()
     if cleanGenESP then pcall(cleanGenESP) end
     if cleanSurvivorESP then pcall(cleanSurvivorESP) end
 
-    -- 6. Destroy Floating Widget, WindUI Window & ScreenGuis
-    if floatingGui then
-        pcall(function() floatingGui:Destroy() end)
-        floatingGui = nil
-    end
+    -- 6. Destroy WindUI Window & ScreenGuis
     pcall(function()
         if Window and not Window.Destroyed and typeof(Window.Destroy) == "function" then
             Window:Destroy()
+        end
+    end)
+    pcall(function()
+        if WindUI then
+            WindUI.Window = nil
         end
     end)
     pcall(function()
@@ -230,16 +231,47 @@ end
 -- ============================================================
 local WindUI = nil
 
--- Check execution environment cache first
-if getgenv and getgenv().WindUI and type(getgenv().WindUI.CreateWindow) == "function" then
+-- Clean up any existing WindUI Window singleton if already loaded
+if getgenv and getgenv().WindUI then
+    pcall(function()
+        if getgenv().WindUI.Window and typeof(getgenv().WindUI.Window.Destroy) == "function" then
+            getgenv().WindUI.Window:Destroy()
+        end
+    end)
+    getgenv().WindUI.Window = nil
     WindUI = getgenv().WindUI
-elseif _G.WindUI and type(_G.WindUI.CreateWindow) == "function" then
+elseif _G.WindUI then
+    pcall(function()
+        if _G.WindUI.Window and typeof(_G.WindUI.Window.Destroy) == "function" then
+            _G.WindUI.Window:Destroy()
+        end
+    end)
+    _G.WindUI.Window = nil
     WindUI = _G.WindUI
 end
 
-if not WindUI then
+if not WindUI or type(WindUI.CreateWindow) ~= "function" then
+    -- Try local file first (if executor supports readfile)
+    pcall(function()
+        if readfile and isfile and isfile("windui.lua") then
+            local raw = readfile("windui.lua")
+            if raw and #raw > 100000 then
+                local fn = loadstring(raw)
+                if fn then
+                    local lib = fn()
+                    if lib and type(lib.CreateWindow) == "function" then
+                        WindUI = lib
+                        print("[Riel Private] WindUI loaded from local file windui.lua")
+                    end
+                end
+            end
+        end
+    end)
+end
+
+if not WindUI or type(WindUI.CreateWindow) ~= "function" then
     local urls = {
-        "https://raw.githubusercontent.com/rionmaulanaa2/Riel-Private/main/windui.lua?t=" .. tick(),
+        "https://raw.githubusercontent.com/rionmaulanaa2/Riel-Private/main/windui.lua",
         "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua",
         "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
     }
@@ -269,14 +301,6 @@ if not WindUI then
 end
 
 if not WindUI or type(WindUI.CreateWindow) ~= "function" then
-    warn("[Riel Private] Direct load failed, attempting fallback to repository raw windui.lua...")
-    pcall(function()
-        local raw = game:HttpGet("https://raw.githubusercontent.com/rionmaulanaa2/Riel-Private/main/windui.lua", true)
-        WindUI = loadstring(raw)()
-    end)
-end
-
-if not WindUI or type(WindUI.CreateWindow) ~= "function" then
     warn("[Riel Private] CRITICAL: Could not load WindUI! Script cannot initialize UI.")
     return
 end
@@ -285,35 +309,60 @@ end
 if getgenv then getgenv().WindUI = WindUI end
 _G.WindUI = WindUI
 
--- ============================================================
--- CREATE MAIN WINDOW (EXACT MONTH 10 THEME & METRICS)
--- ============================================================
-Window = WindUI:CreateWindow({
-    Title = " Riel Private",
-    Icon = "shield",
-    Size = UDim2.fromOffset(500, 450),
-    Transparent = false,
-    Theme = "Dark",
-    IgnoreAlerts = true,
-    OpenButton = {
-        Enabled = true,
-        OnlyMobile = false,
-        Title = "Riel Private",
-        Icon = "shield",
-        Position = UDim2.new(0, 20, 0.45, 0),
-        Draggable = true,
-        OnlyIcon = false
-    }
-})
+-- Guarantee previous window instance is cleared
+pcall(function()
+    if WindUI.Window and typeof(WindUI.Window.Destroy) == "function" then
+        WindUI.Window:Destroy()
+    end
+end)
+WindUI.Window = nil
 
--- Force floating open button to be enabled across all platforms (Mobile, PC, Emulators)
-Window.IsPC = false
-Window.IsOpenButtonEnabled = true
-if Window.OpenButtonMain then
-    pcall(function()
-        Window.OpenButtonMain:Visible(false)
+-- ============================================================
+-- CREATE MAIN WINDOW (MONTH 10 ORIGINAL THEME & OPEN BUTTON)
+-- ============================================================
+local winOk, winResult = pcall(function()
+    return WindUI:CreateWindow({
+        Title = " Riel Private",
+        Icon = "shield",
+        Size = UDim2.fromOffset(500, 450),
+        Transparent = false,
+        Theme = "Dark",
+        Folder = "RielPrivate",
+        OpenButton = {
+            Enabled = true,
+            OnlyMobile = false,
+            Title = "Riel Private",
+            Icon = "shield",
+            Position = UDim2.new(0, 20, 0.45, 0),
+            Draggable = true,
+            OnlyIcon = false
+        }
+    })
+end)
+
+if not winOk or not winResult then
+    warn("[Riel Private] CreateWindow error: " .. tostring(winResult))
+    -- Fallback simple window
+    winOk, winResult = pcall(function()
+        return WindUI:CreateWindow({
+            Title = " Riel Private",
+            Size = UDim2.fromOffset(500, 450),
+            Transparent = false,
+            Theme = "Dark"
+        })
     end)
 end
+
+if not winResult then
+    warn("[Riel Private] CRITICAL: Failed to create Window.")
+    return
+end
+
+Window = winResult
+
+-- Ensure mobile floating OpenButton is active
+Window.IsPC = false
+Window.IsOpenButtonEnabled = true
 
 -- Ensure Window is OPEN and visible on start
 pcall(function()
@@ -322,182 +371,14 @@ pcall(function()
     end
 end)
 
--- ============================================================
--- FLOATING TOGGLE ICON (MINIMIZE RE-OPEN WIDGET)
--- ============================================================
-local function createFloatingWidget()
-    if floatingGui and floatingGui.Parent then return floatingGui end
-
-    local parentGui = getGuiContainer()
-
-    floatingGui = Instance.new("ScreenGui")
-    floatingGui.Name = "RielFloatingWidget"
-    floatingGui.ResetOnSpawn = false
-    floatingGui.DisplayOrder = 999999
-    floatingGui.IgnoreGuiInset = true
-    pcall(function() floatingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling end)
-
-    local pill = Instance.new("TextButton")
-    pill.Name = "FloatingPill"
-    pill.Size = UDim2.new(0, 140, 0, 36)
-    pill.Position = UDim2.new(0, 20, 0.45, 0)
-    pill.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
-    pill.BorderSizePixel = 0
-    pill.Text = "🛡️ Riel Private"
-    pill.TextColor3 = Color3.fromRGB(255, 255, 255)
-    pill.TextSize = 14
-    pill.Font = Enum.Font.GothamMedium
-    pill.AutoButtonColor = false
-    pill.Active = true
-    pill.Parent = floatingGui
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(1, 0)
-    corner.Parent = pill
-
-    local stroke = Instance.new("UIStroke")
-    stroke.Thickness = 1.5
-    stroke.Color = Color3.fromRGB(80, 160, 255)
-    pcall(function() stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border end)
-    stroke.Parent = pill
-
-    pcall(function()
-        local gradient = Instance.new("UIGradient")
-        gradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(64, 201, 255)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(232, 28, 255))
-        })
-        gradient.Parent = stroke
-    end)
-
-    -- Make pill draggable across touch and mouse
-    local dragging = false
-    local dragStart = Vector2.new()
-    local startPos = UDim2.new()
-    local touchTime = tick()
-
-    pill.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = Vector2.new(input.Position.X, input.Position.Y)
-            startPos = pill.Position
-            touchTime = tick()
-        end
-    end)
-
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            if dragging then
-                dragging = false
-                local curPos = Vector2.new(input.Position.X, input.Position.Y)
-                local dist = (curPos - dragStart).Magnitude
-                local elapsed = tick() - touchTime
-                if dist < 15 and elapsed < 0.5 then
-                    if Window and not Window.Destroyed then
-                        pcall(function()
-                            if Window.Closed then
-                                Window:Open()
-                            else
-                                Window:Close()
-                            end
-                        end)
-                    end
-                end
-            end
-        end
-    end)
-
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            local deltaX = input.Position.X - dragStart.X
-            local deltaY = input.Position.Y - dragStart.Y
-            pill.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + deltaX,
-                startPos.Y.Scale,
-                startPos.Y.Offset + deltaY
-            )
-        end
-    end)
-
-    -- Click handler for PC
-    pill.MouseButton1Click:Connect(function()
-        if Window and not Window.Destroyed then
-            pcall(function()
-                if Window.Closed then
-                    Window:Open()
-                else
-                    Window:Close()
-                end
-            end)
-        end
-    end)
-
-    pill.Visible = true  -- Always visible at startup so user can always tap to toggle
-    floatingGui.Parent = parentGui
-    return floatingGui
-end
-
-local function ensureFloatingButtonVisible(show)
-    if not scriptRunning then
-        if floatingGui then pcall(function() floatingGui:Destroy() end) floatingGui = nil end
-        return
-    end
-
-    if show then
-        local isNativeShowing = false
-        pcall(function()
-            if Window.OpenButtonMain and Window.OpenButtonMain.Button and Window.OpenButtonMain.Button.Visible then
-                if Window.OpenButtonMain.Button.Parent and Window.OpenButtonMain.Button.Parent.Visible then
-                    isNativeShowing = true
-                end
-            end
-        end)
-
-        if not isNativeShowing then
-            local fg = createFloatingWidget()
-            if fg and fg:FindFirstChild("FloatingPill") then
-                fg.FloatingPill.Visible = true
-            end
-        end
-    else
-        if floatingGui and floatingGui:FindFirstChild("FloatingPill") then
-            floatingGui.FloatingPill.Visible = false
-        end
-    end
-end
-
--- Connect Window Close, Minimize & Destroy Events
-Window:OnDestroy(function()
-    stopScript()
-end)
-
-Window:OnClose(function()
-    task.spawn(function()
-        task.wait(0.3)
-        if Window and not Window.Destroyed and Window.Closed then
-            if Window.OpenButtonMain then
-                pcall(function()
-                    Window.OpenButtonMain:Visible(true)
-                end)
-            end
-            pcall(function()
-                ensureFloatingButtonVisible(true)
-            end)
-        end
+-- Connect Window Destroy Event
+pcall(function()
+    Window:OnDestroy(function()
+        stopScript()
     end)
 end)
 
-Window:OnOpen(function()
-    -- Window is open: pill stays visible so user can still tap to minimize
-    if Window.OpenButtonMain then
-        pcall(function()
-            Window.OpenButtonMain:Visible(false)
-        end)
-    end
-end)
-
--- Topbar direct button hook
+-- Topbar direct close button hook
 task.spawn(function()
     task.wait(0.2)
     pcall(function()
@@ -521,17 +402,6 @@ WindUI:Notify({
     Content = "Riel Private by Noirrr!",
     Duration = 5
 })
-
--- Always create + show floating pill immediately at startup (Android & PC safety net)
-task.spawn(function()
-    task.wait(0.5)
-    pcall(function()
-        local fg = createFloatingWidget()
-        if fg and fg:FindFirstChild("FloatingPill") then
-            fg.FloatingPill.Visible = true
-        end
-    end)
-end)
 
 local MainTab = Window:Tab({
     Title = "Main",
@@ -1089,7 +959,7 @@ FishSection:Button({
 
 
 local delayBetweenSteps = 2 -- adjust delay between fishing steps
-local autoFishingThread -- store the active loop thread
+-- autoFishingThread declared at top level
 
 FishSection:Toggle({
     Title = "Auto Fishing",
