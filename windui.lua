@@ -14,18 +14,7 @@
     License: MIT
 ]]
 
-type ConfigType__DARKLUA_TYPE_a={
-Object:Instance,
-Camera:Instance?,
-Interactive:boolean?,
-Height:number?,
-Focused:boolean,
-
-Window:any,
-WindUI:any,
-Tab:any,
-Parent:Instance,
-}local a a={cache={}, load=function(b)if not a.cache[b]then a.cache[b]={c=a[b]()}end return a.cache[b].c end}do function a.a()
+local a a={cache={}, load=function(b)if not a.cache[b]then a.cache[b]={c=a[b]()}end return a.cache[b].c end}do function a.a()
 
 local b
 
@@ -6527,9 +6516,9 @@ Cols=10,
 },
 }
 
-function am.GetGlassFrame(an,ao:number):(string,Vector2,Vector2)
+function am.GetGlassFrame(an,ao)
 local ap=am.GlassSpritesheet
-local aq:number
+local aq
 
 if ao<=0.4 then
 aq=math.floor((ao/0.4)*(ap.Total-1))
@@ -9469,7 +9458,7 @@ end
 aq.Set(al.Code)
 
 if at then
-af.AddSignal(at.InputBegan,function(aA:InputObject)
+af.AddSignal(at.InputBegan,function(aA)
 if
 aA.UserInputType==Enum.UserInputType.MouseButton1
 or aA.UserInputType==Enum.UserInputType.Touch
@@ -11242,7 +11231,7 @@ local al={}
 
 
 
-function al.New(am,an:ConfigType__DARKLUA_TYPE_a)
+function al.New(am,an)
 local ao={
 __type="Viewport",
 Object=an.Object,
@@ -14026,15 +14015,7 @@ end)
 return M
 end
 
-function aw.Topbar.Button(z,A:{
-Name:string,
-Icon:string,
-Callback:any,
-LayoutOrder:number,
-IconThemed:boolean,
-Color:Color3,
-IconSize:number,
-})
+function aw.Topbar.Button(z,A)
 return aw:CreateTopbarButton(
 A.Name,
 A.Icon,

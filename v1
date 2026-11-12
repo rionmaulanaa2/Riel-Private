@@ -271,6 +271,7 @@ end
 
 if not WindUI or type(WindUI.CreateWindow) ~= "function" then
     local urls = {
+        "https://raw.githubusercontent.com/rionmaulanaa2/Riel-Private/main/windui.lua?v=" .. tick(),
         "https://raw.githubusercontent.com/rionmaulanaa2/Riel-Private/main/windui.lua",
         "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua",
         "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
@@ -284,6 +285,13 @@ if not WindUI or type(WindUI.CreateWindow) ~= "function" then
             -- Sanitize any Luau-specific compound assignment operators for 100% pure Lua 5.1 compatibility
             raw = raw:gsub("ao%.Camera%.CFrame%+=ao%.Camera%.CFrame%.LookVector%*aw", "ao.Camera.CFrame=ao.Camera.CFrame+(ao.Camera.CFrame.LookVector*aw)")
             raw = raw:gsub("ao%.Camera%.CFrame%+=ao%.Camera%.CFrame%.LookVector%*aA", "ao.Camera.CFrame=ao.Camera.CFrame+(ao.Camera.CFrame.LookVector*aA)")
+            -- Sanitize Luau type annotations on the fly for pure Lua 5.1 / Delta compatibility
+            raw = raw:gsub("type%s+ConfigType__DARKLUA_TYPE_a%s*=%s*%{[^%}]*%}", "")
+            raw = raw:gsub("function%s+am%.GetGlassFrame%s*%(%s*an%s*,%s*ao%s*:%s*number%s*%)%s*:%s*%([^%)]*%)", "function am.GetGlassFrame(an,ao)")
+            raw = raw:gsub("local%s+aq%s*:%s*number", "local aq")
+            raw = raw:gsub("function%s*%(%s*aA%s*:%s*InputObject%s*%)", "function(aA)")
+            raw = raw:gsub("function%s+al%.New%s*%(%s*am%s*,%s*an%s*:%s*ConfigType__DARKLUA_TYPE_a%s*%)", "function al.New(am,an)")
+            raw = raw:gsub("function%s+aw%.Topbar%.Button%s*%(%s*z%s*,%s*A%s*:%s*%{[^%}]*%}%s*%)", "function aw.Topbar.Button(z,A)")
 
             local ok_load, fn = pcall(function()
                 return loadstring(raw)
