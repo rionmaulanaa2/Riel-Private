@@ -2785,6 +2785,175 @@ V_ESPSection:Toggle({
 })
 
 -- ============================================================
+-- WALL & OBSTACLE REMOVER (KEEPS GENERATORS & FLOORS 100% INTACT)
+-- ============================================================
+do
+    local removeWallsEnabled = false
+    local removedWallParts = {}
+    local wallStreamConn = nil
+
+    local function isProtectedObject(part)
+        if not part:IsA("BasePart") then return true end
+        if part:IsA("Terrain") then return true end
+
+        -- 1. Check Character / Player / NPC protection
+        local model = part:FindFirstAncestorOfClass("Model")
+        if model then
+            if model:FindFirstChildOfClass("Humanoid") then return true end
+            if model.Name == "Character" or model.Name == "Player" then return true end
+        end
+
+        local name = string.lower(part.Name)
+        local pName = part.Parent and string.lower(part.Parent.Name) or ""
+
+        -- 2. Generators (100% Protected - Never Remove)
+        if string.find(name, "gen") or string.find(name, "repair") or string.find(name, "motor") or string.find(name, "engine") then
+            return true
+        end
+        if string.find(pName, "gen") or string.find(pName, "repair") or string.find(pName, "motor") or string.find(pName, "engine") then
+            return true
+        end
+        if part:FindFirstChild("RepairPoint") or part:FindFirstChild("RepairPrompt") or (part.Parent and part.Parent:FindFirstChild("RepairPoint")) then
+            return true
+        end
+
+        -- 3. Floor / Ground / Walkable surfaces (100% Protected to prevent void falling)
+        local floorKeywords = {
+            "floor", "ground", "base", "baseplate", "road", "path", "grass",
+            "terrain", "sidewalk", "pavement", "soil", "dirt", "plate",
+            "bottom", "foundation", "surface", "walkable", "stair", "ramp"
+        }
+        for _, kw in ipairs(floorKeywords) do
+            if string.find(name, kw) or string.find(pName, kw) then
+                return true
+            end
+        end
+
+        -- Horizontal slab detection: low vertical thickness (Y <= 3.5) with broad horizontal area (X >= 8 and Z >= 8)
+        local sz = part.Size
+        if sz.Y <= 3.5 and sz.X >= 8 and sz.Z >= 8 then
+            return true
+        end
+
+        -- 4. Interactive game objectives & escape routes
+        if string.find(name, "hook") or string.find(pName, "hook")
+            or string.find(name, "lever") or string.find(pName, "lever")
+            or string.find(name, "exit") or string.find(pName, "exit")
+            or string.find(name, "gate") or string.find(pName, "gate")
+            or string.find(name, "pallet") or string.find(pName, "pallet")
+            or string.find(name, "window") or string.find(pName, "window")
+            or string.find(name, "vault") or string.find(pName, "vault")
+            or string.find(name, "spawn") or string.find(pName, "spawn") then
+            return true
+        end
+
+        return false
+    end
+
+    local function applyWallRemoval(part)
+        if not part:IsA("BasePart") then return end
+        if isProtectedObject(part) then return end
+        if not part.CanCollide and part.Transparency >= 0.95 then return end
+
+        if not removedWallParts[part] then
+            local savedDecals = {}
+            for _, child in ipairs(part:GetChildren()) do
+                if child:IsA("Decal") or child:IsA("Texture") then
+                    savedDecals[child] = child.Transparency
+                end
+            end
+
+            removedWallParts[part] = {
+                CanCollide = part.CanCollide,
+                Transparency = part.Transparency,
+                CastShadow = part.CastShadow,
+                Decals = savedDecals
+            }
+        end
+
+        part.CanCollide = false
+        part.Transparency = 1
+        part.CastShadow = false
+        for _, child in ipairs(part:GetChildren()) do
+            if child:IsA("Decal") or child:IsA("Texture") then
+                child.Transparency = 1
+            end
+        end
+    end
+
+    local function restoreAllWalls()
+        if wallStreamConn then
+            pcall(function() wallStreamConn:Disconnect() end)
+            wallStreamConn = nil
+        end
+
+        for part, saved in pairs(removedWallParts) do
+            if part and part.Parent then
+                pcall(function()
+                    part.CanCollide = saved.CanCollide
+                    part.Transparency = saved.Transparency
+                    part.CastShadow = saved.CastShadow
+                    if saved.Decals then
+                        for decal, trans in pairs(saved.Decals) do
+                            if decal and decal.Parent then
+                                decal.Transparency = trans
+                            end
+                        end
+                    end
+                end)
+            end
+        end
+        removedWallParts = {}
+    end
+
+    local function executeWallRemoval()
+        local descendants = workspace:GetDescendants()
+        local count = 0
+        for i = 1, #descendants do
+            if not removeWallsEnabled then break end
+            local obj = descendants[i]
+            if obj and obj:IsA("BasePart") then
+                applyWallRemoval(obj)
+                count = count + 1
+                if count % 300 == 0 then
+                    task.wait()
+                end
+            end
+        end
+
+        if not wallStreamConn and removeWallsEnabled then
+            wallStreamConn = workspace.DescendantAdded:Connect(function(descendant)
+                if not removeWallsEnabled then return end
+                if descendant and descendant:IsA("BasePart") then
+                    task.defer(function()
+                        if removeWallsEnabled and descendant and descendant.Parent then
+                            applyWallRemoval(descendant)
+                        end
+                    end)
+                end
+            end)
+        end
+    end
+
+    V_ESPSection:Toggle({
+        Title = "Remove All Walls & Obstacles",
+        Description = "Removes all walls & obstacles client-side (generators & floor remain 100% intact)",
+        Default = false,
+        Callback = function(v)
+            removeWallsEnabled = v
+            if not v then
+                restoreAllWalls()
+                WindUI:Notify({ Title = "Wall Remover", Content = "All walls & obstacles restored.", Duration = 2 })
+                return
+            end
+
+            WindUI:Notify({ Title = "Wall Remover", Content = "Walls removed! (Generators & floor preserved)", Duration = 2 })
+            task.spawn(executeWallRemoval)
+        end
+    })
+end
+
+-- ============================================================
 -- 3. PERFECT SKILLCHECK (STANDALONE ZERO-LATENCY FRAME ENGINE)
 -- ============================================================
 local perfectSkillcheckEnabled = true
