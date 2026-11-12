@@ -14480,10 +14480,23 @@ aw.Destroyed=true
 
 task.wait(0.4)
 
-av.WindUI.ScreenGui:Destroy()
-av.WindUI.NotificationGui:Destroy()
-av.WindUI.DropdownGui:Destroy()
-av.WindUI.TooltipGui:Destroy()
+pcall(function()
+if aw.UIElements and aw.UIElements.Main then
+aw.UIElements.Main:Destroy()
+end
+end)
+pcall(function()
+if aw.OpenButtonMain then
+if aw.OpenButtonMain.Destroy then
+aw.OpenButtonMain:Destroy()
+elseif aw.OpenButtonMain.Object then
+aw.OpenButtonMain.Object:Destroy()
+end
+end
+end)
+if av.WindUI and av.WindUI.Window == aw then
+av.WindUI.Window = nil
+end
 
 an.DisconnectAll()
 
@@ -15493,7 +15506,57 @@ as.Themes=aa.Themes
 aa:SetTheme"Dark"
 aa:SetLanguage(as.Language)
 
+local function ensureWindUIGuis()
+    local okSg, hasWin = pcall(function()
+        return aa.ScreenGui and aa.ScreenGui.Parent and aa.ScreenGui:FindFirstChild("Window")
+    end)
+    if not okSg or not hasWin then
+        local targetParent = (ap and ap:FindFirstChild("PlayerGui")) or (ap and ap:WaitForChild("PlayerGui", 5)) or (gethui and gethui()) or (al or ap)
+        aa.ScreenGui = at("ScreenGui", {
+            Name = "WindUI",
+            Parent = targetParent,
+            IgnoreGuiInset = true,
+            ScreenInsets = "None",
+            DisplayOrder = 999990,
+        }, {
+            at("Folder", { Name = "Window" }),
+            at("Folder", { Name = "KeySystem" }),
+            at("Folder", { Name = "Popups" }),
+            at("Folder", { Name = "ToolTips" }),
+        })
+        aa.NotificationGui = at("ScreenGui", {
+            Name = "WindUI/Notifications",
+            Parent = targetParent,
+            IgnoreGuiInset = true,
+            DisplayOrder = 999999,
+        })
+        aa.DropdownGui = at("ScreenGui", {
+            Name = "WindUI/Dropdowns",
+            Parent = targetParent,
+            IgnoreGuiInset = true,
+            DisplayOrder = 999995,
+        })
+        aa.TooltipGui = at("ScreenGui", {
+            Name = "WindUI/Tooltips",
+            Parent = targetParent,
+            IgnoreGuiInset = true,
+            DisplayOrder = 999997,
+        })
+        av(aa.ScreenGui)
+        av(aa.NotificationGui)
+        av(aa.DropdownGui)
+        av(aa.TooltipGui)
+    end
+end
+
 function aa.CreateWindow(az,aA)
+if aa.Window then
+pcall(function()
+if aa.Window.Destroy then aa.Window:Destroy() end
+end)
+aa.Window = nil
+end
+ensureWindUIGuis()
 local aB=a.load'ae'
 
 pcall(function()
@@ -15511,13 +15574,6 @@ end)
 aA.WindUI=aa
 aA.Window=aa.Window
 aA.Parent=aa.ScreenGui.Window
-
-if aa.Window then
-pcall(function()
-if aa.Window.Destroy then aa.Window:Destroy() end
-end)
-aa.Window = nil
-end
 
 local b=true
 

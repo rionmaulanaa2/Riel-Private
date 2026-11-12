@@ -220,6 +220,10 @@ stopScript = function()
             WindUI.Window = nil
         end
     end)
+    if getgenv then getgenv().WindUI = nil end
+    _G.WindUI = nil
+    WindUI = nil
+    Window = nil
     pcall(function()
         local coreGui = game:GetService("CoreGui")
         local playerGui = player and player:FindFirstChild("PlayerGui")
@@ -242,23 +246,42 @@ end
 -- ============================================================
 local WindUI = nil
 
+local function isWindUIValid(lib)
+    if not lib or type(lib) ~= "table" or type(lib.CreateWindow) ~= "function" then
+        return false
+    end
+    local ok, win = pcall(function()
+        return lib.ScreenGui and lib.ScreenGui.Parent and lib.ScreenGui:FindFirstChild("Window")
+    end)
+    return ok and win ~= nil
+end
+
 -- Clean up any existing WindUI Window singleton if already loaded
 if getgenv and getgenv().WindUI then
-    pcall(function()
-        if getgenv().WindUI.Window and typeof(getgenv().WindUI.Window.Destroy) == "function" then
-            getgenv().WindUI.Window:Destroy()
-        end
-    end)
-    getgenv().WindUI.Window = nil
-    WindUI = getgenv().WindUI
-elseif _G.WindUI then
-    pcall(function()
-        if _G.WindUI.Window and typeof(_G.WindUI.Window.Destroy) == "function" then
-            _G.WindUI.Window:Destroy()
-        end
-    end)
-    _G.WindUI.Window = nil
-    WindUI = _G.WindUI
+    if isWindUIValid(getgenv().WindUI) then
+        pcall(function()
+            if getgenv().WindUI.Window and typeof(getgenv().WindUI.Window.Destroy) == "function" then
+                getgenv().WindUI.Window:Destroy()
+            end
+        end)
+        getgenv().WindUI.Window = nil
+        WindUI = getgenv().WindUI
+    else
+        getgenv().WindUI = nil
+    end
+end
+if not WindUI and _G.WindUI then
+    if isWindUIValid(_G.WindUI) then
+        pcall(function()
+            if _G.WindUI.Window and typeof(_G.WindUI.Window.Destroy) == "function" then
+                _G.WindUI.Window:Destroy()
+            end
+        end)
+        _G.WindUI.Window = nil
+        WindUI = _G.WindUI
+    else
+        _G.WindUI = nil
+    end
 end
 
 if not WindUI or type(WindUI.CreateWindow) ~= "function" then
@@ -359,7 +382,7 @@ local winOk, winResult = pcall(function()
     })
 end)
 
-if not winOk or not winResult then
+if not winOk or type(winResult) ~= "table" then
     warn("[Riel Private] CreateWindow error: " .. tostring(winResult))
     -- Fallback simple window
     winOk, winResult = pcall(function()
@@ -372,16 +395,55 @@ if not winOk or not winResult then
     end)
 end
 
-if not winResult then
-    warn("[Riel Private] CRITICAL: Failed to create Window.")
+if not winOk or type(winResult) ~= "table" then
+    warn("[Riel Private] Retrying fresh WindUI reload...")
+    if getgenv then getgenv().WindUI = nil end
+    _G.WindUI = nil
+    WindUI = nil
+    pcall(function()
+        if readfile and isfile and isfile("windui.lua") then
+            local raw = readfile("windui.lua")
+            if raw and #raw > 100000 then
+                local fn = loadstring(raw)
+                if fn then WindUI = fn() end
+            end
+        end
+    end)
+    if not WindUI or type(WindUI.CreateWindow) ~= "function" then
+        pcall(function()
+            local raw = game:HttpGet("https://raw.githubusercontent.com/rionmaulanaa2/Riel-Private/main/windui.lua", true)
+            if raw and #raw > 100000 then
+                local fn = loadstring(raw)
+                if fn then WindUI = fn() end
+            end
+        end)
+    end
+    if WindUI and type(WindUI.CreateWindow) == "function" then
+        winOk, winResult = pcall(function()
+            return WindUI:CreateWindow({
+                Title = " Riel Private",
+                Size = UDim2.fromOffset(500, 450),
+                Transparent = false,
+                Theme = "Dark"
+            })
+        end)
+    end
+end
+
+if not winOk or type(winResult) ~= "table" then
+    warn("[Riel Private] CRITICAL: Failed to create Window. Error: " .. tostring(winResult))
     return
 end
 
 Window = winResult
 
 -- Ensure mobile floating OpenButton is active
-Window.IsPC = false
-Window.IsOpenButtonEnabled = true
+pcall(function()
+    if Window and type(Window) == "table" then
+        Window.IsPC = false
+        Window.IsOpenButtonEnabled = true
+    end
+end)
 
 -- Ensure Window is OPEN and visible on start
 pcall(function()
