@@ -3104,7 +3104,7 @@ local skillcheckConn = nil
 local skillcheckHooked = false
 local lastSkillCheckSolvedTime = 0
 
--- Helper to find active SkillCheck Gui in PlayerGui (strictly excluding ProgressPromptGui)
+-- Helper to find active SkillCheck Gui in PlayerGui (Universal PC, Console, & Delta Mobile)
 local function getActiveSkillCheckGui()
     local pg = player:FindFirstChild("PlayerGui")
     if not pg then return nil, nil end
@@ -3116,29 +3116,31 @@ local function getActiveSkillCheckGui()
         "SkillCheck",
         "QTEPromptGui",
         "QTEGui",
-        "QTE"
+        "QTE",
+        "Survivor-mob"
     }
 
     for _, name in ipairs(candidateGuiNames) do
         local gui = pg:FindFirstChild(name)
         if gui and (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) then
             if gui:IsA("ScreenGui") and not gui.Enabled then
-                -- disabled ScreenGui, skip
+                -- ScreenGui disabled, skip
             else
-                local check = gui:FindFirstChild("Check", true)
-                if check and check:IsA("GuiObject") and check.Visible and check.AbsoluteSize.X > 20 and check.AbsoluteSize.Y > 20 then
+                local check = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Wheel", true)
+                if check and check:IsA("GuiObject") and check.Visible and check.AbsoluteSize.X > 15 and check.AbsoluteSize.Y > 15 then
                     return gui, check
                 end
             end
         end
     end
 
+    -- Dynamic fallback: search all enabled ScreenGuis
     for _, gui in ipairs(pg:GetChildren()) do
         if gui:IsA("ScreenGui") and gui.Enabled then
             local gName = gui.Name:lower()
-            if (gName:find("skill") or gName:find("qte")) and not gName:find("progress") then
-                local check = gui:FindFirstChild("Check", true)
-                if check and check:IsA("GuiObject") and check.Visible and check.AbsoluteSize.X > 20 and check.AbsoluteSize.Y > 20 then
+            if (gName:find("skill") or gName:find("qte") or gName:find("check")) and not gName:find("progress") then
+                local check = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Wheel", true)
+                if check and check:IsA("GuiObject") and check.Visible and check.AbsoluteSize.X > 15 and check.AbsoluteSize.Y > 15 then
                     return gui, check
                 end
             end
@@ -3162,35 +3164,42 @@ local function evaluateSkillCheckFrame(check, lastRotTable)
             local low = child.Name:lower()
             if low:find("needle") or low:find("pointer") or low:find("indicator") or low:find("arrow") or low:find("cursor") or low:find("line") or low:find("bar") then
                 needle = child
-            elseif low:find("great") or low:find("perfect") or low:find("sweet") or low:find("target") or low:find("white") or low:find("zone") or low:find("bonus") or low:find("success") or low:find("good") or low:find("hit") then
+            elseif low:find("great") or low:find("perfect") or low:find("sweet") or low:find("target") or low:find("white") or low:find("zone") or low:find("bonus") or low:find("success") or low:find("good") or low:find("hit") or low:find("area") then
                 greatZone = child
             end
             table.insert(candidates, child)
         end
     end
 
-    -- Dynamic needle detection: track which element is actively rotating frame-to-frame
+    -- Dynamic needle detection: track which element has the highest frame-to-frame angular velocity
     if lastRotTable then
+        local maxDelta = 0
+        local mostActiveElem = nil
         for _, elem in ipairs(candidates) do
             local curRot = (elem:IsA("UIGradient") and elem.Rotation or elem.Rotation) % 360
             local prevRot = lastRotTable[elem]
             if prevRot ~= nil then
                 local delta = math.abs((curRot - prevRot + 180) % 360 - 180)
-                if delta > 0.3 then
-                    needle = elem
-                    break
+                if delta > 0.2 and delta > maxDelta then
+                    maxDelta = delta
+                    mostActiveElem = elem
                 end
             end
         end
+        if mostActiveElem then
+            needle = mostActiveElem
+        end
     end
 
-    -- Secondary fallback for needle: any element with non-zero rotation if none moving yet
-    if not needle then
+    -- If no greatZone was explicitly named, locate the static element with non-zero rotation (the target arc!)
+    if not greatZone and needle then
         for _, elem in ipairs(candidates) do
-            local rot = (elem:IsA("UIGradient") and elem.Rotation or elem.Rotation) % 360
-            if rot ~= 0 and elem ~= greatZone then
-                needle = elem
-                break
+            if elem ~= needle then
+                local rot = (elem:IsA("UIGradient") and elem.Rotation or elem.Rotation) % 360
+                if rot ~= 0 and elem.Name ~= "Space" and elem.Name ~= "key" then
+                    greatZone = elem
+                    break
+                end
             end
         end
     end
@@ -3198,12 +3207,19 @@ local function evaluateSkillCheckFrame(check, lastRotTable)
     return needle, greatZone, candidates
 end
 
--- Standalone skillcheck trigger execution (Instant Non-Blocking Multi-Dispatch PC & Delta Mobile)
-local function triggerPerfectHit(check)
+-- Standalone skillcheck trigger execution (Full Multi-Dispatch: Mobile Touch, PC Key, Gamepad & VirtualUser)
+local function triggerPerfectHit(check, gui)
     task.spawn(function()
         pcall(function()
             local boundKeyName = player:GetAttribute("kb_skillcheck") or "Space"
             local boundKeyCode = Enum.KeyCode[boundKeyName] or Enum.KeyCode.Space
+            local center = Vector2.new(0, 0)
+            if check and check:IsA("GuiObject") then
+                center = check.AbsolutePosition + (check.AbsoluteSize / 2)
+            else
+                local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800, 600)
+                center = Vector2.new(vp.X / 2, vp.Y / 2)
+            end
 
             -- 1. PC Key dispatch (Bound key + Space fallback + Controller ButtonL1)
             pcall(function()
@@ -3219,44 +3235,60 @@ local function triggerPerfectHit(check)
                 pcall(keypress, 0x20)
             end
 
-            -- 3. VirtualUser fallback
+            -- 3. VirtualUser keyboard & mouse clicks
             pcall(function()
                 local vu = game:GetService("VirtualUser")
                 vu:CaptureController()
                 vu:SetKeyDown("0x20")
+                vu:Button1Down(center)
             end)
 
-            -- 4. Mobile Screen Tap & UI Button Activation (Delta Mobile)
+            -- 4. Native Mobile Touch Events (Crucial for Delta Mobile / Android)
             pcall(function()
-                if check and check:IsA("GuiObject") then
-                    local center = check.AbsolutePosition + (check.AbsoluteSize / 2)
-                    VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+                VirtualInputManager:SendTouchEvent(0, 0, center.X, center.Y)
+                VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+            end)
+
+            -- 5. Delta Mobile executor touch helpers (if supported)
+            if typeof(touchpress) == "function" then
+                pcall(touchpress, 0, center.X, center.Y)
+            end
+
+            -- 6. Direct UI Event and firesignal activation on Check and all buttons
+            pcall(function()
+                if check then
+                    if typeof(firesignal) == "function" then
+                        if check:IsA("GuiButton") then
+                            pcall(firesignal, check.Activated)
+                            pcall(firesignal, check.MouseButton1Click)
+                            pcall(firesignal, check.MouseButton1Down)
+                        end
+                    end
                 end
 
-                local pg = player:FindFirstChild("PlayerGui")
-                if pg then
-                    for _, scName in ipairs({"SkillCheckPromptGui", "SkillCheckPromptGui-con", "Survivor-mob", "SkillCheckGui", "SkillCheck"}) do
-                        local sc = pg:FindFirstChild(scName)
-                        if sc then
-                            for _, elem in ipairs(sc:GetDescendants()) do
-                                if elem:IsA("GuiButton") and elem.Visible then
-                                    if typeof(firesignal) == "function" then
-                                        pcall(firesignal, elem.MouseButton1Down)
-                                        pcall(firesignal, elem.Activated)
-                                        pcall(firesignal, elem.MouseButton1Click)
-                                    end
-                                    local pos = elem.AbsolutePosition + (elem.AbsoluteSize / 2)
-                                    VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
-                                end
+                local targetGui = gui or player:FindFirstChild("PlayerGui")
+                if targetGui then
+                    for _, elem in ipairs(targetGui:GetDescendants()) do
+                        if elem:IsA("GuiButton") and elem.Visible then
+                            if typeof(firesignal) == "function" then
+                                pcall(firesignal, elem.Activated)
+                                pcall(firesignal, elem.MouseButton1Click)
+                                pcall(firesignal, elem.MouseButton1Down)
                             end
+                            local pos = elem.AbsolutePosition + (elem.AbsoluteSize / 2)
+                            pcall(function()
+                                VirtualInputManager:SendTouchEvent(1, 0, pos.X, pos.Y)
+                                VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
+                            end)
                         end
                     end
                 end
             end)
 
-            -- Release inputs after 18ms
+            -- Hold duration (18ms)
             task.wait(0.018)
 
+            -- Release all inputs
             pcall(function()
                 VirtualInputManager:SendKeyEvent(false, boundKeyCode, false, game)
                 if boundKeyCode ~= Enum.KeyCode.Space then
@@ -3272,12 +3304,14 @@ local function triggerPerfectHit(check)
             pcall(function()
                 local vu = game:GetService("VirtualUser")
                 vu:SetKeyUp("0x20")
+                vu:Button1Up(center)
             end)
 
             pcall(function()
-                if check and check:IsA("GuiObject") then
-                    local center = check.AbsolutePosition + (check.AbsoluteSize / 2)
-                    VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+                VirtualInputManager:SendTouchEvent(0, 2, center.X, center.Y)
+                VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+                if typeof(touchrelease) == "function" then
+                    pcall(touchrelease, 0)
                 end
             end)
         end)
@@ -3326,9 +3360,9 @@ local function startSkillcheckWatcher()
         if not perfectSkillcheckEnabled then return end
 
         local gui, check = getActiveSkillCheckGui()
-        if check and check.Visible and check.AbsoluteSize.X > 20 and check.AbsoluteSize.Y > 20 then
-            -- Safety: auto-reset if prompt remained open after 0.8s so back-to-back skill checks fire
-            if promptHandled and (os.clock() - promptHandledTick > 0.8) then
+        if check and check.Visible and check.AbsoluteSize.X > 15 and check.AbsoluteSize.Y > 15 then
+            -- Safety: auto-reset if prompt remained open after 0.75s so back-to-back skill checks fire
+            if promptHandled and (os.clock() - promptHandledTick > 0.75) then
                 promptHandled = false
                 promptOpenTick = os.clock()
             end
@@ -3354,18 +3388,22 @@ local function startSkillcheckWatcher()
                 if needle and greatZone then
                     local nRot = (needle:IsA("UIGradient") and needle.Rotation or needle.Rotation) % 360
                     local gRot = (greatZone:IsA("UIGradient") and greatZone.Rotation or greatZone.Rotation) % 360
-                    local diff = (gRot - nRot) % 360
-                    if diff <= 12 or (diff >= 352 and diff <= 360) then
+                    
+                    -- Calculate forward angular distance from needle to zone (clockwise)
+                    local distToZone = (gRot - nRot) % 360
+                    
+                    -- Generous FPS-independent window: needle is within 25 degrees of target or up to 10 degrees past
+                    if distToZone <= 25 or distToZone >= 350 then
                         shouldHit = true
                     end
                 elseif needle then
-                    local nRot = (needle:IsA("UIGradient") and needle.Rotation or needle.Rotation) % 360
-                    if (nRot >= 75 and nRot <= 135) or (elapsed >= 0.28 and elapsed <= 0.35) then
+                    -- If needle is moving, but target zone angle couldn't be parsed
+                    if elapsed >= 0.28 and elapsed <= 0.42 then
                         shouldHit = true
                     end
                 else
-                    -- Timed fallback: in DbD / Violence District, the sweet spot for great hit is ~0.27s - 0.33s
-                    if elapsed >= 0.28 and elapsed <= 0.35 then
+                    -- Timed fallback: in Violence District sweet spot is ~0.28s - 0.38s
+                    if elapsed >= 0.29 and elapsed <= 0.39 then
                         shouldHit = true
                     end
                 end
@@ -3374,7 +3412,7 @@ local function startSkillcheckWatcher()
                     promptHandled = true
                     promptHandledTick = os.clock()
                     lastSkillCheckSolvedTime = tick()
-                    triggerPerfectHit(check)
+                    triggerPerfectHit(check, gui)
                 end
             end
         else
