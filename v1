@@ -2246,7 +2246,11 @@ local function isCharacterKiller(char, plr)
         end
     end
 
-    -- 2. Survivor interaction state attributes (Killer cannot repair, heal, vault-slide pallet)
+    -- 2. Survivor-exclusive interaction state attributes & components
+    -- In Violence District, Killers CANNOT have CheckInterractable, repair, heal, or unhook!
+    if char:FindFirstChild("CheckInterractable") ~= nil then
+        return false
+    end
     if char:GetAttribute("isRepairing") == true 
         or char:GetAttribute("isHealing") == true 
         or char:GetAttribute("isVaulting") == true 
@@ -2257,47 +2261,71 @@ local function isCharacterKiller(char, plr)
         return false
     end
 
-    -- 3. CollectionService "Killer" tag (Applied by server to active killer character)
+    -- 3. SelectedKiller Attribute & Player-level role tags (Authoritative from the dump.lua)
+    if plr then
+        local sk = plr:GetAttribute("SelectedKiller")
+        if sk ~= nil and tostring(sk) ~= "" then
+            return true
+        end
+        if plr:GetAttribute("IsKiller") == true 
+            or plr:GetAttribute("Role") == "Killer" 
+            or plr:GetAttribute("killer") == true then
+            return true
+        end
+        if CollectionService:HasTag(plr, "Killer") then
+            return true
+        end
+    end
+
+    -- 4. CollectionService "Killer" tag (Applied by server to active killer character)
     if CollectionService:HasTag(char, "Killer") then
         return true
     end
-    if plr and CollectionService:HasTag(plr, "Killer") then
-        return true
-    end
 
-    -- 4. Killer-specific attributes on CURRENT character instance
+    -- 5. Killer-specific attributes on character instance
     if char:GetAttribute("Butcher") == true 
         or char:GetAttribute("IsKiller") == true 
         or char:GetAttribute("KillerName") ~= nil 
-        or char:GetAttribute("ChainBusy") == true then
+        or char:GetAttribute("ChainBusy") == true 
+        or char:GetAttribute("killercarry") ~= nil 
+        or char:GetAttribute("killercarryidle") ~= nil 
+        or char:GetAttribute("Hidden") == true 
+        or char:GetAttribute("Stalker") == true then
         return true
     end
 
-    -- 5. Active Killer combat states
+    -- 6. Active Killer combat states
     if char:GetAttribute("isAttacking") == true 
-        or char:GetAttribute("isLunging") == true then
+        or char:GetAttribute("isLunging") == true 
+        or char:GetAttribute("isStunned") == true then
         return true
     end
 
-    -- 6. Killer weapons / tools held
+    -- 7. Killer weapons / tools held
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA("Tool") or item:IsA("BasePart") or item:IsA("Model") then
             local iName = item.Name:lower()
             if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
                 or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
-                or iName:find("axe") or iName:find("blade") then
+                or iName:find("axe") or iName:find("blade") or iName:find("spear")
+                or iName:find("flask") or iName:find("knife") or iName:find("hammer") then
                 return true
             end
         end
     end
 
-    -- 7. Known killer model names in workspace (Only for unlinked NPC killers)
-    if not plr then
-        local cName = char.Name:lower()
-        if cName:find("butcher") or cName:find("slasher") or cName:find("jason") 
-            or cName:find("abysswalker") or cName:find("masked") then
+    -- 8. Known killer model names in workspace / character name
+    local cName = char.Name:lower()
+    local killerModelNames = { "butcher", "slasher", "jason", "abysswalker", "cure", "veil", "stalker", "hidden", "masked", "killer" }
+    for _, kName in ipairs(killerModelNames) do
+        if cName == kName or cName:find(kName) then
             return true
         end
+    end
+
+    -- 9. Killer specific child objects/scripts
+    if char:FindFirstChild("CancelVault") or char:FindFirstChild("Damageviz") or char:FindFirstChild("RedStain") then
+        return true
     end
 
     return false
@@ -2312,6 +2340,10 @@ local function isCharacterSurvivor(char, plr)
 
     -- Under no circumstance can the Killer be classified as a Survivor
     if isCharacterKiller(char, plr) then
+        return false
+    end
+    local currentKiller = getKiller()
+    if currentKiller and (char == currentKiller or (plr and Players:GetPlayerFromCharacter(currentKiller) == plr)) then
         return false
     end
 
@@ -2337,12 +2369,26 @@ local function isCharacterSurvivor(char, plr)
         end
     end
 
+    -- If player has SelectedKiller attribute, they are NOT a survivor
+    if plr then
+        local sk = plr:GetAttribute("SelectedKiller")
+        if sk ~= nil and tostring(sk) ~= "" then
+            return false
+        end
+    end
+
     -- CollectionService tags
     if CollectionService:HasTag(char, "Survivor") or CollectionService:HasTag(char, "Survivors") then
         return true
     end
+    if plr and (CollectionService:HasTag(plr, "Survivor") or CollectionService:HasTag(plr, "Survivors")) then
+        return true
+    end
 
-    -- Active survivor status attributes
+    -- Characteristic survivor interaction script or attributes
+    if char:FindFirstChild("CheckInterractable") ~= nil then
+        return true
+    end
     if char:GetAttribute("isRepairing") ~= nil 
         or char:GetAttribute("isHealing") ~= nil 
         or char:GetAttribute("isVaulting") ~= nil 
@@ -2688,12 +2734,18 @@ V_ESPSection:Toggle({
 -- ============================================================
 local survivorESPEnabled = false
 local survivorESPObjects = {}
+local trackedSurvivors = {}
 
 cleanSurvivorESP = function()
     for _, item in ipairs(survivorESPObjects) do
         pcall(function() item:Destroy() end)
     end
     survivorESPObjects = {}
+    for c, data in pairs(trackedSurvivors) do
+        if data.hl then pcall(function() data.hl:Destroy() end) end
+        if data.bb then pcall(function() data.bb:Destroy() end) end
+    end
+    trackedSurvivors = {}
 end
 
 V_ESPSection:Toggle({
@@ -2712,24 +2764,36 @@ V_ESPSection:Toggle({
 
         task.spawn(function()
             while survivorESPEnabled do
-                cleanSurvivorESP()
                 local myChar = player.Character
                 local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
                 local isKiller = isPlayerKiller()
                 local killerChar = isKiller and myChar or getKiller()
 
-                local candidateChars = {}
+                -- Force-clean any stray survivor ESP objects attached to the Killer
+                if killerChar then
+                    local badHl = killerChar:FindFirstChild("SurvivorESPHighlight")
+                    if badHl then pcall(function() badHl:Destroy() end) end
+                    local badBb = killerChar:FindFirstChild("SurvivorESPBillboard", true)
+                    if badBb then pcall(function() badBb:Destroy() end) end
+                    if trackedSurvivors[killerChar] then
+                        pcall(function() if trackedSurvivors[killerChar].hl then trackedSurvivors[killerChar].hl:Destroy() end end)
+                        pcall(function() if trackedSurvivors[killerChar].bb then trackedSurvivors[killerChar].bb:Destroy() end end)
+                        trackedSurvivors[killerChar] = nil
+                    end
+                end
+
+                local currentSurvivors = {}
                 for _, plr in ipairs(Players:GetPlayers()) do
                     if plr ~= player and plr.Character and plr.Character ~= myChar and plr.Character ~= killerChar then
                         if isKiller then
                             -- When local player is Killer, every other alive player in workspace is an enemy survivor!
                             local valid, hum, hrp = isValidCharacter(plr.Character)
                             if valid and not isEntityInLobbyOrSpectating(plr.Character, plr) then
-                                table.insert(candidateChars, { char = plr.Character, name = plr.DisplayName or plr.Name, plr = plr })
+                                table.insert(currentSurvivors, { char = plr.Character, name = plr.DisplayName or plr.Name, plr = plr })
                             end
                         else
                             if isCharacterSurvivor(plr.Character, plr) and not isCharacterKiller(plr.Character, plr) then
-                                table.insert(candidateChars, { char = plr.Character, name = plr.DisplayName or plr.Name, plr = plr })
+                                table.insert(currentSurvivors, { char = plr.Character, name = plr.DisplayName or plr.Name, plr = plr })
                             end
                         end
                     end
@@ -2749,25 +2813,14 @@ V_ESPSection:Toggle({
                         if obj:IsA("Model") and obj ~= myChar and obj ~= killerChar and not Players:GetPlayerFromCharacter(obj) then
                             local valid, hum, hrp = isValidCharacter(obj)
                             if valid then
-                                if isKiller then
-                                    if not isEntityInLobbyOrSpectating(obj) then
-                                        local alreadyAdded = false
-                                        for _, c in ipairs(candidateChars) do
-                                            if c.char == obj then alreadyAdded = true break end
-                                        end
-                                        if not alreadyAdded then
-                                            table.insert(candidateChars, { char = obj, name = obj.Name, plr = nil })
-                                        end
+                                local isSurv = isKiller and not isEntityInLobbyOrSpectating(obj) or (isCharacterSurvivor(obj) and not isCharacterKiller(obj))
+                                if isSurv then
+                                    local alreadyAdded = false
+                                    for _, c in ipairs(currentSurvivors) do
+                                        if c.char == obj then alreadyAdded = true break end
                                     end
-                                else
-                                    if isCharacterSurvivor(obj) and not isCharacterKiller(obj) then
-                                        local alreadyAdded = false
-                                        for _, c in ipairs(candidateChars) do
-                                            if c.char == obj then alreadyAdded = true break end
-                                        end
-                                        if not alreadyAdded then
-                                            table.insert(candidateChars, { char = obj, name = obj.Name, plr = nil })
-                                        end
+                                    if not alreadyAdded then
+                                        table.insert(currentSurvivors, { char = obj, name = obj.Name, plr = nil })
                                     end
                                 end
                             end
@@ -2775,13 +2828,15 @@ V_ESPSection:Toggle({
                     end
                 end
 
-                for _, item in ipairs(candidateChars) do
+                local activeSet = {}
+                for _, item in ipairs(currentSurvivors) do
                     if not survivorESPEnabled then break end
                     local c = item.char
                     local hum = c:FindFirstChildOfClass("Humanoid")
                     local hrp = c:FindFirstChild("HumanoidRootPart")
 
                     if hum and hrp and hum.Health > 0 and myHrp and c:IsDescendantOf(workspace) and c ~= killerChar and not isCharacterKiller(c, item.plr) then
+                        activeSet[c] = true
                         local dist = (myHrp.Position - hrp.Position).Magnitude
 
                         -- Determine status & color using unified functions
@@ -2801,45 +2856,70 @@ V_ESPSection:Toggle({
                         elseif isKnocked then
                             status = "KNOCKED DOWN"
                             fillColor = Color3.fromRGB(255, 60, 60)
-                        elseif hum.Health < 70 then
+                        elseif hum.Health < hum.MaxHealth then
                             status = string.format("INJURED (%.0f HP)", hum.Health)
-                            fillColor = Color3.fromRGB(255, 220, 30)
+                            fillColor = Color3.fromRGB(255, 200, 30)
                         else
                             status = string.format("HEALTHY (%.0f HP)", hum.Health)
+                            fillColor = Color3.fromRGB(50, 255, 50)
                         end
 
-                        local hl = Instance.new("Highlight")
-                        hl.Name = "SurvivorESPHighlight"
-                        hl.FillColor = fillColor
-                        hl.OutlineColor = Color3.fromRGB(255, 255, 255)
-                        hl.FillTransparency = 0.5
-                        hl.OutlineTransparency = 0.2
-                        hl.Parent = c
-                        table.insert(survivorESPObjects, hl)
+                        local record = trackedSurvivors[c]
+                        if not record or not record.hl or record.hl.Parent ~= c or not record.bb or record.bb.Parent ~= hrp then
+                            -- Clean old if broken
+                            if record then
+                                if record.hl then pcall(function() record.hl:Destroy() end) end
+                                if record.bb then pcall(function() record.bb:Destroy() end) end
+                            end
 
-                        local bb = Instance.new("BillboardGui")
-                        bb.Name = "SurvivorESPBillboard"
-                        bb.Adornee = hrp
-                        bb.Size = UDim2.fromOffset(160, 45)
-                        bb.StudsOffset = Vector3.new(0, 3.5, 0)
-                        bb.AlwaysOnTop = true
+                            local hl = Instance.new("Highlight")
+                            hl.Name = "SurvivorESPHighlight"
+                            hl.FillColor = fillColor
+                            hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+                            hl.FillTransparency = 0.5
+                            hl.OutlineTransparency = 0.2
+                            hl.Parent = c
 
-                        local lbl = Instance.new("TextLabel")
-                        lbl.Size = UDim2.fromScale(1, 1)
-                        lbl.BackgroundTransparency = 1
-                        lbl.TextColor3 = fillColor
-                        lbl.TextStrokeTransparency = 0.2
-                        lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-                        lbl.Font = Enum.Font.GothamBold
-                        lbl.TextScaled = true
-                        lbl.Text = string.format("👤 %s\n[%s] - %.0f studs", item.name, status, dist)
-                        lbl.Parent = bb
+                            local bb = Instance.new("BillboardGui")
+                            bb.Name = "SurvivorESPBillboard"
+                            bb.Adornee = hrp
+                            bb.Size = UDim2.fromOffset(160, 45)
+                            bb.StudsOffset = Vector3.new(0, 3.5, 0)
+                            bb.AlwaysOnTop = true
 
-                        bb.Parent = hrp
-                        table.insert(survivorESPObjects, bb)
+                            local lbl = Instance.new("TextLabel")
+                            lbl.Name = "Label"
+                            lbl.Size = UDim2.fromScale(1, 1)
+                            lbl.BackgroundTransparency = 1
+                            lbl.TextColor3 = fillColor
+                            lbl.TextStrokeTransparency = 0.2
+                            lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                            lbl.Font = Enum.Font.GothamBold
+                            lbl.TextScaled = true
+                            lbl.Text = string.format("👤 %s\n[%s] - %.0f studs", item.name, status, dist)
+                            lbl.Parent = bb
+                            bb.Parent = hrp
+
+                            trackedSurvivors[c] = { hl = hl, bb = bb, lbl = lbl }
+                        else
+                            -- Smooth in-place update! Zero flicker!
+                            record.hl.FillColor = fillColor
+                            record.lbl.TextColor3 = fillColor
+                            record.lbl.Text = string.format("👤 %s\n[%s] - %.0f studs", item.name, status, dist)
+                        end
                     end
                 end
-                task.wait(1.5)
+
+                -- Remove dead / despawned / invalid survivors from trackedSurvivors
+                for c, data in pairs(trackedSurvivors) do
+                    if not activeSet[c] then
+                        if data.hl then pcall(function() data.hl:Destroy() end) end
+                        if data.bb then pcall(function() data.bb:Destroy() end) end
+                        trackedSurvivors[c] = nil
+                    end
+                end
+
+                task.wait(0.35)
             end
             cleanSurvivorESP()
         end)
@@ -3046,12 +3126,8 @@ local function getActiveSkillCheckGui()
                 -- disabled ScreenGui, skip
             else
                 local check = gui:FindFirstChild("Check", true)
-                if check and check:IsA("GuiObject") and check.Visible then
+                if check and check:IsA("GuiObject") and check.Visible and check.AbsoluteSize.X > 20 and check.AbsoluteSize.Y > 20 then
                     return gui, check
-                end
-                local frame = gui:FindFirstChild("Frame", true)
-                if frame and frame:IsA("GuiObject") and frame.Visible and frame.Name ~= "smoothedbar" and frame.Name ~= "fullbar" then
-                    return gui, frame
                 end
             end
         end
@@ -3061,8 +3137,8 @@ local function getActiveSkillCheckGui()
         if gui:IsA("ScreenGui") and gui.Enabled then
             local gName = gui.Name:lower()
             if (gName:find("skill") or gName:find("qte")) and not gName:find("progress") then
-                local check = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Frame", true)
-                if check and check:IsA("GuiObject") and check.Visible then
+                local check = gui:FindFirstChild("Check", true)
+                if check and check:IsA("GuiObject") and check.Visible and check.AbsoluteSize.X > 20 and check.AbsoluteSize.Y > 20 then
                     return gui, check
                 end
             end
@@ -3080,34 +3156,39 @@ local function evaluateSkillCheckFrame(check, lastRotTable)
     local greatZone = nil
     local candidates = {}
 
+    -- Scan both GuiObject and UIGradient instances
     for _, child in ipairs(check:GetDescendants()) do
-        if child:IsA("GuiObject") then
+        if child:IsA("GuiObject") or child:IsA("UIGradient") then
             local low = child.Name:lower()
-            if low:find("needle") or low:find("pointer") or low:find("line") or low:find("indicator") or low:find("arrow") or low:find("cursor") or low:find("bar") then
+            if low:find("needle") or low:find("pointer") or low:find("indicator") or low:find("arrow") or low:find("cursor") or low:find("line") or low:find("bar") then
                 needle = child
-            elseif low:find("great") or low:find("perfect") or low:find("sweet") or low:find("target") or low:find("white") or low:find("zone") or low:find("bonus") or low:find("success") then
+            elseif low:find("great") or low:find("perfect") or low:find("sweet") or low:find("target") or low:find("white") or low:find("zone") or low:find("bonus") or low:find("success") or low:find("good") or low:find("hit") then
                 greatZone = child
             end
             table.insert(candidates, child)
         end
     end
 
-    -- If no explicit needle found by name, detect any child whose rotation is actively moving
-    if not needle and lastRotTable then
+    -- Dynamic needle detection: track which element is actively rotating frame-to-frame
+    if lastRotTable then
         for _, elem in ipairs(candidates) do
-            local curRot = elem.Rotation % 360
+            local curRot = (elem:IsA("UIGradient") and elem.Rotation or elem.Rotation) % 360
             local prevRot = lastRotTable[elem]
-            if prevRot ~= nil and math.abs(curRot - prevRot) > 0.5 then
-                needle = elem
-                break
+            if prevRot ~= nil then
+                local delta = math.abs((curRot - prevRot + 180) % 360 - 180)
+                if delta > 0.3 then
+                    needle = elem
+                    break
+                end
             end
         end
     end
 
-    -- Secondary fallback for needle: any element with non-zero rotation
+    -- Secondary fallback for needle: any element with non-zero rotation if none moving yet
     if not needle then
         for _, elem in ipairs(candidates) do
-            if elem.Rotation ~= 0 then
+            local rot = (elem:IsA("UIGradient") and elem.Rotation or elem.Rotation) % 360
+            if rot ~= 0 and elem ~= greatZone then
                 needle = elem
                 break
             end
@@ -3117,64 +3198,89 @@ local function evaluateSkillCheckFrame(check, lastRotTable)
     return needle, greatZone, candidates
 end
 
--- Standalone skillcheck trigger execution (Full Multi-Method PC & Delta Mobile Dispatch)
-local function triggerPerfectHit()
-    pcall(function()
-        local boundKeyName = player:GetAttribute("kb_skillcheck") or "Space"
-        local boundKeyCode = Enum.KeyCode[boundKeyName] or Enum.KeyCode.Space
-
-        -- 1. VirtualInputManager key event (Universal PC & Executor)
-        VirtualInputManager:SendKeyEvent(true, boundKeyCode, false, game)
-        task.wait(0.02)
-        VirtualInputManager:SendKeyEvent(false, boundKeyCode, false, game)
-
-        -- 2. Space fallback as guaranteed secondary event
-        if boundKeyCode ~= Enum.KeyCode.Space then
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-            task.wait(0.02)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-        end
-
-        -- 3. Executor native keypress / keyrelease (Delta Android & PC)
-        if typeof(keypress) == "function" and typeof(keyrelease) == "function" then
-            pcall(keypress, 0x20)
-            task.wait(0.02)
-            pcall(keyrelease, 0x20)
-        end
-
-        -- 4. VirtualUser fallback
+-- Standalone skillcheck trigger execution (Instant Non-Blocking Multi-Dispatch PC & Delta Mobile)
+local function triggerPerfectHit(check)
+    task.spawn(function()
         pcall(function()
-            local vu = game:GetService("VirtualUser")
-            vu:CaptureController()
-            vu:SetKeyDown("0x20")
-            task.wait(0.02)
-            vu:SetKeyUp("0x20")
-        end)
+            local boundKeyName = player:GetAttribute("kb_skillcheck") or "Space"
+            local boundKeyCode = Enum.KeyCode[boundKeyName] or Enum.KeyCode.Space
 
-        -- 5. Mobile touch / button activation (Delta Mobile)
-        local pg = player:FindFirstChild("PlayerGui")
-        if pg then
-            for _, scName in ipairs({"SkillCheckPromptGui", "SkillCheckPromptGui-con", "Survivor-mob", "SkillCheckGui", "SkillCheck"}) do
-                local sc = pg:FindFirstChild(scName)
-                if sc then
-                    for _, elem in ipairs(sc:GetDescendants()) do
-                        if elem:IsA("GuiButton") and elem.Visible then
-                            if typeof(firesignal) == "function" then
-                                pcall(firesignal, elem.MouseButton1Down)
-                                pcall(firesignal, elem.Activated)
-                                pcall(firesignal, elem.MouseButton1Click)
+            -- 1. PC Key dispatch (Bound key + Space fallback + Controller ButtonL1)
+            pcall(function()
+                VirtualInputManager:SendKeyEvent(true, boundKeyCode, false, game)
+                if boundKeyCode ~= Enum.KeyCode.Space then
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+                end
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.ButtonL1, false, game)
+            end)
+
+            -- 2. Native Executor keypress (PC & Delta Android)
+            if typeof(keypress) == "function" then
+                pcall(keypress, 0x20)
+            end
+
+            -- 3. VirtualUser fallback
+            pcall(function()
+                local vu = game:GetService("VirtualUser")
+                vu:CaptureController()
+                vu:SetKeyDown("0x20")
+            end)
+
+            -- 4. Mobile Screen Tap & UI Button Activation (Delta Mobile)
+            pcall(function()
+                if check and check:IsA("GuiObject") then
+                    local center = check.AbsolutePosition + (check.AbsoluteSize / 2)
+                    VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+                end
+
+                local pg = player:FindFirstChild("PlayerGui")
+                if pg then
+                    for _, scName in ipairs({"SkillCheckPromptGui", "SkillCheckPromptGui-con", "Survivor-mob", "SkillCheckGui", "SkillCheck"}) do
+                        local sc = pg:FindFirstChild(scName)
+                        if sc then
+                            for _, elem in ipairs(sc:GetDescendants()) do
+                                if elem:IsA("GuiButton") and elem.Visible then
+                                    if typeof(firesignal) == "function" then
+                                        pcall(firesignal, elem.MouseButton1Down)
+                                        pcall(firesignal, elem.Activated)
+                                        pcall(firesignal, elem.MouseButton1Click)
+                                    end
+                                    local pos = elem.AbsolutePosition + (elem.AbsoluteSize / 2)
+                                    VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
+                                end
                             end
-                            pcall(function()
-                                local pos = elem.AbsolutePosition + (elem.AbsoluteSize / 2)
-                                VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
-                                task.wait(0.02)
-                                VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 0)
-                            end)
                         end
                     end
                 end
+            end)
+
+            -- Release inputs after 18ms
+            task.wait(0.018)
+
+            pcall(function()
+                VirtualInputManager:SendKeyEvent(false, boundKeyCode, false, game)
+                if boundKeyCode ~= Enum.KeyCode.Space then
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+                end
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.ButtonL1, false, game)
+            end)
+
+            if typeof(keyrelease) == "function" then
+                pcall(keyrelease, 0x20)
             end
-        end
+
+            pcall(function()
+                local vu = game:GetService("VirtualUser")
+                vu:SetKeyUp("0x20")
+            end)
+
+            pcall(function()
+                if check and check:IsA("GuiObject") then
+                    local center = check.AbsolutePosition + (check.AbsoluteSize / 2)
+                    VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+                end
+            end)
+        end)
     end)
 end
 
@@ -3212,6 +3318,7 @@ local function startSkillcheckWatcher()
 
     local promptOpenTick = 0
     local promptHandled = false
+    local promptHandledTick = 0
     local rotHistory = {}
 
     -- RenderStepped 60FPS+ high-precision watcher
@@ -3219,7 +3326,13 @@ local function startSkillcheckWatcher()
         if not perfectSkillcheckEnabled then return end
 
         local gui, check = getActiveSkillCheckGui()
-        if check and check.Visible then
+        if check and check.Visible and check.AbsoluteSize.X > 20 and check.AbsoluteSize.Y > 20 then
+            -- Safety: auto-reset if prompt remained open after 0.8s so back-to-back skill checks fire
+            if promptHandled and (os.clock() - promptHandledTick > 0.8) then
+                promptHandled = false
+                promptOpenTick = os.clock()
+            end
+
             if not promptHandled then
                 if promptOpenTick == 0 then
                     promptOpenTick = os.clock()
@@ -3230,7 +3343,8 @@ local function startSkillcheckWatcher()
                 -- Update rotHistory for dynamic needle motion detection
                 if candidates then
                     for _, elem in ipairs(candidates) do
-                        rotHistory[elem] = elem.Rotation % 360
+                        local rot = (elem:IsA("UIGradient") and elem.Rotation or elem.Rotation) % 360
+                        rotHistory[elem] = rot
                     end
                 end
 
@@ -3238,33 +3352,35 @@ local function startSkillcheckWatcher()
                 local elapsed = os.clock() - promptOpenTick
 
                 if needle and greatZone then
-                    local nRot = needle.Rotation % 360
-                    local gRot = greatZone.Rotation % 360
+                    local nRot = (needle:IsA("UIGradient") and needle.Rotation or needle.Rotation) % 360
+                    local gRot = (greatZone:IsA("UIGradient") and greatZone.Rotation or greatZone.Rotation) % 360
                     local diff = (gRot - nRot) % 360
-                    if diff <= 15 or (diff >= 345 and diff <= 360) then
+                    if diff <= 12 or (diff >= 352 and diff <= 360) then
                         shouldHit = true
                     end
                 elseif needle then
-                    local nRot = needle.Rotation % 360
-                    if (nRot >= 75 and nRot <= 135) or (elapsed >= 0.25 and elapsed <= 0.35) then
+                    local nRot = (needle:IsA("UIGradient") and needle.Rotation or needle.Rotation) % 360
+                    if (nRot >= 75 and nRot <= 135) or (elapsed >= 0.28 and elapsed <= 0.35) then
                         shouldHit = true
                     end
                 else
-                    -- Timed fallback: in DbD / Violence District, the sweet spot for great hit is ~0.25s - 0.28s
-                    if elapsed >= 0.26 and elapsed <= 0.38 then
+                    -- Timed fallback: in DbD / Violence District, the sweet spot for great hit is ~0.27s - 0.33s
+                    if elapsed >= 0.28 and elapsed <= 0.35 then
                         shouldHit = true
                     end
                 end
 
-                if shouldHit and (tick() - lastSkillCheckSolvedTime > 0.4) then
+                if shouldHit and (tick() - lastSkillCheckSolvedTime > 0.35) then
                     promptHandled = true
+                    promptHandledTick = os.clock()
                     lastSkillCheckSolvedTime = tick()
-                    triggerPerfectHit()
+                    triggerPerfectHit(check)
                 end
             end
         else
             promptOpenTick = 0
             promptHandled = false
+            promptHandledTick = 0
             rotHistory = {}
         end
     end)
