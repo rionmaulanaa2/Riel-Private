@@ -3096,13 +3096,25 @@ do
 end
 
 -- ============================================================
--- 3. PERFECT SKILLCHECK (STANDALONE ZERO-LATENCY FRAME ENGINE)
+-- 3. PERFECT SKILLCHECK (ALL-TIME GREAT ZONE & ZERO-LATENCY AUTO ENGINE)
 -- ============================================================
 local perfectSkillcheckEnabled = true
 autoSkillCheckEnabled = true
 local skillcheckConn = nil
+local skillcheckManualConn = nil
 local skillcheckHooked = false
 local lastSkillCheckSolvedTime = 0
+
+-- Helper to check if a GuiObject and all its ancestor frames are visible
+local function isGuiElementTrulyVisible(elem)
+    if not elem or not elem:IsA("GuiObject") or not elem.Visible then return false end
+    local cur = elem.Parent
+    while cur and cur:IsA("GuiObject") do
+        if not cur.Visible then return false end
+        cur = cur.Parent
+    end
+    return true
+end
 
 -- Helper to find active SkillCheck Gui in PlayerGui (Universal PC, Console, & Delta Mobile)
 local function getActiveSkillCheckGui()
@@ -3127,7 +3139,7 @@ local function getActiveSkillCheckGui()
                 -- ScreenGui disabled, skip
             else
                 local check = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Wheel", true)
-                if check and check:IsA("GuiObject") and check.Visible and check.AbsoluteSize.X > 15 and check.AbsoluteSize.Y > 15 then
+                if check and check:IsA("GuiObject") and isGuiElementTrulyVisible(check) and check.AbsoluteSize.X > 5 and check.AbsoluteSize.Y > 5 then
                     return gui, check
                 end
             end
@@ -3140,7 +3152,7 @@ local function getActiveSkillCheckGui()
             local gName = gui.Name:lower()
             if (gName:find("skill") or gName:find("qte") or gName:find("check")) and not gName:find("progress") then
                 local check = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Wheel", true)
-                if check and check:IsA("GuiObject") and check.Visible and check.AbsoluteSize.X > 15 and check.AbsoluteSize.Y > 15 then
+                if check and check:IsA("GuiObject") and isGuiElementTrulyVisible(check) and check.AbsoluteSize.X > 5 and check.AbsoluteSize.Y > 5 then
                     return gui, check
                 end
             end
@@ -3171,7 +3183,7 @@ local function evaluateSkillCheckFrame(check, lastRotTable)
         end
     end
 
-    -- Dynamic needle detection: track which element has the highest frame-to-frame angular velocity
+    -- Dynamic needle detection: track which element has highest frame-to-frame angular velocity
     if lastRotTable then
         local maxDelta = 0
         local mostActiveElem = nil
@@ -3191,7 +3203,7 @@ local function evaluateSkillCheckFrame(check, lastRotTable)
         end
     end
 
-    -- If no greatZone was explicitly named, locate the static element with non-zero rotation (the target arc!)
+    -- If no greatZone was explicitly named, locate the static element with non-zero rotation (target arc)
     if not greatZone and needle then
         for _, elem in ipairs(candidates) do
             if elem ~= needle then
@@ -3207,10 +3219,32 @@ local function evaluateSkillCheckFrame(check, lastRotTable)
     return needle, greatZone, candidates
 end
 
--- Standalone skillcheck trigger execution (Full Multi-Dispatch: Mobile Touch, PC Key, Gamepad & VirtualUser)
-local function triggerPerfectHit(check, gui)
+-- Snap needle directly onto Great Zone (Turns skillcheck into an All-Time Great Zone!)
+local function snapNeedleToGreatZone(needle, greatZone)
+    if not needle or not greatZone then return end
+    pcall(function()
+        local targetRot = (greatZone:IsA("UIGradient") and greatZone.Rotation or greatZone.Rotation) % 360
+        if needle:IsA("UIGradient") then
+            needle.Rotation = targetRot
+        else
+            needle.Rotation = targetRot
+            local grad = needle:FindFirstChildOfClass("UIGradient")
+            if grad then
+                grad.Rotation = targetRot
+            end
+        end
+    end)
+end
+
+-- Standalone skillcheck trigger execution (Full Multi-Dispatch: Mobile Touch, PC Key, Gamepad & Direct UI)
+local function triggerPerfectHit(check, gui, needle, greatZone)
     task.spawn(function()
         pcall(function()
+            -- Lock needle to Great Zone immediately before sending hit
+            if needle and greatZone then
+                snapNeedleToGreatZone(needle, greatZone)
+            end
+
             local boundKeyName = player:GetAttribute("kb_skillcheck") or "Space"
             local boundKeyCode = Enum.KeyCode[boundKeyName] or Enum.KeyCode.Space
             local center = Vector2.new(0, 0)
@@ -3258,6 +3292,8 @@ local function triggerPerfectHit(check, gui)
             pcall(function()
                 if check then
                     if typeof(firesignal) == "function" then
+                        pcall(firesignal, check.InputBegan)
+                        pcall(firesignal, check.TouchTap)
                         if check:IsA("GuiButton") then
                             pcall(firesignal, check.Activated)
                             pcall(firesignal, check.MouseButton1Click)
@@ -3274,6 +3310,7 @@ local function triggerPerfectHit(check, gui)
                                 pcall(firesignal, elem.Activated)
                                 pcall(firesignal, elem.MouseButton1Click)
                                 pcall(firesignal, elem.MouseButton1Down)
+                                pcall(firesignal, elem.InputBegan)
                             end
                             local pos = elem.AbsolutePosition + (elem.AbsoluteSize / 2)
                             pcall(function()
@@ -3347,6 +3384,10 @@ local function startSkillcheckWatcher()
         pcall(function() skillcheckConn:Disconnect() end)
         skillcheckConn = nil
     end
+    if skillcheckManualConn then
+        pcall(function() skillcheckManualConn:Disconnect() end)
+        skillcheckManualConn = nil
+    end
 
     hookSkillCheckFailPrevention()
 
@@ -3355,12 +3396,32 @@ local function startSkillcheckWatcher()
     local promptHandledTick = 0
     local rotHistory = {}
 
-    -- RenderStepped 60FPS+ high-precision watcher
+    -- Manual Tap / Key Hook: If user taps/presses manually at ANY time, snap needle to Great Zone instantly!
+    -- This guarantees that ANY user interaction is 100% Great, fulfilling "All-Time Great Zone"
+    skillcheckManualConn = UserInputService.InputBegan:Connect(function(input, processed)
+        if not perfectSkillcheckEnabled then return end
+        local isTriggerInput = (input.UserInputType == Enum.UserInputType.Keyboard and (input.KeyCode == Enum.KeyCode.Space or input.KeyCode == (Enum.KeyCode[player:GetAttribute("kb_skillcheck") or "Space"] or Enum.KeyCode.Space)))
+            or (input.UserInputType == Enum.UserInputType.Touch)
+            or (input.UserInputType == Enum.UserInputType.MouseButton1)
+            or (input.UserInputType == Enum.UserInputType.Gamepad1 and input.KeyCode == Enum.KeyCode.ButtonL1)
+
+        if isTriggerInput then
+            local gui, check = getActiveSkillCheckGui()
+            if check and check.Visible then
+                local needle, greatZone = evaluateSkillCheckFrame(check, rotHistory)
+                if needle and greatZone then
+                    snapNeedleToGreatZone(needle, greatZone)
+                end
+            end
+        end
+    end)
+
+    -- RenderStepped 60FPS+ high-precision autonomous watcher & needle lock
     skillcheckConn = RunService.RenderStepped:Connect(function()
         if not perfectSkillcheckEnabled then return end
 
         local gui, check = getActiveSkillCheckGui()
-        if check and check.Visible and check.AbsoluteSize.X > 15 and check.AbsoluteSize.Y > 15 then
+        if check and check.Visible and check.AbsoluteSize.X > 5 and check.AbsoluteSize.Y > 5 then
             -- Safety: auto-reset if prompt remained open after 0.75s so back-to-back skill checks fire
             if promptHandled and (os.clock() - promptHandledTick > 0.75) then
                 promptHandled = false
@@ -3382,28 +3443,32 @@ local function startSkillcheckWatcher()
                     end
                 end
 
+                -- ALL-TIME GREAT ZONE: Lock needle to great zone angle continuously!
+                if needle and greatZone then
+                    snapNeedleToGreatZone(needle, greatZone)
+                end
+
                 local shouldHit = false
                 local elapsed = os.clock() - promptOpenTick
 
                 if needle and greatZone then
                     local nRot = (needle:IsA("UIGradient") and needle.Rotation or needle.Rotation) % 360
                     local gRot = (greatZone:IsA("UIGradient") and greatZone.Rotation or greatZone.Rotation) % 360
-                    
-                    -- Calculate forward angular distance from needle to zone (clockwise)
                     local distToZone = (gRot - nRot) % 360
-                    
-                    -- Generous FPS-independent window: needle is within 25 degrees of target or up to 10 degrees past
-                    if distToZone <= 25 or distToZone >= 350 then
+
+                    -- Since needle is snapped to great zone, hit as soon as natural reaction window (>= 0.28s) opens,
+                    -- or if needle angle is naturally inside zone
+                    if elapsed >= 0.28 or distToZone <= 30 or distToZone >= 340 then
                         shouldHit = true
                     end
                 elseif needle then
-                    -- If needle is moving, but target zone angle couldn't be parsed
+                    -- Moving needle fallback
                     if elapsed >= 0.28 and elapsed <= 0.42 then
                         shouldHit = true
                     end
                 else
-                    -- Timed fallback: in Violence District sweet spot is ~0.28s - 0.38s
-                    if elapsed >= 0.29 and elapsed <= 0.39 then
+                    -- Timed fallback: sweet spot in Violence District is ~0.28s - 0.38s
+                    if elapsed >= 0.28 and elapsed <= 0.38 then
                         shouldHit = true
                     end
                 end
@@ -3412,7 +3477,7 @@ local function startSkillcheckWatcher()
                     promptHandled = true
                     promptHandledTick = os.clock()
                     lastSkillCheckSolvedTime = tick()
-                    triggerPerfectHit(check, gui)
+                    triggerPerfectHit(check, gui, needle, greatZone)
                 end
             end
         else
@@ -3424,10 +3489,11 @@ local function startSkillcheckWatcher()
     end)
 end
 
-V_ObjectiveSection:Toggle({
-    Title = "Perfect Skillcheck",
-    Description = "100% Perfect/Great skillchecks active standalone (works on repair, self-heal, & team heal)",
-    Default = true,
+-- Tab Skillcheck UI Toggle Configuration
+Tabs.Objectives:AddToggle("PerfectSkillcheckToggle", {
+    Title = "Perfect Skillcheck (All-Time Great)",
+    Description = "100% Perfect/Great skillchecks via needle-to-zone locking & auto multi-dispatch (Universal PC & Mobile)",
+    Default = perfectSkillcheckEnabled,
     Callback = function(v)
         perfectSkillcheckEnabled = v
         if not v then
@@ -3435,12 +3501,16 @@ V_ObjectiveSection:Toggle({
                 pcall(function() skillcheckConn:Disconnect() end)
                 skillcheckConn = nil
             end
+            if skillcheckManualConn then
+                pcall(function() skillcheckManualConn:Disconnect() end)
+                skillcheckManualConn = nil
+            end
             WindUI:Notify({ Title = "Skillcheck", Content = "Perfect Skillcheck disabled.", Duration = 2 })
             return
         end
 
         startSkillcheckWatcher()
-        WindUI:Notify({ Title = "Skillcheck", Content = "Perfect Skillcheck active! (Zero-latency standalone)", Duration = 2 })
+        WindUI:Notify({ Title = "Skillcheck", Content = "Perfect Skillcheck (All-Time Great) active!", Duration = 2 })
     end
 })
 
