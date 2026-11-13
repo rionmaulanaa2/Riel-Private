@@ -15295,7 +15295,28 @@ local au=a.load't'
 
 local av=protectgui or(syn and syn.protect_gui)or function()end
 
-local aw=(ap and ap:FindFirstChild("PlayerGui")) or (ap and ap:WaitForChild("PlayerGui", 5)) or (gethui and gethui()) or (al or ap)
+local function resolveWindUIParent()
+    local okHui, hui = pcall(function() return gethui and gethui() end)
+    if okHui and hui and typeof(hui) == "Instance" then
+        return hui
+    end
+    local okCg, cg = pcall(function() return al end)
+    if okCg and cg and typeof(cg) == "Instance" then
+        local okWrite = pcall(function()
+            local test = Instance.new("Folder")
+            test.Parent = cg
+            test:Destroy()
+        end)
+        if okWrite then return cg end
+    end
+    if ap then
+        local pg = ap:FindFirstChild("PlayerGui") or ap:WaitForChild("PlayerGui", 5)
+        if pg then return pg end
+    end
+    return al or ap
+end
+
+local aw = resolveWindUIParent()
 
 local ax=at("UIScale",{
 Scale=aa.UIScale,
@@ -15306,6 +15327,7 @@ aa.UIScaleObj=ax
 aa.ScreenGui=at("ScreenGui",{
 Name="WindUI",
 Parent=aw,
+ResetOnSpawn=false,
 IgnoreGuiInset=true,
 ScreenInsets="None",
 DisplayOrder=999990,
@@ -15334,18 +15356,21 @@ Name="ToolTips",
 aa.NotificationGui=at("ScreenGui",{
 Name="WindUI/Notifications",
 Parent=aw,
+ResetOnSpawn=false,
 IgnoreGuiInset=true,
 DisplayOrder=999999,
 })
 aa.DropdownGui=at("ScreenGui",{
 Name="WindUI/Dropdowns",
 Parent=aw,
+ResetOnSpawn=false,
 IgnoreGuiInset=true,
 DisplayOrder=999995,
 })
 aa.TooltipGui=at("ScreenGui",{
 Name="WindUI/Tooltips",
 Parent=aw,
+ResetOnSpawn=false,
 IgnoreGuiInset=true,
 DisplayOrder=999997,
 })
@@ -15511,10 +15536,11 @@ local function ensureWindUIGuis()
         return aa.ScreenGui and aa.ScreenGui.Parent and aa.ScreenGui:FindFirstChild("Window")
     end)
     if not okSg or not hasWin then
-        local targetParent = (ap and ap:FindFirstChild("PlayerGui")) or (ap and ap:WaitForChild("PlayerGui", 5)) or (gethui and gethui()) or (al or ap)
+        local targetParent = resolveWindUIParent()
         aa.ScreenGui = at("ScreenGui", {
             Name = "WindUI",
             Parent = targetParent,
+            ResetOnSpawn = false,
             IgnoreGuiInset = true,
             ScreenInsets = "None",
             DisplayOrder = 999990,
@@ -15527,18 +15553,21 @@ local function ensureWindUIGuis()
         aa.NotificationGui = at("ScreenGui", {
             Name = "WindUI/Notifications",
             Parent = targetParent,
+            ResetOnSpawn = false,
             IgnoreGuiInset = true,
             DisplayOrder = 999999,
         })
         aa.DropdownGui = at("ScreenGui", {
             Name = "WindUI/Dropdowns",
             Parent = targetParent,
+            ResetOnSpawn = false,
             IgnoreGuiInset = true,
             DisplayOrder = 999995,
         })
         aa.TooltipGui = at("ScreenGui", {
             Name = "WindUI/Tooltips",
             Parent = targetParent,
+            ResetOnSpawn = false,
             IgnoreGuiInset = true,
             DisplayOrder = 999997,
         })

@@ -27,10 +27,35 @@ end
 local character = player and player.Character
 local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 
+local cleanAllESPs = nil
+
 if player then
     player.CharacterAdded:Connect(function(newChar)
         character = newChar
         humanoid = newChar:WaitForChild("Humanoid", 5)
+
+        -- Map change / character respawn watchdog:
+        -- 1. Wipe stale ESP highlights/billboards from previous match
+        -- 2. Ensure WindUI ScreenGui instances remain active and parented
+        task.spawn(function()
+            task.wait(0.4)
+            if cleanAllESPs then pcall(cleanAllESPs) end
+            if WindUI and WindUI.ScreenGui then
+                local container = getGuiContainer()
+                if not WindUI.ScreenGui.Parent or not WindUI.ScreenGui:IsDescendantOf(game) then
+                    pcall(function() WindUI.ScreenGui.Parent = container end)
+                end
+                if WindUI.NotificationGui and (not WindUI.NotificationGui.Parent or not WindUI.NotificationGui:IsDescendantOf(game)) then
+                    pcall(function() WindUI.NotificationGui.Parent = container end)
+                end
+                if WindUI.DropdownGui and (not WindUI.DropdownGui.Parent or not WindUI.DropdownGui:IsDescendantOf(game)) then
+                    pcall(function() WindUI.DropdownGui.Parent = container end)
+                end
+                if WindUI.TooltipGui and (not WindUI.TooltipGui.Parent or not WindUI.TooltipGui:IsDescendantOf(game)) then
+                    pcall(function() WindUI.TooltipGui.Parent = container end)
+                end
+            end
+        end)
     end)
 end
 
@@ -43,21 +68,21 @@ local function getGuiContainer()
         return hui
     end
 
-    if player then
-        local pg = player:FindFirstChildOfClass("PlayerGui") or player:FindFirstChild("PlayerGui")
-        if pg then return pg end
-        local okWait, waitedPg = pcall(function() return player:WaitForChild("PlayerGui", 5) end)
-        if okWait and waitedPg then return waitedPg end
-    end
-
     local okCg, cg = pcall(function() return game:GetService("CoreGui") end)
-    if okCg and cg then
+    if okCg and cg and typeof(cg) == "Instance" then
         local canWrite = pcall(function()
             local test = Instance.new("Folder")
             test.Parent = cg
             test:Destroy()
         end)
         if canWrite then return cg end
+    end
+
+    if player then
+        local pg = player:FindFirstChildOfClass("PlayerGui") or player:FindFirstChild("PlayerGui")
+        if pg then return pg end
+        local okWait, waitedPg = pcall(function() return player:WaitForChild("PlayerGui", 5) end)
+        if okWait and waitedPg then return waitedPg end
     end
 
     return game:GetService("CoreGui")
@@ -2143,37 +2168,7 @@ local function checkPlayerKillerStatus()
     local myChar = player.Character
     if not myChar then return false end
 
-    -- 1. Check PlayerGui for Killer HUD (Slasher-mob, Slasher, Slasher-con)
-    -- In Violence District, only the Killer possesses these unique controller GUIs
-    local pg = player:FindFirstChild("PlayerGui")
-    if pg then
-        if pg:FindFirstChild("Slasher-mob") or pg:FindFirstChild("Slasher") or pg:FindFirstChild("Slasher-con") then
-            return true
-        end
-        for _, gui in ipairs(pg:GetChildren()) do
-            local gName = gui.Name:lower()
-            if gName:find("slasher") or gName:find("killer") then
-                return true
-            end
-        end
-    end
-
-    -- 2. Check Backpack for Killer weapons
-    local bp = player:FindFirstChild("Backpack")
-    if bp then
-        for _, item in ipairs(bp:GetChildren()) do
-            if item:IsA("Tool") then
-                local iName = item.Name:lower()
-                if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
-                    or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
-                    or iName:find("axe") or iName:find("blade") then
-                    return true
-                end
-            end
-        end
-    end
-
-    -- 3. Explicit Team verification
+    -- 1. Explicit Team verification (Authoritative in Violence District)
     if player.Team then
         local tName = player.Team.Name:lower()
         if tName:find("killer") or tName:find("slasher") then
@@ -2184,29 +2179,79 @@ local function checkPlayerKillerStatus()
         end
     end
 
-    -- 4. CollectionService & Attributes
+    -- 2. SelectedKiller attribute assigned exclusively to Killer by server
+    local sk = player:GetAttribute("SelectedKiller")
+    if sk ~= nil and tostring(sk) ~= "" then
+        return true
+    end
+    if player:GetAttribute("IsKiller") == true or player:GetAttribute("Role") == "Killer" or player:GetAttribute("killer") == true then
+        return true
+    end
+
+    -- 3. Check PlayerGui for Killer HUD (Slasher-mob, Slasher, Slasher-con)
+    -- EXCLUDE 'KillerPerks' because it is present in PlayerGui for ALL players by default!
+    local pg = player:FindFirstChild("PlayerGui")
+    if pg then
+        if pg:FindFirstChild("Slasher-mob") or pg:FindFirstChild("Slasher") or pg:FindFirstChild("Slasher-con") then
+            return true
+        end
+        for _, gui in ipairs(pg:GetChildren()) do
+            local gName = gui.Name:lower()
+            if gName ~= "killerperks" and (gName == "slasher" or gName:find("slasher-") or gName == "killergui" or gName == "killerhud") then
+                return true
+            end
+        end
+    end
+
+    -- 4. CollectionService & Attributes on character
     if CollectionService:HasTag(myChar, "Killer") or CollectionService:HasTag(player, "Killer") then
         return true
     end
     if myChar:GetAttribute("Butcher") == true 
         or myChar:GetAttribute("IsKiller") == true 
         or myChar:GetAttribute("KillerName") ~= nil 
-        or myChar:GetAttribute("ChainBusy") ~= nil 
-        or player:GetAttribute("IsKiller") == true 
-        or player:GetAttribute("Role") == "Killer" then
+        or myChar:GetAttribute("killercarry") ~= nil then
         return true
     end
 
-    -- 5. Killer weapons / tools equipped in character
+    -- 5. Killer weapons equipped in character
     for _, item in ipairs(myChar:GetChildren()) do
         if item:IsA("Tool") or item:IsA("BasePart") or item:IsA("Model") then
             local iName = item.Name:lower()
             if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
                 or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
-                or iName:find("axe") or iName:find("blade") then
+                or iName:find("axe") or (iName:find("blade") and not iName:find("parry")) then
                 return true
             end
         end
+    end
+
+    -- 6. Check Backpack for Killer weapons
+    local bp = player:FindFirstChild("Backpack")
+    if bp then
+        for _, item in ipairs(bp:GetChildren()) do
+            if item:IsA("Tool") then
+                local iName = item.Name:lower()
+                if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
+                    or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
+                    or iName:find("axe") or (iName:find("blade") and not iName:find("parry")) then
+                    return true
+                end
+            end
+        end
+    end
+
+    -- 7. Known killer character model name
+    local cName = myChar.Name:lower()
+    for _, kName in ipairs({ "butcher", "slasher", "jason", "abysswalker", "cure", "veil", "stalker", "hidden", "masked" }) do
+        if cName == kName or cName:find(kName) then
+            return true
+        end
+    end
+
+    -- 8. Killer specific child objects/scripts
+    if myChar:FindFirstChild("CancelVault") or myChar:FindFirstChild("Damageviz") or myChar:FindFirstChild("RedStain") then
+        return true
     end
 
     return false
@@ -2246,15 +2291,9 @@ local function isCharacterKiller(char, plr)
         end
     end
 
-    -- 2. Survivor-exclusive interaction state attributes & components
-    -- In Violence District, Killers CANNOT have CheckInterractable, repair, heal, or unhook!
-    if char:FindFirstChild("CheckInterractable") ~= nil then
-        return false
-    end
+    -- 2. Survivor-exclusive interaction state attributes (Killers never repair/heal/unhook/exit)
     if char:GetAttribute("isRepairing") == true 
         or char:GetAttribute("isHealing") == true 
-        or char:GetAttribute("isVaulting") == true 
-        or char:GetAttribute("isSliding") == true 
         or char:GetAttribute("isDroppingPallet") == true 
         or char:GetAttribute("isUnhooking") == true 
         or char:GetAttribute("isExiting") == true then
@@ -2307,8 +2346,8 @@ local function isCharacterKiller(char, plr)
             local iName = item.Name:lower()
             if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
                 or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
-                or iName:find("axe") or iName:find("blade") or iName:find("spear")
-                or iName:find("flask") or iName:find("knife") or iName:find("hammer") then
+                or iName:find("axe") or (iName:find("blade") and not iName:find("parry")) or iName:find("spear")
+                or iName:find("flask") or (iName:find("knife") and not iName:find("parry")) or iName:find("hammer") then
                 return true
             end
         end
@@ -2385,10 +2424,7 @@ local function isCharacterSurvivor(char, plr)
         return true
     end
 
-    -- Characteristic survivor interaction script or attributes
-    if char:FindFirstChild("CheckInterractable") ~= nil then
-        return true
-    end
+    -- Characteristic survivor interaction attributes
     if char:GetAttribute("isRepairing") ~= nil 
         or char:GetAttribute("isHealing") ~= nil 
         or char:GetAttribute("isVaulting") ~= nil 
@@ -5844,19 +5880,17 @@ local lastKillerHitTime = 0
 local currentKillerTarget = nil
 local killerAimConn = nil
 
--- Helper to detect if Killer is currently stunned, parried, shot, or recovering (e.g. Flare/Revolver/Dagger/Shield)
+-- Helper to detect if Killer is currently stunned, blinded, or immobilized by survivor items/pallets
 local function isKillerStunnedOrLocked(char)
     if not char or not char.Parent then return false end
 
-    -- 1. Game attributes set by Violence District on stun/parry/shot
+    -- 1. Game attributes set by Violence District on actual stun/blind/shot
     if char:GetAttribute("isStunned") == true 
         or char:GetAttribute("IsStunned") == true 
         or char:GetAttribute("Stunned") == true 
-        or char:GetAttribute("AttackLock") == true 
         or char:GetAttribute("Immobile") == true 
         or char:GetAttribute("Blinded") == true 
-        or char:GetAttribute("Stun") == true 
-        or char:GetAttribute("ChainBusy") == true then
+        or char:GetAttribute("Stun") == true then
         return true
     end
 
@@ -5866,25 +5900,14 @@ local function isKillerStunnedOrLocked(char)
     end
 
     -- 3. Stun child marker instances
-    if char:FindFirstChild("Stunned") or char:FindFirstChild("Stun") or char:FindFirstChild("AttackLock") then
+    if char:FindFirstChild("Stunned") or char:FindFirstChild("Stun") then
         return true
     end
 
-    -- 4. Humanoid physical states during stun / parry recovery
+    -- 4. Humanoid physical states during knockdown/stun
     local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum then
-        if hum.WalkSpeed == 0 or hum.PlatformStand or hum.Sit then
-            return true
-        end
-        local animator = hum:FindFirstChildOfClass("Animator")
-        if animator then
-            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                local tName = track.Name:lower()
-                if tName:find("stun") or tName:find("parried") or tName:find("hitreact") or tName:find("flinch") or tName:find("blind") then
-                    return true
-                end
-            end
-        end
+    if hum and (hum.PlatformStand or hum.Sit) then
+        return true
     end
 
     return false
@@ -5893,11 +5916,6 @@ end
 -- Helper to detect if target survivor is currently parrying (ParryingDagger) or blocking (RiotShield)
 local function isSurvivorParryingOrShielded(sChar)
     if not sChar or not sChar.Parent then return false end
-
-    -- Violence District adds "doing action" tag to survivors during active parry frames
-    if CollectionService and CollectionService:HasTag(sChar, "doing action") then
-        return true
-    end
 
     if sChar:GetAttribute("isParrying") == true 
         or sChar:GetAttribute("Parrying") == true 
@@ -5919,20 +5937,6 @@ local function isSurvivorParryingOrShielded(sChar)
         end
     end
 
-    -- Check playing parry/shield animations
-    local hum = sChar:FindFirstChildOfClass("Humanoid")
-    if hum then
-        local animator = hum:FindFirstChildOfClass("Animator")
-        if animator then
-            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                local tName = track.Name:lower()
-                if tName:find("parry") or tName:find("shield") or tName:find("block") or tName:find("deflect") then
-                    return true
-                end
-            end
-        end
-    end
-
     return false
 end
 
@@ -5940,8 +5944,6 @@ end
 local function isSurvivorValidTarget(c)
     if not c or not c.Parent then return false end
     if c == player.Character then return false end
-    if not isCharacterSurvivor(c) then return false end
-    if isCharacterKiller(c) or c == getKiller() then return false end
     
     local hum = c:FindFirstChildOfClass("Humanoid")
     local hrp = c:FindFirstChild("HumanoidRootPart")
@@ -5965,6 +5967,14 @@ local function isSurvivorValidTarget(c)
         or c:FindFirstChild("Carried") ~= nil
     if isCarried then return false end
 
+    -- In 1v4 match: if local player is Killer, every other upright alive player character in match is a Survivor!
+    if isPlayerKiller() then
+        return true
+    end
+
+    if not isCharacterSurvivor(c) then return false end
+    if isCharacterKiller(c) or c == getKiller() then return false end
+
     return true
 end
 
@@ -5972,8 +5982,6 @@ end
 local function isSurvivorDowned(c)
     if not c or not c.Parent then return false end
     if c == player.Character then return false end
-    if not isCharacterSurvivor(c) then return false end
-    if isCharacterKiller(c) or c == getKiller() then return false end
     
     local hum = c:FindFirstChildOfClass("Humanoid")
     local hrp = c:FindFirstChild("HumanoidRootPart")
@@ -5992,6 +6000,13 @@ local function isSurvivorDowned(c)
         or c:FindFirstChild("Carried") ~= nil
     if isCarried then return false end
 
+    if isPlayerKiller() then
+        return isCharacterKnocked(c)
+    end
+
+    if not isCharacterSurvivor(c) then return false end
+    if isCharacterKiller(c) or c == getKiller() then return false end
+
     return isCharacterKnocked(c)
 end
 
@@ -6008,10 +6023,12 @@ local function findNearestSurvivor()
             local c = plr.Character
             if isSurvivorValidTarget(c) then
                 local hrp = c:FindFirstChild("HumanoidRootPart")
-                local dist = (myHrp.Position - hrp.Position).Magnitude
-                if dist < bestDist then
-                    bestDist = dist
-                    bestTarget = c
+                if hrp then
+                    local dist = (myHrp.Position - hrp.Position).Magnitude
+                    if dist < bestDist then
+                        bestDist = dist
+                        bestTarget = c
+                    end
                 end
             end
         end
@@ -6021,11 +6038,13 @@ local function findNearestSurvivor()
         for _, obj in ipairs(workspace:GetChildren()) do
             if obj:IsA("Model") and obj ~= myChar and obj:FindFirstChildOfClass("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
                 if isSurvivorValidTarget(obj) then
-                    local hrp = obj.HumanoidRootPart
-                    local dist = (myHrp.Position - hrp.Position).Magnitude
-                    if dist < bestDist then
-                        bestDist = dist
-                        bestTarget = obj
+                    local hrp = obj:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        local dist = (myHrp.Position - hrp.Position).Magnitude
+                        if dist < bestDist then
+                            bestDist = dist
+                            bestTarget = obj
+                        end
                     end
                 end
             end
@@ -6312,18 +6331,18 @@ task.spawn(function()
     while scriptRunning do
         pcall(function()
             if not scriptRunning then return end
-            if (autoAimSurvivorEnabled or autoHitSurvivorEnabled) and isPlayerKiller() then
+            if (autoAimSurvivorEnabled or autoHitSurvivorEnabled) then
                 local myChar = player.Character
                 if isKillerStunnedOrLocked(myChar) then return end
                 local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
                 if myHrp then
                     local targetSurvivor, dist = findNearestSurvivor()
-                    if targetSurvivor and dist <= (hitReachDistance + 4) then
+                    if targetSurvivor and dist <= (hitReachDistance + 6) then
                         currentKillerTarget = targetSurvivor
 
-                        -- Auto Hit trigger when within melee striking distance (<= 4.8 studs) and survivor not parrying
-                        if autoHitSurvivorEnabled and dist <= 4.8 and not isSurvivorParryingOrShielded(targetSurvivor) then
-                            if (tick() - lastKillerHitTime) > 0.45 then
+                        -- Auto Hit trigger when within melee striking distance (<= 5.5 studs) and survivor not parrying
+                        if autoHitSurvivorEnabled and dist <= 5.5 and not isSurvivorParryingOrShielded(targetSurvivor) then
+                            if (tick() - lastKillerHitTime) > 0.35 then
                                 lastKillerHitTime = tick()
                                 executeKillerHit(targetSurvivor)
                             end
@@ -6485,16 +6504,16 @@ local function travelToSurvivor(targetChar)
 
     local targetPos = targetHrp.Position
     local dist = (myHrp.Position - targetPos).Magnitude
-    if dist <= 2.8 then return true end
+    if dist <= 2.2 then return true end
 
-    -- 1. INSTANT TELEPORT (ALWAYS BEHIND SURVIVOR AT 2.5 STUDS FACING THEIR BACK)
+    -- 1. INSTANT TELEPORT (ALWAYS BEHIND SURVIVOR AT 2.2 STUDS FACING THEIR BACK)
     if killerTravelMode == "Instant Teleport" then
-        local behindPos = targetPos - (targetHrp.CFrame.LookVector * 2.5) + Vector3.new(0, 0.2, 0)
+        local behindPos = targetPos - (targetHrp.CFrame.LookVector * 2.2) + Vector3.new(0, 0.2, 0)
         local behindCF = CFrame.lookAt(behindPos, targetPos)
         myHrp.CFrame = behindCF
         myHrp.AssemblyLinearVelocity = Vector3.zero
         myHrp.AssemblyAngularVelocity = Vector3.zero
-        task.wait(0.04)
+        task.wait(0.03)
         return (myHrp.Position - targetPos).Magnitude <= 3.8
 
     -- 2. SAFE TELEPORT (WAYPOINTS CLOSING IN TO 2.8 STUDS)
@@ -6909,7 +6928,7 @@ V_KillerSection:Toggle({
 
                     -- 3. PURSUE SURVIVOR
                     local curDist = (myHrp.Position - sHrp.Position).Magnitude
-                    if curDist > 2.8 then
+                    if curDist > 2.2 then
                         if checkCatchActive() then travelToSurvivor(survivor) end
                     end
 
@@ -6920,16 +6939,15 @@ V_KillerSection:Toggle({
                     end
 
                     -- 4. PARRY EVASION CHECK
-                    -- If target survivor is actively parrying or blocking with shield, hold off swing!
+                    -- If target survivor is actively parrying or blocking with shield, hold off swing briefly
                     if isSurvivorParryingOrShielded(survivor) then
-                        -- Wait for survivor's parry active frames to drop (~0.35s) so they waste their parry!
-                        task.wait(0.35)
+                        task.wait(0.2)
                     end
 
                     -- 5. EXECUTE HIT WHEN IN RANGE
                     local finalDist = (myHrp.Position - sHrp.Position).Magnitude
-                    if checkCatchActive() and finalDist <= 4.8 and not isKillerStunnedOrLocked(myChar) and not isSurvivorParryingOrShielded(survivor) then
-                        if (tick() - lastKillerHitTime) > 0.45 then
+                    if checkCatchActive() and finalDist <= 5.5 and not isKillerStunnedOrLocked(myChar) and not isSurvivorParryingOrShielded(survivor) then
+                        if (tick() - lastKillerHitTime) > 0.35 then
                             lastKillerHitTime = tick()
                             executeKillerHit(survivor)
                         end
