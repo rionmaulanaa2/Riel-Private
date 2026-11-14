@@ -8228,6 +8228,7 @@ ThemeTag={
 ImageColor3="DropdownBackground",
 },
 ImageTransparency=1,
+ZIndex=1000000,
 Size=UDim2.new(1,0,1,0),
 AnchorPoint=Vector2.new(1,0),
 Position=UDim2.new(1,0,0,0),
@@ -8274,6 +8275,7 @@ Position=UDim2.new(-10,0,-10,0),
 Visible=false,
 Active=false,
 
+ZIndex=1000000,
 Parent=ao.WindUI.DropdownGui,
 AnchorPoint=Vector2.new(1,0),
 },{
@@ -8309,23 +8311,29 @@ end
 function UpdatePosition()
 local at=ap.UIElements.Dropdown or ap.DropdownFrame.UIElements.Main
 local au=ap.UIElements.MenuCanvas
+if not at or not au then return end
 
-local av=ah.ViewportSize.Y
--(at.AbsolutePosition.Y+at.AbsoluteSize.Y)
--aq.MenuPadding
--54
-local aw=au.AbsoluteSize.Y+aq.MenuPadding
+local cam = workspace.CurrentCamera
+local vpY = (cam and cam.ViewportSize.Y > 0 and cam.ViewportSize.Y)
+    or (ao.WindUI and ao.WindUI.ScreenGui and ao.WindUI.ScreenGui.AbsoluteSize.Y > 0 and ao.WindUI.ScreenGui.AbsoluteSize.Y)
+    or 800
 
-local ax=-54
-if av<aw then
-ax=aw-av-54
+local btnBottom = at.AbsolutePosition.Y + at.AbsoluteSize.Y
+local menuH = au.AbsoluteSize.Y
+local spaceBelow = vpY - btnBottom - (aq.MenuPadding or 5)
+
+local targetY
+if spaceBelow >= menuH or btnBottom < (vpY * 0.6) then
+    targetY = btnBottom + (aq.MenuPadding or 5)
+else
+    targetY = math.max(10, at.AbsolutePosition.Y - menuH - (aq.MenuPadding or 5))
 end
 
-au.Position=UDim2.new(
-0,
-at.AbsolutePosition.X+at.AbsoluteSize.X,
-0,
-at.AbsolutePosition.Y+at.AbsoluteSize.Y-ax+(aq.MenuPadding*2)
+au.Position = UDim2.new(
+    0,
+    at.AbsolutePosition.X + at.AbsoluteSize.X,
+    0,
+    targetY
 )
 end
 
@@ -10708,7 +10716,7 @@ at.Outline.Content.Position=UDim2.new(0,0,0,(at.Outline.Top.AbsoluteSize.Y/am.UI
 if an.Opened then
 an:Open(true)
 else
-an.Close(true)
+an:Close(true)
 end
 end)
 
@@ -15392,7 +15400,8 @@ Name="WindUI/Dropdowns",
 Parent=aw,
 ResetOnSpawn=false,
 IgnoreGuiInset=true,
-DisplayOrder=999995,
+DisplayOrder=2147483647,
+ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
 })
 aa.TooltipGui=at("ScreenGui",{
 Name="WindUI/Tooltips",
@@ -15589,7 +15598,8 @@ local function ensureWindUIGuis()
             Parent = targetParent,
             ResetOnSpawn = false,
             IgnoreGuiInset = true,
-            DisplayOrder = 999995,
+            DisplayOrder = 2147483647,
+            ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
         })
         aa.TooltipGui = at("ScreenGui", {
             Name = "WindUI/Tooltips",

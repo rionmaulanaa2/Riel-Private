@@ -3526,7 +3526,7 @@ local function startSkillcheckWatcher()
 end
 
 -- Tab Skillcheck UI Toggle Configuration
-Tabs.Objectives:AddToggle("PerfectSkillcheckToggle", {
+V_ObjectiveSection:Toggle({
     Title = "Perfect Skillcheck (All-Time Great)",
     Description = "100% Perfect/Great skillchecks via needle-to-zone locking & auto multi-dispatch (Universal PC & Mobile)",
     Default = perfectSkillcheckEnabled,
