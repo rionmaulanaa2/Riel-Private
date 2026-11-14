@@ -335,11 +335,7 @@ local function checkPlayerKillerStatus()
         end
     end
 
-    -- 2. SelectedKiller attribute assigned exclusively to Killer by server
-    local sk = player:GetAttribute("SelectedKiller")
-    if sk ~= nil and tostring(sk) ~= "" then
-        return true
-    end
+    -- 2. Killer-specific player attributes assigned by server
     if player:GetAttribute("IsKiller") == true or player:GetAttribute("Role") == "Killer" or player:GetAttribute("killer") == true then
         return true
     end
@@ -456,12 +452,8 @@ local function isCharacterKiller(char, plr)
         return false
     end
 
-    -- 3. SelectedKiller Attribute & Player-level role tags (Authoritative from the dump.lua)
+    -- 3. Player-level killer role tags assigned by server
     if plr then
-        local sk = plr:GetAttribute("SelectedKiller")
-        if sk ~= nil and tostring(sk) ~= "" then
-            return true
-        end
         if plr:GetAttribute("IsKiller") == true 
             or plr:GetAttribute("Role") == "Killer" 
             or plr:GetAttribute("killer") == true then
@@ -561,14 +553,6 @@ local function isCharacterSurvivor(char, plr)
         end
         if tName == "survivors" or tName:find("survivor") then
             return true
-        end
-    end
-
-    -- If player has SelectedKiller attribute, they are NOT a survivor
-    if plr then
-        local sk = plr:GetAttribute("SelectedKiller")
-        if sk ~= nil and tostring(sk) ~= "" then
-            return false
         end
     end
 
@@ -681,16 +665,20 @@ player.CharacterAdded:Connect(function(newChar)
     onMatchOrCharacterReset()
 end)
 
--- Connect other players' character respawns and team changes
+-- Connect other players' character respawns and team changes (cleans only that specific player's tracking)
 local function setupPlayerListeners(plr)
     if not plr or plr == player then return end
     plr.CharacterAdded:Connect(function(newChar)
-        task.wait(0.4)
-        onMatchOrCharacterReset()
-    end)
-    plr:GetPropertyChangedSignal("Team"):Connect(function()
         task.wait(0.3)
-        onMatchOrCharacterReset()
+        if trackedSurvivors then
+            for c, data in pairs(trackedSurvivors) do
+                if c == newChar or (plr and Players:GetPlayerFromCharacter(c) == plr) then
+                    if data.hl then pcall(function() data.hl:Destroy() end) end
+                    if data.bb then pcall(function() data.bb:Destroy() end) end
+                    trackedSurvivors[c] = nil
+                end
+            end
+        end
     end)
 end
 
@@ -1461,15 +1449,13 @@ local function triggerPerfectHit(check, gui, needle, greatZone)
                 pcall(keypress, 0x20)
             end
 
-            -- 3. VirtualUser keyboard & mouse clicks
+            -- 3. VirtualUser keyboard click (SAFE: No CaptureController, no unreleased mouse down)
             pcall(function()
                 local vu = game:GetService("VirtualUser")
-                vu:CaptureController()
                 vu:SetKeyDown("0x20")
-                vu:Button1Down(center)
             end)
 
-            -- 4. Native Mobile Touch Events (Crucial for Delta Mobile / Android)
+            -- 4. Clean Mobile Touch / Mouse Tap at center of Check
             pcall(function()
                 VirtualInputManager:SendTouchEvent(0, 0, center.X, center.Y)
                 VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
@@ -1480,7 +1466,7 @@ local function triggerPerfectHit(check, gui, needle, greatZone)
                 pcall(touchpress, 0, center.X, center.Y)
             end
 
-            -- 6. Direct UI Event and firesignal activation on Check and all buttons
+            -- 6. Direct UI Event and firesignal activation ONLY on Check and its Space button
             pcall(function()
                 if check then
                     if typeof(firesignal) == "function" then
@@ -1489,35 +1475,24 @@ local function triggerPerfectHit(check, gui, needle, greatZone)
                         if check:IsA("GuiButton") then
                             pcall(firesignal, check.Activated)
                             pcall(firesignal, check.MouseButton1Click)
-                            pcall(firesignal, check.MouseButton1Down)
                         end
                     end
-                end
-
-                local targetGui = gui or player:FindFirstChild("PlayerGui")
-                if targetGui then
-                    for _, elem in ipairs(targetGui:GetDescendants()) do
-                        if elem:IsA("GuiButton") and elem.Visible then
-                            if typeof(firesignal) == "function" then
-                                pcall(firesignal, elem.Activated)
-                                pcall(firesignal, elem.MouseButton1Click)
-                                pcall(firesignal, elem.MouseButton1Down)
-                                pcall(firesignal, elem.InputBegan)
-                            end
-                            local pos = elem.AbsolutePosition + (elem.AbsoluteSize / 2)
-                            pcall(function()
-                                VirtualInputManager:SendTouchEvent(1, 0, pos.X, pos.Y)
-                                VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
-                            end)
+                    local spaceBtn = check:FindFirstChild("Space")
+                    if spaceBtn and typeof(firesignal) == "function" then
+                        pcall(firesignal, spaceBtn.InputBegan)
+                        pcall(firesignal, spaceBtn.TouchTap)
+                        if spaceBtn:IsA("GuiButton") then
+                            pcall(firesignal, spaceBtn.Activated)
+                            pcall(firesignal, spaceBtn.MouseButton1Click)
                         end
                     end
                 end
             end)
 
-            -- Hold duration (18ms)
-            task.wait(0.018)
+            -- Hold duration (25ms) before clean complete release
+            task.wait(0.025)
 
-            -- Release all inputs
+            -- Release all inputs cleanly (Guarantees Camera & Scrolling Never Lock!)
             pcall(function()
                 VirtualInputManager:SendKeyEvent(false, boundKeyCode, false, game)
                 if boundKeyCode ~= Enum.KeyCode.Space then
@@ -1533,12 +1508,11 @@ local function triggerPerfectHit(check, gui, needle, greatZone)
             pcall(function()
                 local vu = game:GetService("VirtualUser")
                 vu:SetKeyUp("0x20")
-                vu:Button1Up(center)
             end)
 
             pcall(function()
-                VirtualInputManager:SendTouchEvent(0, 2, center.X, center.Y)
                 VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+                VirtualInputManager:SendTouchEvent(0, 2, center.X, center.Y)
                 if typeof(touchrelease) == "function" then
                     pcall(touchrelease, 0)
                 end
@@ -1646,21 +1620,23 @@ local function startSkillcheckWatcher()
                 if needle and greatZone then
                     local nRot = (needle:IsA("UIGradient") and needle.Rotation or needle.Rotation) % 360
                     local gRot = (greatZone:IsA("UIGradient") and greatZone.Rotation or greatZone.Rotation) % 360
-                    local distToZone = (gRot - nRot) % 360
+                    local diff = math.abs((gRot - nRot + 180) % 360 - 180)
 
-                    -- Since needle is snapped to great zone, hit as soon as natural reaction window (>= 0.28s) opens,
-                    -- or if needle angle is naturally inside zone
-                    if elapsed >= 0.28 or distToZone <= 30 or distToZone >= 340 then
+                    -- Always continuously lock needle onto Great Zone angle!
+                    snapNeedleToGreatZone(needle, greatZone)
+
+                    -- Natural reaction frame (>= 0.12s) to let GUI initialize, then hit immediately in Great Zone
+                    if elapsed >= 0.12 and (diff <= 25 or elapsed >= 0.22) then
                         shouldHit = true
                     end
                 elseif needle then
-                    -- Moving needle fallback
-                    if elapsed >= 0.28 and elapsed <= 0.42 then
+                    -- Moving needle fallback: wait until needle enters typical hit sector
+                    if elapsed >= 0.32 and elapsed <= 0.52 then
                         shouldHit = true
                     end
                 else
-                    -- Timed fallback: sweet spot in Violence District is ~0.28s - 0.38s
-                    if elapsed >= 0.28 and elapsed <= 0.38 then
+                    -- Timed fallback: natural skillcheck window
+                    if elapsed >= 0.30 and elapsed <= 0.45 then
                         shouldHit = true
                     end
                 end
