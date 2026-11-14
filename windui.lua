@@ -8824,15 +8824,27 @@ ap.UIElements.MenuCanvas.Active=false
 end)
 end
 
-ak.AddSignal(
-(
-ap.UIElements.Dropdown and ap.UIElements.Dropdown.MouseButton1Click
-or ap.DropdownFrame.UIElements.Main.MouseButton1Click
-),
-function()
-as:Open()
+local lastDropdownToggle = 0
+local function handleDropdownToggle()
+    local now = os.clock()
+    if (now - lastDropdownToggle) < 0.25 then return end
+    lastDropdownToggle = now
+    if not ap.Locked then
+        if ap.Opened then
+            as:Close()
+        else
+            as:Open()
+        end
+    end
 end
-)
+
+local triggerBtn = ap.UIElements.Dropdown or ap.DropdownFrame.UIElements.Main
+ak.AddSignal(triggerBtn.MouseButton1Click, handleDropdownToggle)
+pcall(function()
+    if triggerBtn.Activated then
+        ak.AddSignal(triggerBtn.Activated, handleDropdownToggle)
+    end
+end)
 
 ak.AddSignal(af.InputBegan,function(au)
 if
@@ -8846,15 +8858,18 @@ local ay=ap.UIElements.Dropdown or ap.DropdownFrame.UIElements.Main
 local az=ay.AbsolutePosition
 local aA=ay.AbsoluteSize
 
-local aB=ag.X>=az.X
-and ag.X<=az.X+aA.X
-and ag.Y>=az.Y
-and ag.Y<=az.Y+aA.Y
+local inX = (au.UserInputType==Enum.UserInputType.Touch and au.Position.X) or ag.X
+local inY = (au.UserInputType==Enum.UserInputType.Touch and au.Position.Y) or ag.Y
 
-local b=ag.X>=aw.X
-and ag.X<=aw.X+ax.X
-and ag.Y>=aw.Y
-and ag.Y<=aw.Y+ax.Y
+local aB=inX>=az.X
+and inX<=az.X+aA.X
+and inY>=az.Y
+and inY<=az.Y+aA.Y
+
+local b=inX>=aw.X
+and inX<=aw.X+ax.X
+and inY>=aw.Y
+and inY<=aw.Y+ax.Y
 
 if ao.Window.CanDropdown and ap.Opened and not aB and not b then
 as:Close()
@@ -10700,10 +10715,17 @@ end)
 local au=am.ElementsModule
 
 au.Load(an,at.Outline.Content,au.Elements,am.Window,am.WindUI,function()
-if not an.Expandable then
 an.Expandable=true
 ap.Visible=true
+at.Outline.Content.Visible=true
+at.AutomaticSize="None"
+at.Outline.Top.Size=UDim2.new(1,0,0,(not as and an.HeaderSize or 0))
+at.Outline.Top.AutomaticSize=(not an.Expandable or as)and"Y"or"None"
 UpdateTitleSize()
+if an.Opened then
+an:Open(true)
+else
+an:Close(true)
 end
 end,au,am.UIScale,am.Tab)
 
@@ -10740,14 +10762,19 @@ end
 function an.Open(av,aw)
 if an.Expandable then
 an.Opened=true
+at.Outline.Content.Visible=true
+at.AutomaticSize="None"
+at.Outline.Top.Size=UDim2.new(1,0,0,(not as and an.HeaderSize or 0))
+at.Outline.Top.AutomaticSize=(not an.Expandable or as)and"Y"or"None"
+local headerH = math.max(an.HeaderSize or 48, (at.Outline.Top.AbsoluteSize.Y/am.UIScale))
+local contentH = math.max(at.Outline.Content.AbsoluteSize.Y, at.Outline.Content.UIListLayout.AbsoluteContentSize.Y)/am.UIScale
+local targetH = headerH + contentH + 10
 if aw then
 at.Size=UDim2.new(
 at.Size.X.Scale,
 at.Size.X.Offset,
 0,
-at.Outline.Top.AbsoluteSize.Y/am.UIScale
-+(at.Outline.Content.AbsoluteSize.Y/am.UIScale)
-+10
+targetH
 )
 ap.ImageLabel.Rotation=180
 else
@@ -10756,9 +10783,7 @@ Size=UDim2.new(
 at.Size.X.Scale,
 at.Size.X.Offset,
 0,
-at.Outline.Top.AbsoluteSize.Y/am.UIScale
-+(at.Outline.Content.AbsoluteSize.Y/am.UIScale)
-+10
+targetH
 ),
 },Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
 
@@ -10775,12 +10800,14 @@ end
 function an.Close(av,aw)
 if an.Expandable then
 an.Opened=false
+local headerH = math.max(an.HeaderSize or 48, (at.Outline.Top.AbsoluteSize.Y/am.UIScale))
+local targetH = headerH
 if aw then
 at.Size=UDim2.new(
 at.Size.X.Scale,
 at.Size.X.Offset,
 0,
-(at.Outline.Top.AbsoluteSize.Y/am.UIScale)
+targetH
 )
 ap.ImageLabel.Rotation=0
 else
@@ -10789,7 +10816,7 @@ Size=UDim2.new(
 at.Size.X.Scale,
 at.Size.X.Offset,
 0,
-(at.Outline.Top.AbsoluteSize.Y/am.UIScale)
+targetH
 ),
 },Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
 ai(
@@ -10803,7 +10830,11 @@ end
 end
 end
 
-aa.AddSignal(at.Outline.Top.MouseButton1Click,function()
+local lastSectionToggle = 0
+local function handleSectionToggle()
+local now = os.clock()
+if (now - lastSectionToggle) < 0.25 then return end
+lastSectionToggle = now
 if an.Expandable then
 if an.Opened then
 an:Close()
@@ -10811,32 +10842,29 @@ else
 an:Open()
 end
 end
+end
+
+aa.AddSignal(at.Outline.Top.MouseButton1Click, handleSectionToggle)
+pcall(function()
+if at.Outline.Top.Activated then
+aa.AddSignal(at.Outline.Top.Activated, handleSectionToggle)
+end
 end)
 
 aa.AddSignal(at.Outline.Content.UIListLayout:GetPropertyChangedSignal"AbsoluteContentSize",function()
 if an.Opened then
 an:Open(true)
-else
-an:Close(true)
 end
 end)
 
 task.defer(function()
+at.Outline.Content.Visible=true
+local headerH = math.max(an.HeaderSize or 48, (at.Outline.Top.AbsoluteSize.Y/am.UIScale))
 if an.Expandable then
-
-
-
-
-
-
-
-
-at.Size=
-UDim2.new(at.Size.X.Scale,at.Size.X.Offset,0,at.Outline.Top.AbsoluteSize.Y/am.UIScale)
+at.Size=UDim2.new(at.Size.X.Scale,at.Size.X.Offset,0,headerH)
 at.AutomaticSize="None"
 at.Outline.Top.Size=UDim2.new(1,0,0,(not as and an.HeaderSize or 0))
 at.Outline.Top.AutomaticSize=(not an.Expandable or as)and"Y"or"None"
-at.Outline.Content.Visible=true
 end
 if an.Opened then
 an:Open()
@@ -10844,7 +10872,6 @@ else
 an:Close(true)
 end
 end)
-
 return an.__type,an
 end
 
