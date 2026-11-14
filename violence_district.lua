@@ -2224,7 +2224,9 @@ local function startTravelNoClip()
             char:SetAttribute("BypassNoclipAntiCheat", true)
             char:SetAttribute("donttrack", true)
             char:SetAttribute("NetTraversalUntil", 999999999)
-            char:SetAttribute("AC_ServerAnchor", true)
+            if char:GetAttribute("AC_ServerAnchor") ~= nil then
+                char:SetAttribute("AC_ServerAnchor", nil)
+            end
         end)
     end
     if travelNoClipConn then return end
@@ -2235,7 +2237,9 @@ local function startTravelNoClip()
                 c:SetAttribute("BypassNoclipAntiCheat", true)
                 c:SetAttribute("donttrack", true)
                 c:SetAttribute("NetTraversalUntil", 999999999)
-                c:SetAttribute("AC_ServerAnchor", true)
+                if c:GetAttribute("AC_ServerAnchor") ~= nil then
+                    c:SetAttribute("AC_ServerAnchor", nil)
+                end
             end)
             for _, part in ipairs(c:GetDescendants()) do
                 if part:IsA("BasePart") and part.CanCollide then
@@ -2258,7 +2262,9 @@ local function stopTravelNoClip()
                 char:SetAttribute("BypassNoclipAntiCheat", false)
                 char:SetAttribute("donttrack", false)
                 char:SetAttribute("NetTraversalUntil", nil)
-                char:SetAttribute("AC_ServerAnchor", false)
+                if char:GetAttribute("AC_ServerAnchor") ~= nil then
+                    char:SetAttribute("AC_ServerAnchor", nil)
+                end
             end)
             for _, part in ipairs(char:GetDescendants()) do
                 if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
@@ -2270,6 +2276,9 @@ local function stopTravelNoClip()
             pcall(function()
                 char:SetAttribute("BypassNoclipAntiCheat", true)
                 char:SetAttribute("donttrack", true)
+                if char:GetAttribute("AC_ServerAnchor") ~= nil then
+                    char:SetAttribute("AC_ServerAnchor", nil)
+                end
             end)
         end
     end
@@ -3713,17 +3722,10 @@ local function updateNoClip(state)
             char:SetAttribute("BypassNoclipAntiCheat", state)
             char:SetAttribute("donttrack", state)
             char:SetAttribute("NetTraversalUntil", state and 999999999 or nil)
-            char:SetAttribute("AC_ServerAnchor", state)
+            if char:GetAttribute("AC_ServerAnchor") ~= nil then
+                char:SetAttribute("AC_ServerAnchor", nil)
+            end
         end)
-    end
-
-    -- Server Collision sync (p_u_310.disableCollisionEvent:FireServer())
-    if state then
-        fireDisableCollision()
-    else
-        if not serverDisableCollisionEnabled then
-            fireEnableCollision()
-        end
     end
 
     if not state then
@@ -3745,7 +3747,9 @@ local function updateNoClip(state)
                 c:SetAttribute("BypassNoclipAntiCheat", true)
                 c:SetAttribute("donttrack", true)
                 c:SetAttribute("NetTraversalUntil", 999999999)
-                c:SetAttribute("AC_ServerAnchor", true)
+                if c:GetAttribute("AC_ServerAnchor") ~= nil then
+                    c:SetAttribute("AC_ServerAnchor", nil)
+                end
             end)
             for _, part in ipairs(c:GetDescendants()) do
                 if part:IsA("BasePart") and part.CanCollide then
@@ -3773,7 +3777,7 @@ local serverSpeedboostEnabled = false
 local speedboostMultiplier = 2.0
 local serverNoStunEnabled = false
 local antiCarryEnabled = false
-local antiImmobileEnabled = false
+local antiImmobileEnabled = true
 
 -- 1. Server Disable Collision (p_u_310.disableCollisionEvent:FireServer())
 V_ServerRemotesSection:Toggle({
@@ -3900,9 +3904,9 @@ V_ServerRemotesSection:Button({
 
 -- 6. Anti-Immobile / Anti-Root (Immobile)
 V_ServerRemotesSection:Toggle({
-    Title = "Anti-Immobile / Anti-Root (Immobile)",
-    Description = "Fires Mechanics.ChangeAttribute('Immobile', false) to unlock movement from bear traps & hits",
-    Default = false,
+    Title = "Anti-Immobile / Anti-Root (Anti-Freeze)",
+    Description = "Automatically unfreezes movement, un-anchors, and clears locks from rubberbands, traps & hits",
+    Default = true,
     Callback = function(v)
         antiImmobileEnabled = v
         if v then
@@ -3934,8 +3938,8 @@ task.spawn(function()
             local myChar = player.Character
             if not myChar then return end
 
-            -- 1. Server collision maintenance
-            if serverDisableCollisionEnabled or noClipEnabled then
+            -- 1. Server collision maintenance (strictly manual toggle)
+            if serverDisableCollisionEnabled then
                 fireDisableCollision()
             end
 
@@ -3987,6 +3991,150 @@ task.spawn(function()
         end)
         task.wait(0.25)
     end
+end)
+
+-- ============================================================
+-- HIGH-FREQUENCY INSTANT ANTI-STUCK & MOVEMENT RECOVERY ENGINE
+-- ============================================================
+local lastServerUnfreezeTick = 0
+
+local function performInstantUnfreeze()
+    if not scriptRunning then return end
+    local char = player.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hum or not hrp or hum.Health <= 0 then return end
+
+    -- Safe exclusions: Never interfere if character is actively on a meat hook or carried by killer
+    local isHooked = char:GetAttribute("IsHooked") == true or (char:GetAttribute("HookedProgress") ~= nil and char:GetAttribute("HookedProgress") > 0)
+    local isCarried = char:GetAttribute("IsCarried") == true or char:GetAttribute("BeingCarried") == true or char:GetAttribute("IsCarrying") == true
+    if isHooked or isCarried then return end
+
+    -- 1. Anti-Anchor: When server rubberbands or anti-cheat triggers, it pins HumanoidRootPart.Anchored = true
+    if hrp.Anchored then
+        hrp.Anchored = false
+    end
+
+    -- 2. Clear server anti-cheat anchor attribute immediately
+    if char:GetAttribute("AC_ServerAnchor") ~= nil then
+        pcall(function() char:SetAttribute("AC_ServerAnchor", nil) end)
+    end
+
+    -- 3. Clear all immobilizing / rooting / movement-locking attributes immediately
+    local attributesCleared = false
+    if char:GetAttribute("Rooted") == true then
+        pcall(function() char:SetAttribute("Rooted", false) end)
+        attributesCleared = true
+    end
+    if char:GetAttribute("Immobile") == true then
+        pcall(function() char:SetAttribute("Immobile", false) end)
+        attributesCleared = true
+    end
+    if char:GetAttribute("MovementLocked") == true then
+        pcall(function() char:SetAttribute("MovementLocked", false) end)
+        attributesCleared = true
+    end
+    if char:GetAttribute("Trapped") == true then
+        pcall(function() char:SetAttribute("Trapped", false) end)
+        attributesCleared = true
+    end
+    if char:GetAttribute("cantupdatespeed") == true then
+        pcall(function() char:SetAttribute("cantupdatespeed", false) end)
+        attributesCleared = true
+    end
+
+    -- Server sync: fire remote to clear server-authoritative locks if flagged
+    if attributesCleared and antiImmobileEnabled and (os.clock() - lastServerUnfreezeTick >= 0.15) then
+        lastServerUnfreezeTick = os.clock()
+        pcall(function()
+            fireChangeAttribute("Rooted", false)
+            fireChangeAttribute("Immobile", false)
+            fireChangeAttribute("Trapped", false)
+        end)
+    end
+
+    -- 4. Instant WalkSpeed & Mobility Unfreeze (for healthy character)
+    if hum.Health > 50 then
+        -- Clear ragdoll / falling disable flags
+        if hum.PlatformStand then
+            hum.PlatformStand = false
+        end
+        if hum.Sit then
+            hum.Sit = false
+        end
+
+        -- Calculate desired movement speed
+        local targetBaseSpeed = 10
+        if isCharacterKiller(char) then
+            targetBaseSpeed = tonumber(char:GetAttribute("Speed")) or 14
+        else
+            local isSprinting = char:GetAttribute("Sprinting") == true
+            if isSprinting then
+                targetBaseSpeed = 16
+            end
+        end
+        if serverSpeedboostEnabled and speedboostMultiplier > 1 then
+            targetBaseSpeed = targetBaseSpeed * speedboostMultiplier
+        end
+
+        -- If WalkSpeed is locked at 0 or suppressed following rubberband rollback:
+        if hum.WalkSpeed < 8 then
+            hum.WalkSpeed = targetBaseSpeed
+        end
+
+        -- 5. Physics Inertia & Velocity Unstick:
+        -- Following a server CFrame snapback, AssemblyLinearVelocity is pinned to zero,
+        -- creating a multi-second physics dead-zone. Re-inject directional momentum if user is moving.
+        if hum.MoveDirection.Magnitude > 0.05 then
+            local horizVel = Vector3.new(hrp.AssemblyLinearVelocity.X, 0, hrp.AssemblyLinearVelocity.Z)
+            if horizVel.Magnitude < 0.25 then
+                hrp.AssemblyLinearVelocity = Vector3.new(
+                    hum.MoveDirection.X * hum.WalkSpeed,
+                    hrp.AssemblyLinearVelocity.Y,
+                    hum.MoveDirection.Z * hum.WalkSpeed
+                )
+            end
+        end
+    end
+end
+
+-- Connect to Stepped (pre-simulation) and Heartbeat (post-simulation)
+RunService.Stepped:Connect(function()
+    if scriptRunning then
+        pcall(performInstantUnfreeze)
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    if scriptRunning then
+        pcall(performInstantUnfreeze)
+    end
+end)
+
+-- Dynamic Attribute Listeners for Zero-Latency Trigger
+local function bindCharacterUnfreezeListeners(char)
+    if not char then return end
+    local unfreezeAttrs = { "Rooted", "Immobile", "MovementLocked", "Trapped", "AC_ServerAnchor", "cantupdatespeed" }
+    for _, attrName in ipairs(unfreezeAttrs) do
+        pcall(function()
+            char:GetAttributeChangedSignal(attrName):Connect(function()
+                if scriptRunning then
+                    performInstantUnfreeze()
+                end
+            end)
+        end)
+    end
+end
+
+-- Bind for current character and future respawns
+if player.Character then
+    bindCharacterUnfreezeListeners(player.Character)
+end
+
+player.CharacterAdded:Connect(function(newChar)
+    task.wait(0.2)
+    bindCharacterUnfreezeListeners(newChar)
 end)
 
 -- ============================================================
