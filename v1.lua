@@ -6012,8 +6012,7 @@ local function isKillerStunnedOrLocked(char)
     if char:GetAttribute("isStunned") == true 
         or char:GetAttribute("IsStunned") == true 
         or char:GetAttribute("Stunned") == true 
-        or char:GetAttribute("Immobile") == true 
-        or char:GetAttribute("Blinded") == true 
+                or char:GetAttribute("Blinded") == true 
         or char:GetAttribute("Stun") == true then
         return true
     end
@@ -6304,17 +6303,6 @@ local function executeKillerHit(targetChar)
     local myChar = player.Character
     if not myChar then return end
 
-    -- DO NOT swing if killer is currently stunned, shot, parried, or in recovery lock
-    if isKillerStunnedOrLocked(myChar) then
-        return
-    end
-
-    -- DO NOT swing directly into active survivor parry or riot shield frames
-    if targetChar and isSurvivorParryingOrShielded(targetChar) then
-        return
-    end
-
-    local remotes = getVDRemotes()
     local myHrp = myChar:FindFirstChild("HumanoidRootPart")
     if not myHrp then return end
 
@@ -6332,6 +6320,8 @@ local function executeKillerHit(targetChar)
         end
     end
 
+    local remotes = getVDRemotes()
+
     -- 3. Fire Official Violence District Attack Remotes
     if remotes.Attacks then
         if remotes.Attacks:FindFirstChild("BasicAttack") then
@@ -6339,6 +6329,12 @@ local function executeKillerHit(targetChar)
         end
         if remotes.Attacks:FindFirstChild("Lunge") then
             pcall(function() remotes.Attacks.Lunge:FireServer() end)
+        end
+        if remotes.Attacks:FindFirstChild("LungeDetect") and targetChar then
+            pcall(function() remotes.Attacks.LungeDetect:FireServer(targetChar) end)
+        end
+        if remotes.Attacks:FindFirstChild("AfterAttack") then
+            pcall(function() remotes.Attacks.AfterAttack:FireServer() end)
         end
     end
 
@@ -6350,7 +6346,7 @@ local function executeKillerHit(targetChar)
                 local g = pg:FindFirstChild(guiName)
                 if g then
                     for _, btn in ipairs(g:GetDescendants()) do
-                        if btn:IsA("GuiButton") and (btn.Name:lower() == "attack" or btn.Name:lower():find("slash")) then
+                        if btn:IsA("GuiButton") and (btn.Name:lower() == "attack" or btn.Name:lower():find("slash") or btn.Name:lower():find("punch")) then
                             if typeof(firesignal) == "function" then
                                 firesignal(btn.MouseButton1Down)
                                 firesignal(btn.Activated)
@@ -6378,13 +6374,11 @@ local function executeKillerHit(targetChar)
             for _, part in ipairs(myChar:GetDescendants()) do
                 if part:IsA("BasePart") and (part.Name:lower():find("weapon") or part.Name:lower():find("blade") or part.Name:lower():find("knife") or part.Name:lower():find("machete") or part.Name:lower():find("axe") or part.Name:lower():find("cleaver") or part == rightArm) then
                     firetouchinterest(part, sHrp, 0)
-                    task.wait(0.01)
                     firetouchinterest(part, sHrp, 1)
                 end
             end
             if rightArm then
                 firetouchinterest(rightArm, sHrp, 0)
-                task.wait(0.01)
                 firetouchinterest(rightArm, sHrp, 1)
             end
         end)
@@ -6416,7 +6410,6 @@ local function updateKillerAim()
 
     killerAimConn = RunService.RenderStepped:Connect(function()
         if not autoAimSurvivorEnabled then return end
-        if not isPlayerKiller() then return end
 
         pcall(function()
             local myChar = player.Character
@@ -6426,7 +6419,7 @@ local function updateKillerAim()
             local target = currentKillerTarget
             if not target or not target.Parent or not isSurvivorValidTarget(target) then
                 local nearest, nDist = findNearestSurvivor()
-                if nearest and nDist <= (hitReachDistance + 6) then
+                if nearest then
                     target = nearest
                     currentKillerTarget = nearest
                 else
@@ -6457,16 +6450,15 @@ task.spawn(function()
             if not scriptRunning then return end
             if (autoAimSurvivorEnabled or autoHitSurvivorEnabled) then
                 local myChar = player.Character
-                if isKillerStunnedOrLocked(myChar) then return end
                 local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
                 if myHrp then
                     local targetSurvivor, dist = findNearestSurvivor()
-                    if targetSurvivor and dist <= (hitReachDistance + 6) then
+                    if targetSurvivor then
                         currentKillerTarget = targetSurvivor
 
-                        -- Auto Hit trigger when within melee striking distance (<= 5.5 studs) and survivor not parrying
-                        if autoHitSurvivorEnabled and dist <= 5.5 and not isSurvivorParryingOrShielded(targetSurvivor) then
-                            if (tick() - lastKillerHitTime) > 0.35 then
+                        -- Auto Hit trigger when within hit reach distance (slider: 6 - 20 studs, default 10)
+                        if autoHitSurvivorEnabled and dist <= hitReachDistance then
+                            if (tick() - lastKillerHitTime) >= 0.35 then
                                 lastKillerHitTime = tick()
                                 executeKillerHit(targetSurvivor)
                             end
@@ -6988,7 +6980,7 @@ V_KillerSection:Toggle({
 
 V_KillerSection:Toggle({
     Title = "Auto Catch Survivor",
-    Description = "Locks onto nearest active Survivor, pursues them, auto aims & strikes",
+    Description = "Locks onto nearest active Survivor, pursues them, auto aims, strikes & hooks",
     Default = false,
     Callback = function(v)
         autoCatchEnabled = v
@@ -7014,11 +7006,7 @@ V_KillerSection:Toggle({
         autoHitSurvivorEnabled = true
         updateKillerAim()
 
-        if not isPlayerKiller() then
-            WindUI:Notify({ Title = "⚠️ Role Warning", Content = "You are currently not the Killer!", Duration = 3 })
-        end
-
-        WindUI:Notify({ Title = "Auto Catch", Content = "Hunting nearest active Survivor...", Duration = 2.5 })
+        WindUI:Notify({ Title = "Auto Catch", Content = "Hunting nearest Survivor (Instant Teleport, Hit & Hook)...", Duration = 2.5 })
 
         local function checkCatchActive()
             return autoCatchEnabled and (catchSession == thisSession) and scriptRunning
@@ -7029,67 +7017,165 @@ V_KillerSection:Toggle({
                 local ok, err = pcall(function()
                     local myChar = player.Character
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-                    if not myHrp then task.wait(0.5) return end
+                    if not myHrp then task.wait(0.3) return end
 
-                    -- 1. STUN & SHOT RECOVERY CHECK
-                    -- If killer was shot (revolver/flare) or parried (parrying dagger/riot shield),
-                    -- pause pursuit and DO NOT swing or force teleport until stun clears!
-                    if isKillerStunnedOrLocked(myChar) then
-                        task.wait(0.15)
+                    -- ====================================================
+                    -- STAGE 3: CARRYING SURVIVOR -> TRANSPORT TO NEAREST HOOK & HANG
+                    -- ====================================================
+                    local isCarrying = myChar:GetAttribute("IsCarrying") == true
+                        or myChar:FindFirstChild("CarriedSurvivor") ~= nil
+                        or myChar:GetAttribute("BeingCarried") ~= nil
+                        or myChar:FindFirstChild("Carry") ~= nil
+                        or myChar:GetAttribute("killercarry") ~= nil
+
+                    if isCarrying then
+                        local hookPart, hookDist = findNearestAvailableHook()
+                        if hookPart then
+                            local hookPos = hookPart.Position
+                            if killerTravelMode == "Instant Teleport" then
+                                local hookCF = CFrame.lookAt(hookPos + Vector3.new(0, 0.5, 2.5), hookPos)
+                                for attempt = 1, 3 do
+                                    myHrp.CFrame = hookCF
+                                    myHrp.AssemblyLinearVelocity = Vector3.zero
+                                    myHrp.AssemblyAngularVelocity = Vector3.zero
+                                    task.wait(0.02)
+                                end
+                            else
+                                travelToTargetLocation(hookPos, 5, function()
+                                    return checkCatchActive() and (myChar:GetAttribute("IsCarrying") == true)
+                                end)
+                            end
+
+                            -- Execute Hook Commit
+                            local reqId = HttpService:GenerateGUID(false)
+                            local remotes = getVDRemotes()
+                            if remotes.Carry then
+                                if remotes.Carry:FindFirstChild("HookEvent") then
+                                    pcall(function() remotes.Carry.HookEvent:FireServer(hookPart, reqId, myChar) end)
+                                end
+                                if remotes.Carry:FindFirstChild("HookCommit") then
+                                    pcall(function() remotes.Carry.HookCommit:FireServer(hookPart, reqId, myChar) end)
+                                end
+                            end
+
+                            -- Fire ProximityPrompts on hook
+                            local hookModel = hookPart:FindFirstAncestorOfClass("Model") or hookPart.Parent
+                            if hookModel then
+                                for _, prompt in ipairs(hookModel:GetDescendants()) do
+                                    if prompt:IsA("ProximityPrompt") then
+                                        pcall(function() fireproximityprompt(prompt) end)
+                                    end
+                                end
+                            end
+
+                            -- Wait briefly for hook completion
+                            local hookWaitTimeout = tick() + 1.5
+                            while tick() < hookWaitTimeout and (myChar:GetAttribute("IsCarrying") == true) and checkCatchActive() do
+                                task.wait(0.05)
+                            end
+                            WindUI:Notify({ Title = "🪝 Survivor Hooked!", Content = "Target successfully hung on hook.", Duration = 2.0 })
+                        else
+                            task.wait(0.2)
+                        end
                         return
                     end
 
-                    -- 2. ACQUIRE TARGET SURVIVOR
+                    -- ====================================================
+                    -- STAGE 2: DOWNED SURVIVOR EXISTS -> TRANSPORT & PICK UP
+                    -- ====================================================
+                    local downedSurvivor, downedDist = findNearestDownedSurvivor()
+                    if downedSurvivor and downedSurvivor:FindFirstChild("HumanoidRootPart") then
+                        local dHrp = downedSurvivor.HumanoidRootPart
+                        if killerTravelMode == "Instant Teleport" then
+                            local standPos = dHrp.Position + Vector3.new(0, 0.5, 2.0)
+                            local targetCF = CFrame.lookAt(standPos, dHrp.Position)
+                            for attempt = 1, 3 do
+                                myHrp.CFrame = targetCF
+                                myHrp.AssemblyLinearVelocity = Vector3.zero
+                                myHrp.AssemblyAngularVelocity = Vector3.zero
+                                task.wait(0.02)
+                            end
+                        else
+                            travelToTargetLocation(dHrp.Position, 5, function()
+                                return checkCatchActive() and not (myChar:GetAttribute("IsCarrying") == true) and isSurvivorDowned(downedSurvivor)
+                            end)
+                        end
+
+                        -- Fire pickup remotes and proximity prompts
+                        local remotes = getVDRemotes()
+                        if remotes.Carry and remotes.Carry:FindFirstChild("CarrySurvivorEvent") then
+                            pcall(function() remotes.Carry.CarrySurvivorEvent:FireServer(downedSurvivor) end)
+                        end
+
+                        for _, prompt in ipairs(downedSurvivor:GetDescendants()) do
+                            if prompt:IsA("ProximityPrompt") then
+                                pcall(function() fireproximityprompt(prompt) end)
+                            end
+                        end
+
+                        -- Wait briefly for pickup to register
+                        local pickupTimeout = tick() + 1.2
+                        while tick() < pickupTimeout and not (myChar:GetAttribute("IsCarrying") == true) and checkCatchActive() do
+                            task.wait(0.05)
+                        end
+                        if myChar:GetAttribute("IsCarrying") == true then
+                            WindUI:Notify({ Title = "🎒 Survivor Picked Up", Content = "Carrying survivor to hook...", Duration = 1.5 })
+                        end
+                        return
+                    end
+
+                    -- ====================================================
+                    -- STAGE 1: HUNT ACTIVE UPRIGHT SURVIVORS (TELEPORT INSTANT & HIT)
+                    -- ====================================================
                     local survivor, dist = findNearestSurvivor()
                     if not survivor or not survivor:FindFirstChild("HumanoidRootPart") then
                         currentKillerTarget = nil
-                        task.wait(0.3)
+                        task.wait(0.2)
                         return
                     end
 
                     currentKillerTarget = survivor
                     local sHrp = survivor.HumanoidRootPart
 
-                    -- 3. PURSUE SURVIVOR
-                    local curDist = (myHrp.Position - sHrp.Position).Magnitude
-                    if curDist > 2.2 then
-                        if checkCatchActive() then travelToSurvivor(survivor) end
-                    end
-
-                    -- Re-verify killer is not stunned after travel
-                    if isKillerStunnedOrLocked(myChar) then
-                        task.wait(0.15)
-                        return
-                    end
-
-                    -- 4. PARRY EVASION CHECK
-                    -- If target survivor is actively parrying or blocking with shield, hold off swing briefly
-                    if isSurvivorParryingOrShielded(survivor) then
-                        task.wait(0.2)
-                    end
-
-                    -- 5. EXECUTE HIT WHEN IN RANGE
-                    local finalDist = (myHrp.Position - sHrp.Position).Magnitude
-                    if checkCatchActive() and finalDist <= 5.5 and not isKillerStunnedOrLocked(myChar) and not isSurvivorParryingOrShielded(survivor) then
-                        if (tick() - lastKillerHitTime) > 0.35 then
-                            lastKillerHitTime = tick()
-                            executeKillerHit(survivor)
+                    -- Pursue / Teleport
+                    if killerTravelMode == "Instant Teleport" then
+                        local behindPos = sHrp.Position - (sHrp.CFrame.LookVector * 2.5) + Vector3.new(0, 0.2, 0)
+                        local behindCF = CFrame.lookAt(behindPos, sHrp.Position)
+                        for attempt = 1, 2 do
+                            myHrp.CFrame = behindCF
+                            myHrp.AssemblyLinearVelocity = Vector3.zero
+                            myHrp.AssemblyAngularVelocity = Vector3.zero
+                            task.wait(0.02)
                         end
+                    else
+                        local curDist = (myHrp.Position - sHrp.Position).Magnitude
+                        if curDist > 2.2 then
+                            travelToSurvivor(survivor)
+                        end
+                    end
+
+                    -- Aim Camera directly at survivor
+                    local cam = workspace.CurrentCamera
+                    cam.CFrame = CFrame.lookAt(cam.CFrame.Position, sHrp.Position + Vector3.new(0, 1.2, 0))
+
+                    -- Strike survivor
+                    if (tick() - lastKillerHitTime) >= 0.25 then
+                        lastKillerHitTime = tick()
+                        executeKillerHit(survivor)
                     end
                 end)
                 if not ok then
-                    task.wait(0.2)
+                    task.wait(0.1)
                 end
-                task.wait(0.05)
+                task.wait(0.04)
             end
             currentKillerTarget = nil
         end)
     end
 })
 
-
-
 end
+
 
 do
 local DiscordTab = Window:Tab({
