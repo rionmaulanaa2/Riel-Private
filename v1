@@ -2237,16 +2237,8 @@ local function checkPlayerKillerStatus()
         end
     end
 
-    -- 7. Known killer character model name
-    local cName = myChar.Name:lower()
-    for _, kName in ipairs({ "butcher", "slasher", "jason", "abysswalker", "cure", "veil", "stalker", "hidden", "masked" }) do
-        if cName == kName or cName:find(kName) then
-            return true
-        end
-    end
-
-    -- 8. Killer specific child objects/scripts
-    if myChar:FindFirstChild("CancelVault") or myChar:FindFirstChild("Damageviz") or myChar:FindFirstChild("RedStain") then
+    -- 7. Killer specific child objects/scripts
+    if myChar:FindFirstChild("CancelVault") or myChar:FindFirstChild("Damageviz") or myChar:FindFirstChild("RedStain") or myChar:FindFirstChild("KillerHitbox") then
         return true
     end
 
@@ -2285,14 +2277,20 @@ local function isCharacterKiller(char, plr)
         if tName == "killer" or tName:find("killer") or tName:find("slasher") then
             return true
         end
+        if tName:find("spectat") or tName:find("lobby") then
+            return false
+        end
     end
 
-    -- 2. Survivor-exclusive interaction state attributes (Killers never repair/heal/unhook/exit)
+    -- 2. Survivor-exclusive interaction state attributes (Killers never repair/heal/unhook/exit/slide)
     if char:GetAttribute("isRepairing") == true 
         or char:GetAttribute("isHealing") == true 
         or char:GetAttribute("isDroppingPallet") == true 
         or char:GetAttribute("isUnhooking") == true 
-        or char:GetAttribute("isExiting") == true then
+        or char:GetAttribute("isExiting") == true
+        or char:GetAttribute("isSliding") == true
+        or isCharacterHooked(char)
+        or isCharacterKnocked(char) then
         return false
     end
 
@@ -2327,35 +2325,35 @@ local function isCharacterKiller(char, plr)
 
     -- 6. Active Killer combat states
     if char:GetAttribute("isAttacking") == true 
-        or char:GetAttribute("isLunging") == true 
-        or char:GetAttribute("isStunned") == true then
+        or char:GetAttribute("isLunging") == true then
         return true
     end
 
-    -- 7. Killer weapons / tools held
+    -- 7. Killer weapons / tools held (Chainsaw, Cleaver, Machete, BearTrap, KillerWeapon)
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA("Tool") or item:IsA("BasePart") or item:IsA("Model") then
             local iName = item.Name:lower()
             if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
                 or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
-                or iName:find("axe") or (iName:find("blade") and not iName:find("parry")) or iName:find("spear")
-                or iName:find("flask") or (iName:find("knife") and not iName:find("parry")) or iName:find("hammer") then
+                or iName:find("axe") or (iName:find("blade") and not iName:find("parry")) or iName:find("spear") then
                 return true
             end
         end
     end
 
-    -- 8. Known killer model names in workspace / character name
-    local cName = char.Name:lower()
-    local killerModelNames = { "butcher", "slasher", "jason", "abysswalker", "cure", "veil", "stalker", "hidden", "masked", "killer" }
-    for _, kName in ipairs(killerModelNames) do
-        if cName == kName or cName:find(kName) then
-            return true
+    -- 8. Known killer model names in workspace (ONLY for NPC models where plr is nil!)
+    if not plr then
+        local cName = char.Name:lower()
+        local killerModelNames = { "butcher", "slasher", "jason", "abysswalker", "cure", "veil", "stalker", "hidden", "masked", "killer" }
+        for _, kName in ipairs(killerModelNames) do
+            if cName == kName or cName:find(kName) then
+                return true
+            end
         end
     end
 
     -- 9. Killer specific child objects/scripts
-    if char:FindFirstChild("CancelVault") or char:FindFirstChild("Damageviz") or char:FindFirstChild("RedStain") then
+    if char:FindFirstChild("CancelVault") or char:FindFirstChild("Damageviz") or char:FindFirstChild("RedStain") or char:FindFirstChild("KillerHitbox") then
         return true
     end
 
@@ -2408,7 +2406,12 @@ local function isCharacterSurvivor(char, plr)
         return true
     end
 
-    -- Characteristic survivor interaction attributes
+    -- Any other living player character in workspace not in lobby/spectator and not the killer IS a survivor!
+    if plr and plr ~= player then
+        return true
+    end
+
+    -- Characteristic survivor interaction attributes for non-player models
     if char:GetAttribute("isRepairing") ~= nil 
         or char:GetAttribute("isHealing") ~= nil 
         or char:GetAttribute("isVaulting") ~= nil 
@@ -2419,11 +2422,6 @@ local function isCharacterSurvivor(char, plr)
         or char:GetAttribute("Sprinting") ~= nil 
         or isCharacterHooked(char) 
         or isCharacterKnocked(char) then
-        return true
-    end
-
-    -- Valid player character in workspace not on killer/lobby team
-    if plr and plr ~= player then
         return true
     end
 
@@ -2479,6 +2477,11 @@ end
 -- Whenever a round finishes or a player respawns, wipes all stale
 -- BillboardGuis and Highlights across the entire workspace to prevent
 -- old roles from lingering into subsequent games.
+
+local trackedSurvivors = {}
+local cleanKillerESP = nil
+local cleanSurvivorESP = nil
+local cleanGenESP = nil
 
 local function cleanAllESPs()
     if cleanKillerESP then pcall(cleanKillerESP) end
@@ -2758,7 +2761,7 @@ V_ESPSection:Toggle({
 -- ============================================================
 local survivorESPEnabled = false
 local survivorESPObjects = {}
-local trackedSurvivors = {}
+trackedSurvivors = {}
 
 cleanSurvivorESP = function()
     for _, item in ipairs(survivorESPObjects) do
@@ -2859,7 +2862,7 @@ V_ESPSection:Toggle({
                     local hum = c:FindFirstChildOfClass("Humanoid")
                     local hrp = c:FindFirstChild("HumanoidRootPart")
 
-                    if hum and hrp and hum.Health > 0 and myHrp and c:IsDescendantOf(workspace) and c ~= killerChar and not isCharacterKiller(c, item.plr) then
+                    if hum and hrp and hum.Health > 0 and myHrp and c:IsDescendantOf(workspace) and c ~= killerChar then
                         activeSet[c] = true
                         local dist = (myHrp.Position - hrp.Position).Magnitude
 
@@ -3260,7 +3263,38 @@ local function snapNeedleToGreatZone(needle, greatZone)
     end)
 end
 
--- Standalone skillcheck trigger execution (Full Multi-Dispatch: Mobile Touch, PC Key, Gamepad & Direct UI)
+-- Standalone camera and movement unlocker
+local function unlockCameraAndMovement()
+    pcall(function()
+        local myChar = player.Character
+        if myChar then
+            myChar:SetAttribute("overridelookscript", false)
+            myChar:SetAttribute("CamAnimLock", false)
+            myChar:SetAttribute("previewfreezelook", false)
+            myChar:SetAttribute("Immobile", false)
+            local hum = myChar:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.AutoRotate = true
+                if hum.WalkSpeed < 8 and not myChar:GetAttribute("Knocked") and not isCharacterKnocked(myChar) and not isCharacterHooked(myChar) then
+                    hum.WalkSpeed = 16
+                end
+            end
+            local hrp = myChar:FindFirstChild("HumanoidRootPart")
+            if hrp and CollectionService then
+                pcall(function() CollectionService:RemoveTag(hrp, "doing action") end)
+            end
+        end
+        local cam = workspace.CurrentCamera
+        if cam and cam.CameraType == Enum.CameraType.Scriptable then
+            local myChar = player.Character
+            if myChar and not myChar:GetAttribute("Knocked") and not isCharacterHooked(myChar) then
+                cam.CameraType = Enum.CameraType.Custom
+            end
+        end
+    end)
+end
+
+-- Standalone skillcheck trigger execution (Full Multi-Dispatch: PC Key, Gamepad & Direct UI)
 local function triggerPerfectHit(check, gui, needle, greatZone)
     task.spawn(function()
         pcall(function()
@@ -3271,13 +3305,6 @@ local function triggerPerfectHit(check, gui, needle, greatZone)
 
             local boundKeyName = player:GetAttribute("kb_skillcheck") or "Space"
             local boundKeyCode = Enum.KeyCode[boundKeyName] or Enum.KeyCode.Space
-            local center = Vector2.new(0, 0)
-            if check and check:IsA("GuiObject") then
-                center = check.AbsolutePosition + (check.AbsoluteSize / 2)
-            else
-                local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800, 600)
-                center = Vector2.new(vp.X / 2, vp.Y / 2)
-            end
 
             -- 1. PC Key dispatch (Bound key + Space fallback + Controller ButtonL1)
             pcall(function()
@@ -3288,29 +3315,19 @@ local function triggerPerfectHit(check, gui, needle, greatZone)
                 VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.ButtonL1, false, game)
             end)
 
-            -- 2. Native Executor keypress (PC & Delta Android)
+            -- 2. Native Executor keypress (PC & Mobile executors)
             if typeof(keypress) == "function" then
                 pcall(keypress, 0x20)
             end
 
-            -- 3. VirtualUser keyboard click (SAFE: No CaptureController, no unreleased mouse down)
+            -- 3. VirtualUser keyboard click (Safe: key down only)
             pcall(function()
                 local vu = game:GetService("VirtualUser")
                 vu:SetKeyDown("0x20")
             end)
 
-            -- 4. Clean Mobile Touch / Mouse Tap at center of Check
-            pcall(function()
-                VirtualInputManager:SendTouchEvent(0, 0, center.X, center.Y)
-                VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
-            end)
-
-            -- 5. Delta Mobile executor touch helpers (if supported)
-            if typeof(touchpress) == "function" then
-                pcall(touchpress, 0, center.X, center.Y)
-            end
-
-            -- 6. Direct UI Event and firesignal activation ONLY on Check and its Space button
+            -- 4. Direct UI Event and firesignal activation ONLY on Check and its Space button
+            -- NEVER send synthetic screen touch/mouse events into the viewport to avoid trapping camera & scroll!
             pcall(function()
                 if check then
                     if typeof(firesignal) == "function" then
@@ -3354,18 +3371,13 @@ local function triggerPerfectHit(check, gui, needle, greatZone)
                 vu:SetKeyUp("0x20")
             end)
 
-            pcall(function()
-                VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
-                VirtualInputManager:SendTouchEvent(0, 2, center.X, center.Y)
-                if typeof(touchrelease) == "function" then
-                    pcall(touchrelease, 0)
-                end
-            end)
+            -- Ensure camera and movement unlock immediately
+            unlockCameraAndMovement()
         end)
     end)
 end
 
--- Anti-Fail Safety Hook: blocks failure animation on client side
+-- Anti-Fail Safety Hook: blocks failure animation on client side & resets camera
 local function hookSkillCheckFailPrevention()
     if skillcheckHooked then return end
     skillcheckHooked = true
@@ -3375,14 +3387,26 @@ local function hookSkillCheckFailPrevention()
         if remotes.Generator and remotes.Generator:FindFirstChild("SkillCheckFailEvent") then
             pcall(function()
                 remotes.Generator.SkillCheckFailEvent.OnClientEvent:Connect(function()
-                    -- Intercept failure alert
+                    task.spawn(function()
+                        unlockCameraAndMovement()
+                        task.wait(0.25)
+                        unlockCameraAndMovement()
+                        task.wait(0.60)
+                        unlockCameraAndMovement()
+                    end)
                 end)
             end)
         end
         if remotes.Healing and remotes.Healing:FindFirstChild("SkillCheckFailEvent") then
             pcall(function()
                 remotes.Healing.SkillCheckFailEvent.OnClientEvent:Connect(function()
-                    -- Intercept healing failure alert
+                    task.spawn(function()
+                        unlockCameraAndMovement()
+                        task.wait(0.25)
+                        unlockCameraAndMovement()
+                        task.wait(0.60)
+                        unlockCameraAndMovement()
+                    end)
                 end)
             end)
         end
@@ -3432,8 +3456,8 @@ local function startSkillcheckWatcher()
 
         local gui, check = getActiveSkillCheckGui()
         if check and check.Visible and check.AbsoluteSize.X > 5 and check.AbsoluteSize.Y > 5 then
-            -- Safety: auto-reset if prompt remained open after 0.75s so back-to-back skill checks fire
-            if promptHandled and (os.clock() - promptHandledTick > 0.75) then
+            -- Safety: auto-reset if prompt remained open after 0.85s so back-to-back skill checks fire
+            if promptHandled and (os.clock() - promptHandledTick > 0.85) then
                 promptHandled = false
                 promptOpenTick = os.clock()
             end
@@ -3453,11 +3477,6 @@ local function startSkillcheckWatcher()
                     end
                 end
 
-                -- ALL-TIME GREAT ZONE: Lock needle to great zone angle continuously!
-                if needle and greatZone then
-                    snapNeedleToGreatZone(needle, greatZone)
-                end
-
                 local shouldHit = false
                 local elapsed = os.clock() - promptOpenTick
 
@@ -3466,21 +3485,24 @@ local function startSkillcheckWatcher()
                     local gRot = (greatZone:IsA("UIGradient") and greatZone.Rotation or greatZone.Rotation) % 360
                     local diff = math.abs((gRot - nRot + 180) % 360 - 180)
 
-                    -- Always continuously lock needle onto Great Zone angle!
-                    snapNeedleToGreatZone(needle, greatZone)
+                    -- When needle approaches the Great Zone (diff <= 25), snap needle directly onto Great Zone!
+                    if diff <= 25 then
+                        snapNeedleToGreatZone(needle, greatZone)
+                    end
 
-                    -- Natural reaction frame (>= 0.12s) to let GUI initialize, then hit immediately in Great Zone
-                    if elapsed >= 0.12 and (diff <= 25 or elapsed >= 0.22) then
+                    -- Natural reaction frame (>= 0.20s) and physically within Great Zone
+                    if elapsed >= 0.20 and diff <= 12 then
                         shouldHit = true
                     end
                 elseif needle then
-                    -- Moving needle fallback: wait until needle enters typical hit sector
-                    if elapsed >= 0.32 and elapsed <= 0.52 then
+                    local nRot = (needle:IsA("UIGradient") and needle.Rotation or needle.Rotation) % 360
+                    -- Moving needle fallback: wait until needle enters typical hit sector (140° - 200°)
+                    if elapsed >= 0.35 and nRot >= 140 and nRot <= 200 then
                         shouldHit = true
                     end
                 else
-                    -- Timed fallback: natural skillcheck window
-                    if elapsed >= 0.30 and elapsed <= 0.45 then
+                    -- Timed fallback: natural skillcheck hit sector window (0.55s - 0.70s)
+                    if elapsed >= 0.55 and elapsed <= 0.70 then
                         shouldHit = true
                     end
                 end
@@ -3493,6 +3515,9 @@ local function startSkillcheckWatcher()
                 end
             end
         else
+            if promptHandled or promptOpenTick > 0 then
+                unlockCameraAndMovement()
+            end
             promptOpenTick = 0
             promptHandled = false
             promptHandledTick = 0
@@ -3500,6 +3525,31 @@ local function startSkillcheckWatcher()
         end
     end)
 end
+
+-- Background Camera & Movement Supervisor
+task.spawn(function()
+    while true do
+        task.wait(0.3)
+        pcall(function()
+            local myChar = player.Character
+            if myChar and myChar:IsDescendantOf(workspace) then
+                local isRep = myChar:GetAttribute("isRepairing") == true
+                local isHeal = myChar:GetAttribute("isHealing") == true
+                local isVault = myChar:GetAttribute("isVaulting") == true
+                local isHook = isCharacterHooked(myChar)
+                local isKnock = isCharacterKnocked(myChar)
+
+                if not isRep and not isHeal and not isVault and not isHook and not isKnock then
+                    if myChar:GetAttribute("overridelookscript") == true 
+                        or myChar:GetAttribute("CamAnimLock") == true 
+                        or myChar:GetAttribute("previewfreezelook") == true then
+                        unlockCameraAndMovement()
+                    end
+                end
+            end
+        end)
+    end
+end)
 
 -- Tab Skillcheck UI Toggle Configuration
 V_ObjectiveSection:Toggle({
@@ -3517,6 +3567,7 @@ V_ObjectiveSection:Toggle({
                 pcall(function() skillcheckManualConn:Disconnect() end)
                 skillcheckManualConn = nil
             end
+            unlockCameraAndMovement()
             WindUI:Notify({ Title = "Skillcheck", Content = "Perfect Skillcheck disabled.", Duration = 2 })
             return
         end
