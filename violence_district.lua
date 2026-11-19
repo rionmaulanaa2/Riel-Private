@@ -691,7 +691,7 @@ end
 Players.PlayerAdded:Connect(setupPlayerListeners)
 
 -- ============================================================
--- 1. KILLER ESP
+-- 1. KILLER ESP (CROSS-MATCH PERSISTENT & REAL-TIME STATUS)
 -- ============================================================
 local killerESPEnabled = false
 local killerESPHighlight = nil
@@ -708,11 +708,18 @@ cleanKillerESP = function()
         killerESPBillboard = nil
     end
     lastTrackedKiller = nil
+    pcall(function()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj.Name == "KillerESPHighlight" or obj.Name == "KillerESPBillboard" then
+                pcall(function() obj:Destroy() end)
+            end
+        end
+    end)
 end
 
 V_ESPSection:Toggle({
     Title = "Killer ESP",
-    Description = "Highlights the Killer in Red with distance & status",
+    Description = "Highlights the Killer with real-time status & distance (Persists seamlessly across matches)",
     Default = false,
     Callback = function(v)
         killerESPEnabled = v
@@ -721,26 +728,37 @@ V_ESPSection:Toggle({
             WindUI:Notify({ Title = "Killer ESP", Content = "Killer ESP disabled.", Duration = 2 })
             return
         end
-
         WindUI:Notify({ Title = "Killer ESP", Content = "Killer ESP enabled!", Duration = 2 })
+    end
+})
 
-        task.spawn(function()
-            while killerESPEnabled do
-                local killer = getKiller()
+-- Permanent Autonomous Background Supervisor (Never crashes, automatically re-attaches across new matches)
+task.spawn(function()
+    while scriptRunning do
+        if killerESPEnabled then
+            pcall(function()
                 local myChar = player.Character
                 local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                local isLocalKiller = isPlayerKiller and isPlayerKiller()
 
+                -- If local player is Killer, Killer ESP is not needed
+                if isLocalKiller then
+                    cleanKillerESP()
+                    return
+                end
+
+                local killer = getKiller()
                 if killer and killer.Parent and killer:IsDescendantOf(workspace) and killer:FindFirstChild("HumanoidRootPart") and myHrp then
                     local kHrp = killer.HumanoidRootPart
                     local dist = (myHrp.Position - kHrp.Position).Magnitude
 
-                    -- Strip any accidental Survivor ESP that may have attached to killer
+                    -- Strip any stray Survivor ESP that may have attached to killer
                     local sHl = killer:FindFirstChild("SurvivorESPHighlight")
                     if sHl then pcall(function() sHl:Destroy() end) end
                     local sBb = kHrp:FindFirstChild("SurvivorESPBillboard")
                     if sBb then pcall(function() sBb:Destroy() end) end
 
-                    -- Rebind if killer instance changed (new round or different player)
+                    -- Rebind if killer instance changed (new match / new killer)
                     if lastTrackedKiller ~= killer then
                         cleanKillerESP()
                         lastTrackedKiller = killer
@@ -764,8 +782,8 @@ V_ESPSection:Toggle({
                         killerESPBillboard = Instance.new("BillboardGui")
                         killerESPBillboard.Name = "KillerESPBillboard"
                         killerESPBillboard.Adornee = kHrp
-                        killerESPBillboard.Size = UDim2.fromOffset(180, 50)
-                        killerESPBillboard.StudsOffset = Vector3.new(0, 3.5, 0)
+                        killerESPBillboard.Size = UDim2.fromOffset(190, 52)
+                        killerESPBillboard.StudsOffset = Vector3.new(0, 3.8, 0)
                         killerESPBillboard.AlwaysOnTop = true
 
                         local label = Instance.new("TextLabel")
@@ -784,25 +802,44 @@ V_ESPSection:Toggle({
 
                     if killerESPBillboard and killerESPBillboard:FindFirstChild("Label") then
                         local status = "STALKING"
-                        if killer:GetAttribute("isAttacking") then
-                            status = "ATTACKING"
-                        elseif killer:GetAttribute("isLunging") then
-                            status = "LUNGING"
-                        elseif killer:GetAttribute("isStunned") then
+                        local statusColor = Color3.fromRGB(255, 60, 60)
+
+                        if killer:GetAttribute("isStunned") == true or isKillerStunnedOrLocked(killer) then
                             status = "STUNNED"
+                            statusColor = Color3.fromRGB(255, 220, 0)
+                        elseif killer:GetAttribute("IsCarrying") == true or killer:GetAttribute("killercarry") ~= nil or killer:FindFirstChild("CarriedSurvivor") then
+                            status = "CARRYING SURVIVOR"
+                            statusColor = Color3.fromRGB(255, 140, 0)
+                        elseif killer:GetAttribute("isAttacking") == true then
+                            status = "ATTACKING"
+                            statusColor = Color3.fromRGB(255, 0, 0)
+                        elseif killer:GetAttribute("isLunging") == true then
+                            status = "LUNGING"
+                            statusColor = Color3.fromRGB(255, 0, 0)
+                        elseif killer:GetAttribute("Frenzy") == true then
+                            status = "FRENZY"
+                            statusColor = Color3.fromRGB(255, 50, 150)
+                        elseif killer:GetAttribute("Hidden") == true then
+                            status = "STEALTH"
+                            statusColor = Color3.fromRGB(150, 50, 255)
                         end
+
                         killerESPBillboard.Label.Text = string.format("👹 KILLER [%s]\n%.0f studs", status, dist)
+                        killerESPBillboard.Label.TextColor3 = statusColor
+                        if killerESPHighlight then
+                            killerESPHighlight.FillColor = statusColor
+                        end
                     end
                 else
                     cleanKillerESP()
                 end
-                task.wait(0.2)
-            end
+            end)
+        else
             cleanKillerESP()
-        end)
+        end
+        task.wait(0.2)
     end
-})
-
+end)
 -- ============================================================
 -- 2. GENERATOR ESP
 -- ============================================================
@@ -913,7 +950,7 @@ V_ESPSection:Toggle({
 })
 
 -- ============================================================
--- SURVIVOR DETECTOR (ESP)
+-- SURVIVOR DETECTOR (ESP) (CROSS-MATCH PERSISTENT & FULL STATUS)
 -- ============================================================
 local survivorESPEnabled = false
 local survivorESPObjects = {}
@@ -924,16 +961,27 @@ cleanSurvivorESP = function()
         pcall(function() item:Destroy() end)
     end
     survivorESPObjects = {}
-    for c, data in pairs(trackedSurvivors) do
-        if data.hl then pcall(function() data.hl:Destroy() end) end
-        if data.bb then pcall(function() data.bb:Destroy() end) end
+    if trackedSurvivors then
+        for c, data in pairs(trackedSurvivors) do
+            if data then
+                if data.hl then pcall(function() data.hl:Destroy() end) end
+                if data.bb then pcall(function() data.bb:Destroy() end) end
+            end
+        end
+        trackedSurvivors = {}
     end
-    trackedSurvivors = {}
+    pcall(function()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj.Name == "SurvivorESPHighlight" or obj.Name == "SurvivorESPBillboard" then
+                pcall(function() obj:Destroy() end)
+            end
+        end
+    end)
 end
 
 V_ESPSection:Toggle({
     Title = "Survivor Detector (ESP)",
-    Description = "Highlights all Survivors with health status, knocked/hooked state & distance",
+    Description = "Highlights all Survivors with health, knocked/hooked state & distance (Persists across matches)",
     Default = false,
     Callback = function(v)
         survivorESPEnabled = v
@@ -942,14 +990,18 @@ V_ESPSection:Toggle({
             WindUI:Notify({ Title = "Survivor ESP", Content = "Survivor Detector disabled.", Duration = 2 })
             return
         end
-
         WindUI:Notify({ Title = "Survivor ESP", Content = "Survivor Detector active!", Duration = 2 })
+    end
+})
 
-        task.spawn(function()
-            while survivorESPEnabled do
+-- Permanent Autonomous Background Supervisor (Never crashes, automatically re-attaches across new matches)
+task.spawn(function()
+    while scriptRunning do
+        if survivorESPEnabled then
+            pcall(function()
                 local myChar = player.Character
                 local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-                local isKiller = isPlayerKiller()
+                local isKiller = isPlayerKiller and isPlayerKiller()
                 local killerChar = isKiller and myChar or getKiller()
 
                 -- Force-clean any stray survivor ESP objects attached to the Killer
@@ -969,7 +1021,6 @@ V_ESPSection:Toggle({
                 for _, plr in ipairs(Players:GetPlayers()) do
                     if plr ~= player and plr.Character and plr.Character ~= myChar and plr.Character ~= killerChar then
                         if isKiller then
-                            -- When local player is Killer, every other alive player in workspace is an enemy survivor!
                             local valid, hum, hrp = isValidCharacter(plr.Character)
                             if valid and not isEntityInLobbyOrSpectating(plr.Character, plr) then
                                 table.insert(currentSurvivors, { char = plr.Character, name = plr.DisplayName or plr.Name, plr = plr })
@@ -982,7 +1033,7 @@ V_ESPSection:Toggle({
                     end
                 end
 
-                -- Also search potential survivor containers in workspace (Survivors, Players, Match, Characters)
+                -- Also search potential survivor containers in workspace
                 local searchContainers = { workspace }
                 for _, fName in ipairs({ "Survivors", "Players", "Characters", "Match", "Entities" }) do
                     local folder = workspace:FindFirstChild(fName)
@@ -1022,23 +1073,41 @@ V_ESPSection:Toggle({
                         activeSet[c] = true
                         local dist = (myHrp.Position - hrp.Position).Magnitude
 
-                        -- Determine status & color using unified functions
+                        -- Determine detailed status & color
                         local status = "HEALTHY"
                         local fillColor = Color3.fromRGB(50, 255, 50)
 
                         local isHooked = isCharacterHooked(c)
                         local isKnocked = isCharacterKnocked(c)
-                        local isCarried = c:GetAttribute("IsCarried") or c:GetAttribute("isCarried") or c:GetAttribute("BeingCarried")
+                        local isCarried = c:GetAttribute("IsCarrying") == true or c:GetAttribute("isCarried") == true or c:GetAttribute("BeingCarried") == true or c:FindFirstChild("Carried") ~= nil
+                        local isRep = c:GetAttribute("isRepairing") == true
+                        local isHeal = c:GetAttribute("isHealing") == true
+                        local isVault = c:GetAttribute("isVaulting") == true or c:GetAttribute("isSliding") == true
+                        local isUnhook = c:GetAttribute("isUnhooking") == true
 
                         if isHooked then
-                            status = "HOOKED"
+                            local phase = c:GetAttribute("HookPhase") or c:GetAttribute("HookCount")
+                            if phase then
+                                status = string.format("HOOKED (STAGE %s)", tostring(phase))
+                            else
+                                status = "HOOKED"
+                            end
                             fillColor = Color3.fromRGB(180, 50, 255)
                         elseif isCarried then
-                            status = "CARRIED"
+                            status = "BEING CARRIED"
                             fillColor = Color3.fromRGB(255, 120, 0)
                         elseif isKnocked then
                             status = "KNOCKED DOWN"
-                            fillColor = Color3.fromRGB(255, 60, 60)
+                            fillColor = Color3.fromRGB(255, 40, 40)
+                        elseif isRep then
+                            status = "REPAIRING GEN"
+                            fillColor = Color3.fromRGB(0, 200, 255)
+                        elseif isHeal then
+                            status = "HEALING"
+                            fillColor = Color3.fromRGB(0, 255, 180)
+                        elseif isUnhook then
+                            status = "UNHOOKING"
+                            fillColor = Color3.fromRGB(255, 200, 0)
                         elseif hum.Health < hum.MaxHealth then
                             status = string.format("INJURED (%.0f HP)", hum.Health)
                             fillColor = Color3.fromRGB(255, 200, 30)
@@ -1066,8 +1135,8 @@ V_ESPSection:Toggle({
                             local bb = Instance.new("BillboardGui")
                             bb.Name = "SurvivorESPBillboard"
                             bb.Adornee = hrp
-                            bb.Size = UDim2.fromOffset(160, 45)
-                            bb.StudsOffset = Vector3.new(0, 3.5, 0)
+                            bb.Size = UDim2.fromOffset(170, 48)
+                            bb.StudsOffset = Vector3.new(0, 3.8, 0)
                             bb.AlwaysOnTop = true
 
                             local lbl = Instance.new("TextLabel")
@@ -1101,14 +1170,13 @@ V_ESPSection:Toggle({
                         trackedSurvivors[c] = nil
                     end
                 end
-
-                task.wait(0.35)
-            end
+            end)
+        else
             cleanSurvivorESP()
-        end)
+        end
+        task.wait(0.25)
     end
-})
-
+end)
 -- ============================================================
 -- WALL & OBSTACLE REMOVER (KEEPS GENERATORS & FLOORS 100% INTACT)
 -- ============================================================
@@ -4516,35 +4584,40 @@ local function findNearestSurvivor()
 
     local bestTarget = nil
     local bestDist = math.huge
+    local candidateModels = {}
 
+    -- 1. Check Players
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= player and plr.Character and plr.Character ~= myChar then
-            local c = plr.Character
-            if isSurvivorValidTarget(c) then
-                local hrp = c:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    local dist = (myHrp.Position - hrp.Position).Magnitude
-                    if dist < bestDist then
-                        bestDist = dist
-                        bestTarget = c
-                    end
-                end
+            table.insert(candidateModels, plr.Character)
+        end
+    end
+
+    -- 2. Check workspace subfolders (Survivors, Characters, Match, Entities)
+    local searchContainers = { workspace }
+    for _, fName in ipairs({ "Survivors", "Players", "Characters", "Match", "Entities" }) do
+        local folder = workspace:FindFirstChild(fName)
+        if folder and (folder:IsA("Folder") or folder:IsA("Model")) then
+            table.insert(searchContainers, folder)
+        end
+    end
+
+    for _, container in ipairs(searchContainers) do
+        for _, obj in ipairs(container:GetChildren()) do
+            if obj:IsA("Model") and obj ~= myChar and not Players:GetPlayerFromCharacter(obj) then
+                table.insert(candidateModels, obj)
             end
         end
     end
 
-    if not bestTarget then
-        for _, obj in ipairs(workspace:GetChildren()) do
-            if obj:IsA("Model") and obj ~= myChar and obj:FindFirstChildOfClass("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
-                if isSurvivorValidTarget(obj) then
-                    local hrp = obj:FindFirstChild("HumanoidRootPart")
-                    if hrp then
-                        local dist = (myHrp.Position - hrp.Position).Magnitude
-                        if dist < bestDist then
-                            bestDist = dist
-                            bestTarget = obj
-                        end
-                    end
+    for _, c in ipairs(candidateModels) do
+        if isSurvivorValidTarget(c) then
+            local hrp = c:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local dist = (myHrp.Position - hrp.Position).Magnitude
+                if dist < bestDist then
+                    bestDist = dist
+                    bestTarget = c
                 end
             end
         end
@@ -4561,31 +4634,40 @@ local function findNearestDownedSurvivor()
 
     local bestDowned = nil
     local bestDist = math.huge
+    local candidateModels = {}
 
+    -- 1. Check Players
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= player and plr.Character and plr.Character ~= myChar then
-            local c = plr.Character
-            if isSurvivorDowned(c) then
-                local hrp = c:FindFirstChild("HumanoidRootPart")
-                local dist = (myHrp.Position - hrp.Position).Magnitude
-                if dist < bestDist then
-                    bestDist = dist
-                    bestDowned = c
-                end
+            table.insert(candidateModels, plr.Character)
+        end
+    end
+
+    -- 2. Check workspace subfolders
+    local searchContainers = { workspace }
+    for _, fName in ipairs({ "Survivors", "Players", "Characters", "Match", "Entities" }) do
+        local folder = workspace:FindFirstChild(fName)
+        if folder and (folder:IsA("Folder") or folder:IsA("Model")) then
+            table.insert(searchContainers, folder)
+        end
+    end
+
+    for _, container in ipairs(searchContainers) do
+        for _, obj in ipairs(container:GetChildren()) do
+            if obj:IsA("Model") and obj ~= myChar and not Players:GetPlayerFromCharacter(obj) then
+                table.insert(candidateModels, obj)
             end
         end
     end
 
-    if not bestDowned then
-        for _, obj in ipairs(workspace:GetChildren()) do
-            if obj:IsA("Model") and obj ~= myChar and obj:FindFirstChildOfClass("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
-                if isSurvivorDowned(obj) then
-                    local hrp = obj.HumanoidRootPart
-                    local dist = (myHrp.Position - hrp.Position).Magnitude
-                    if dist < bestDist then
-                        bestDist = dist
-                        bestDowned = obj
-                    end
+    for _, c in ipairs(candidateModels) do
+        if isSurvivorDowned(c) then
+            local hrp = c:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local dist = (myHrp.Position - hrp.Position).Magnitude
+                if dist < bestDist then
+                    bestDist = dist
+                    bestDowned = c
                 end
             end
         end
@@ -4688,17 +4770,17 @@ local function executeKillerHit(targetChar)
         local lookTarget = Vector3.new(sHrp.Position.X, myHrp.Position.Y, sHrp.Position.Z)
         myHrp.CFrame = CFrame.lookAt(myHrp.Position, lookTarget)
 
-        -- 2. Melee Range Step: If slightly far (> 3.2 studs), nudge into physical weapon reach
+        -- 2. Melee Range Step: ensure close physical proximity (< 2.5 studs)
         local curDist = (myHrp.Position - sHrp.Position).Magnitude
-        if curDist > 3.2 and curDist <= 6.0 then
-            local toSurvivor = (sHrp.Position - myHrp.Position).Unit
-            myHrp.CFrame = CFrame.lookAt(myHrp.Position + toSurvivor * 1.2, lookTarget)
+        if curDist > 2.5 then
+            local behindPos = sHrp.Position - (sHrp.CFrame.LookVector * 1.8) + Vector3.new(0, 0.2, 0)
+            myHrp.CFrame = CFrame.lookAt(behindPos, sHrp.Position)
         end
     end
 
     local remotes = getVDRemotes()
 
-    -- 3. Fire Official Violence District Attack Remotes
+    -- 3. Fire Official Violence District Attack Remotes with exact target parameters
     if remotes.Attacks then
         if remotes.Attacks:FindFirstChild("BasicAttack") then
             pcall(function() remotes.Attacks.BasicAttack:FireServer() end)
@@ -4706,37 +4788,32 @@ local function executeKillerHit(targetChar)
         if remotes.Attacks:FindFirstChild("Lunge") then
             pcall(function() remotes.Attacks.Lunge:FireServer() end)
         end
-        if remotes.Attacks:FindFirstChild("LungeDetect") and targetChar then
-            pcall(function() remotes.Attacks.LungeDetect:FireServer(targetChar) end)
-        end
-        if remotes.Attacks:FindFirstChild("AfterAttack") then
-            pcall(function() remotes.Attacks.AfterAttack:FireServer() end)
+        if remotes.Attacks:FindFirstChild("LungeDetect") and sHrp then
+            pcall(function() remotes.Attacks.LungeDetect:FireServer(sHrp, sHrp.Position) end)
+            pcall(function() remotes.Attacks.LungeDetect:FireServer(targetChar.PrimaryPart or sHrp, sHrp.Position) end)
         end
     end
 
-    -- 4. Fire Mobile Attack GUI Button (Slasher-mob / Slasher Controls.attack)
+    -- 4. Fire Mobile Attack GUI Button (Slasher-mob / Slasher / Killer Controls)
     pcall(function()
         local pg = player:FindFirstChild("PlayerGui")
         if pg then
-            for _, guiName in ipairs({"Slasher-mob", "Slasher", "Slasher-con", "MobileGui"}) do
+            for _, guiName in ipairs({"Slasher-mob", "Slasher", "Slasher-con", "Killer-mob", "KillerGui", "MobileGui"}) do
                 local g = pg:FindFirstChild(guiName)
                 if g then
                     for _, btn in ipairs(g:GetDescendants()) do
-                        if btn:IsA("GuiButton") and (btn.Name:lower() == "attack" or btn.Name:lower():find("slash") or btn.Name:lower():find("punch")) then
+                        if btn:IsA("GuiButton") and (btn.Name:lower() == "attack" or btn.Name:lower():find("slash") or btn.Name:lower():find("punch") or btn.Name:lower():find("hit")) then
                             if typeof(firesignal) == "function" then
-                                firesignal(btn.MouseButton1Down)
-                                firesignal(btn.Activated)
-                                firesignal(btn.MouseButton1Click)
+                                pcall(firesignal, btn.MouseButton1Down)
+                                pcall(firesignal, btn.Activated)
+                                pcall(firesignal, btn.MouseButton1Click)
                             end
+                            local bPos = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
+                            pcall(function()
+                                VirtualInputManager:SendTouchEvent(3, 0, bPos.X, bPos.Y)
+                                VirtualInputManager:SendTouchEvent(3, 2, bPos.X, bPos.Y)
+                            end)
                         end
-                    end
-                end
-            end
-            for _, btn in ipairs(pg:GetDescendants()) do
-                if btn:IsA("GuiButton") and (btn.Name:lower() == "attack" or btn.Name:lower():find("basicattack")) then
-                    if typeof(firesignal) == "function" then
-                        firesignal(btn.MouseButton1Down)
-                        firesignal(btn.Activated)
                     end
                 end
             end
@@ -4767,14 +4844,18 @@ local function executeKillerHit(targetChar)
         end
     end
 
-    -- 7. PC Mouse Click Fallback
+    -- 7. PC/Mobile Screen Center Click/Tap (Triggers viewport melee raycast in game)
     pcall(function()
-        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-        task.wait(0.02)
-        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+        local cam = workspace.CurrentCamera
+        local vp = cam and cam.ViewportSize or Vector2.new(800, 600)
+        local cx = vp.X / 2
+        local cy = vp.Y / 2
+        VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+        VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+        VirtualInputManager:SendTouchEvent(3, 0, cx, cy)
+        VirtualInputManager:SendTouchEvent(3, 2, cx, cy)
     end)
 end
-
 -- Continuous frame-locked Auto Aim for Killer (Works whether Auto Catch is ON or OFF)
 local function updateKillerAim()
     if killerAimConn then
@@ -5356,7 +5437,7 @@ V_KillerSection:Toggle({
 
 V_KillerSection:Toggle({
     Title = "Auto Catch Survivor",
-    Description = "Locks onto nearest active Survivor, pursues them, auto aims, strikes & hooks",
+    Description = "Instant teleport to unknocked survivors & hit, then auto-hook when all knocked down",
     Default = false,
     Callback = function(v)
         autoCatchEnabled = v
@@ -5365,7 +5446,6 @@ V_KillerSection:Toggle({
 
         if not v then
             currentKillerTarget = nil
-            -- Immediately shut off aim & hit if not independently enabled by the user
             if not standaloneAimUserSetting then
                 autoAimSurvivorEnabled = false
                 updateKillerAim()
@@ -5377,12 +5457,11 @@ V_KillerSection:Toggle({
             return
         end
 
-        -- Activate aim & hit during Auto Catch pursuit
         autoAimSurvivorEnabled = true
         autoHitSurvivorEnabled = true
         updateKillerAim()
 
-        WindUI:Notify({ Title = "Auto Catch", Content = "Hunting nearest Survivor (Instant Teleport, Hit & Hook)...", Duration = 2.5 })
+        WindUI:Notify({ Title = "Auto Catch", Content = "Hunting unknocked Survivors (Instant Teleport, Hit & Hook)...", Duration = 2.5 })
 
         local function checkCatchActive()
             return autoCatchEnabled and (catchSession == thisSession) and scriptRunning
@@ -5395,8 +5474,17 @@ V_KillerSection:Toggle({
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
                     if not myHrp then task.wait(0.3) return end
 
+                    -- Unfreeze if anchored or immobile
+                    if myHrp.Anchored then
+                        pcall(function() myHrp.Anchored = false end)
+                    end
+                    pcall(function()
+                        myChar:SetAttribute("Immobile", false)
+                        myChar:SetAttribute("AC_ServerAnchor", false)
+                    end)
+
                     -- ====================================================
-                    -- STAGE 3: CARRYING SURVIVOR -> TRANSPORT TO NEAREST HOOK & HANG
+                    -- CHECK 1: CARRYING SURVIVOR -> TRANSPORT TO HOOK & HANG
                     -- ====================================================
                     local isCarrying = myChar:GetAttribute("IsCarrying") == true
                         or myChar:FindFirstChild("CarriedSurvivor") ~= nil
@@ -5408,21 +5496,14 @@ V_KillerSection:Toggle({
                         local hookPart, hookDist = findNearestAvailableHook()
                         if hookPart then
                             local hookPos = hookPart.Position
-                            if killerTravelMode == "Instant Teleport" then
-                                local hookCF = CFrame.lookAt(hookPos + Vector3.new(0, 0.5, 2.5), hookPos)
-                                for attempt = 1, 3 do
-                                    myHrp.CFrame = hookCF
-                                    myHrp.AssemblyLinearVelocity = Vector3.zero
-                                    myHrp.AssemblyAngularVelocity = Vector3.zero
-                                    task.wait(0.02)
-                                end
-                            else
-                                travelToTargetLocation(hookPos, 5, function()
-                                    return checkCatchActive() and (myChar:GetAttribute("IsCarrying") == true)
-                                end)
+                            local hookCF = CFrame.lookAt(hookPos + Vector3.new(0, 0.5, 2.2), hookPos)
+                            for attempt = 1, 3 do
+                                myHrp.CFrame = hookCF
+                                myHrp.AssemblyLinearVelocity = Vector3.zero
+                                myHrp.AssemblyAngularVelocity = Vector3.zero
+                                task.wait(0.015)
                             end
 
-                            -- Execute Hook Commit
                             local reqId = HttpService:GenerateGUID(false)
                             local remotes = getVDRemotes()
                             if remotes.Carry then
@@ -5434,7 +5515,6 @@ V_KillerSection:Toggle({
                                 end
                             end
 
-                            -- Fire ProximityPrompts on hook
                             local hookModel = hookPart:FindFirstAncestorOfClass("Model") or hookPart.Parent
                             if hookModel then
                                 for _, prompt in ipairs(hookModel:GetDescendants()) do
@@ -5444,40 +5524,66 @@ V_KillerSection:Toggle({
                                 end
                             end
 
-                            -- Wait briefly for hook completion
-                            local hookWaitTimeout = tick() + 1.5
+                            local hookWaitTimeout = tick() + 1.2
                             while tick() < hookWaitTimeout and (myChar:GetAttribute("IsCarrying") == true) and checkCatchActive() do
                                 task.wait(0.05)
                             end
                             WindUI:Notify({ Title = "🪝 Survivor Hooked!", Content = "Target successfully hung on hook.", Duration = 2.0 })
-                        else
-                            task.wait(0.2)
                         end
                         return
                     end
 
                     -- ====================================================
-                    -- STAGE 2: DOWNED SURVIVOR EXISTS -> TRANSPORT & PICK UP
+                    -- PRIORITY 1: HUNT UNKNOCKED SURVIVORS (INSTANT TELEPORT & HIT)
                     -- ====================================================
-                    local downedSurvivor, downedDist = findNearestDownedSurvivor()
-                    if downedSurvivor and downedSurvivor:FindFirstChild("HumanoidRootPart") then
-                        local dHrp = downedSurvivor.HumanoidRootPart
-                        if killerTravelMode == "Instant Teleport" then
-                            local standPos = dHrp.Position + Vector3.new(0, 0.5, 2.0)
-                            local targetCF = CFrame.lookAt(standPos, dHrp.Position)
-                            for attempt = 1, 3 do
-                                myHrp.CFrame = targetCF
-                                myHrp.AssemblyLinearVelocity = Vector3.zero
-                                myHrp.AssemblyAngularVelocity = Vector3.zero
-                                task.wait(0.02)
-                            end
-                        else
-                            travelToTargetLocation(dHrp.Position, 5, function()
-                                return checkCatchActive() and not (myChar:GetAttribute("IsCarrying") == true) and isSurvivorDowned(downedSurvivor)
-                            end)
+                    -- We hunt and hit all active upright survivors FIRST!
+                    local unknockedSurvivor, dist = findNearestSurvivor()
+                    if unknockedSurvivor and unknockedSurvivor:FindFirstChild("HumanoidRootPart") then
+                        currentKillerTarget = unknockedSurvivor
+                        local sHrp = unknockedSurvivor.HumanoidRootPart
+
+                        -- Instant teleport directly behind unknocked survivor (2.0 studs behind, facing their back)
+                        local behindPos = sHrp.Position - (sHrp.CFrame.LookVector * 2.0) + Vector3.new(0, 0.2, 0)
+                        local behindCF = CFrame.lookAt(behindPos, sHrp.Position)
+                        for attempt = 1, 2 do
+                            myHrp.CFrame = behindCF
+                            myHrp.AssemblyLinearVelocity = Vector3.zero
+                            myHrp.AssemblyAngularVelocity = Vector3.zero
+                            task.wait(0.015)
                         end
 
-                        -- Fire pickup remotes and proximity prompts
+                        -- Lock camera at survivor
+                        local cam = workspace.CurrentCamera
+                        if cam then
+                            cam.CFrame = CFrame.lookAt(cam.CFrame.Position, sHrp.Position + Vector3.new(0, 1.2, 0))
+                        end
+
+                        -- Execute attack
+                        executeKillerHit(unknockedSurvivor)
+                        lastKillerHitTime = tick()
+                        return
+                    end
+
+                    -- ====================================================
+                    -- PRIORITY 2: ALL SURVIVORS KNOCKED DOWN -> AUTO HOOK THEM!
+                    -- ====================================================
+                    -- Only reached when there are ZERO unknocked survivors left!
+                    local downedSurvivor, downedDist = findNearestDownedSurvivor()
+                    if downedSurvivor and downedSurvivor:FindFirstChild("HumanoidRootPart") then
+                        currentKillerTarget = downedSurvivor
+                        local dHrp = downedSurvivor.HumanoidRootPart
+
+                        -- Instant teleport directly on top of the downed survivor
+                        local standPos = dHrp.Position + Vector3.new(0, 0.5, 1.8)
+                        local targetCF = CFrame.lookAt(standPos, dHrp.Position)
+                        for attempt = 1, 2 do
+                            myHrp.CFrame = targetCF
+                            myHrp.AssemblyLinearVelocity = Vector3.zero
+                            myHrp.AssemblyAngularVelocity = Vector3.zero
+                            task.wait(0.015)
+                        end
+
+                        -- Execute Carry / Pick Up
                         local remotes = getVDRemotes()
                         if remotes.Carry and remotes.Carry:FindFirstChild("CarrySurvivorEvent") then
                             pcall(function() remotes.Carry.CarrySurvivorEvent:FireServer(downedSurvivor) end)
@@ -5489,56 +5595,19 @@ V_KillerSection:Toggle({
                             end
                         end
 
-                        -- Wait briefly for pickup to register
-                        local pickupTimeout = tick() + 1.2
+                        local pickupTimeout = tick() + 1.0
                         while tick() < pickupTimeout and not (myChar:GetAttribute("IsCarrying") == true) and checkCatchActive() do
                             task.wait(0.05)
                         end
                         if myChar:GetAttribute("IsCarrying") == true then
-                            WindUI:Notify({ Title = "🎒 Survivor Picked Up", Content = "Carrying survivor to hook...", Duration = 1.5 })
+                            WindUI:Notify({ Title = "🎒 Survivor Picked Up", Content = "Transporting survivor to hook...", Duration = 1.5 })
                         end
                         return
                     end
 
-                    -- ====================================================
-                    -- STAGE 1: HUNT ACTIVE UPRIGHT SURVIVORS (TELEPORT INSTANT & HIT)
-                    -- ====================================================
-                    local survivor, dist = findNearestSurvivor()
-                    if not survivor or not survivor:FindFirstChild("HumanoidRootPart") then
-                        currentKillerTarget = nil
-                        task.wait(0.2)
-                        return
-                    end
-
-                    currentKillerTarget = survivor
-                    local sHrp = survivor.HumanoidRootPart
-
-                    -- Pursue / Teleport
-                    if killerTravelMode == "Instant Teleport" then
-                        local behindPos = sHrp.Position - (sHrp.CFrame.LookVector * 2.5) + Vector3.new(0, 0.2, 0)
-                        local behindCF = CFrame.lookAt(behindPos, sHrp.Position)
-                        for attempt = 1, 2 do
-                            myHrp.CFrame = behindCF
-                            myHrp.AssemblyLinearVelocity = Vector3.zero
-                            myHrp.AssemblyAngularVelocity = Vector3.zero
-                            task.wait(0.02)
-                        end
-                    else
-                        local curDist = (myHrp.Position - sHrp.Position).Magnitude
-                        if curDist > 2.2 then
-                            travelToSurvivor(survivor)
-                        end
-                    end
-
-                    -- Aim Camera directly at survivor
-                    local cam = workspace.CurrentCamera
-                    cam.CFrame = CFrame.lookAt(cam.CFrame.Position, sHrp.Position + Vector3.new(0, 1.2, 0))
-
-                    -- Strike survivor
-                    if (tick() - lastKillerHitTime) >= 0.25 then
-                        lastKillerHitTime = tick()
-                        executeKillerHit(survivor)
-                    end
+                    -- If no unknocked and no downed survivors (all hooked or escaped)
+                    currentKillerTarget = nil
+                    task.wait(0.2)
                 end)
                 if not ok then
                     task.wait(0.1)
