@@ -3200,9 +3200,16 @@ local skillcheckManualConn = nil
 local skillcheckHooked = false
 local lastSkillCheckSolvedTime = 0
 
--- Helper to check if a GuiObject is rendered and active
-local function isGuiElementTrulyVisible(elem)
+-- Helper to check if a GuiObject is truly active, rendered and visible on screen
+local function isGuiElementTrulyVisible(elem, rootGui)
     if not elem or not elem:IsA("GuiObject") or not elem.Visible then return false end
+    if elem.AbsoluteSize.X < 5 or elem.AbsoluteSize.Y < 5 then return false end
+    local cur = elem.Parent
+    while cur and cur ~= rootGui and cur:IsA("GuiObject") do
+        if not cur.Visible then return false end
+        if cur:IsA("CanvasGroup") and cur.GroupTransparency >= 0.95 then return false end
+        cur = cur.Parent
+    end
     return true
 end
 
@@ -3226,7 +3233,7 @@ local function getActiveSkillCheckGui()
         if gui and (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) then
             if not gui:IsA("ScreenGui") or gui.Enabled then
                 local check = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Wheel", true) or gui:FindFirstChild("SkillCheck", true)
-                if check and check:IsA("GuiObject") and check.Visible and check.AbsoluteSize.X > 5 and check.AbsoluteSize.Y > 5 then
+                if check and isGuiElementTrulyVisible(check, gui) then
                     return gui, check
                 end
             end
@@ -3239,7 +3246,7 @@ local function getActiveSkillCheckGui()
             local gName = gui.Name:lower()
             if (gName:find("skill") or gName:find("qte")) and not gName:find("mob") and not gName:find("hud") and not gName:find("control") and not gName:find("progress") then
                 local check = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Wheel", true) or gui:FindFirstChild("SkillCheck", true)
-                if check and check:IsA("GuiObject") and check.Visible and check.AbsoluteSize.X > 5 and check.AbsoluteSize.Y > 5 then
+                if check and isGuiElementTrulyVisible(check, gui) then
                     return gui, check
                 end
             end
@@ -3256,68 +3263,85 @@ local function evaluateSkillCheckFrame(check, lastRotTable)
     local needle = nil
     local greatZone = nil
     local goodZone = nil
-    local candidates = {}
+    local rotatingCandidates = {}
+    local staticRotatedElements = {}
+    local allCandidates = {}
 
-    -- Scan both GuiObject and UIGradient instances
     for _, child in ipairs(check:GetDescendants()) do
         if child:IsA("GuiObject") or child:IsA("UIGradient") then
             local low = child.Name:lower()
-            if low:find("needle") or low:find("pointer") or low:find("indicator") or low:find("arrow") or low:find("cursor") or low:find("rotator") or low:find("spinner") then
+            local curRot = (child:IsA("UIGradient") and child.Rotation or child.Rotation) % 360
+            table.insert(allCandidates, child)
+
+            if low:find("needle") or low:find("pointer") or low:find("indicator") or low:find("arrow") or low:find("cursor") or low:find("rotator") or low:find("spinner") or low:find("hand") or low:find("bar") or low:find("line") then
                 needle = child
-            elseif low:find("great") or low:find("perfect") or low:find("sweet") or low:find("bonus") or low:find("white") then
+            elseif low:find("great") or low:find("perfect") or low:find("bonus") or low:find("sweet") or low:find("white") or low:find("zone2") then
                 greatZone = child
             elseif low:find("good") or low:find("success") or low:find("target") or low:find("zone") or low:find("hit") or low:find("area") or low:find("slice") or low:find("arc") then
                 goodZone = child
             end
-            table.insert(candidates, child)
-        end
-    end
 
-    -- Dynamic needle detection: track which element has highest frame-to-frame angular velocity
-    if lastRotTable then
-        local maxDelta = 0
-        local mostActiveElem = nil
-        for _, elem in ipairs(candidates) do
-            local curRot = (elem:IsA("UIGradient") and elem.Rotation or elem.Rotation) % 360
-            local prevRot = lastRotTable[elem]
-            if prevRot ~= nil then
-                local delta = math.abs((curRot - prevRot + 180) % 360 - 180)
-                if delta > 0.05 and delta > maxDelta then
-                    maxDelta = delta
-                    mostActiveElem = elem
+            if lastRotTable then
+                local prevRot = lastRotTable[child]
+                if prevRot ~= nil then
+                    local delta = math.abs((curRot - prevRot + 180) % 360 - 180)
+                    if delta > 0.05 then
+                        table.insert(rotatingCandidates, { elem = child, delta = delta })
+                    end
                 end
             end
-        end
-        if mostActiveElem then
-            needle = mostActiveElem
+
+            if curRot ~= 0 and child.Name ~= "Space" and child.Name ~= "key" and not low:find("bg") and not low:find("back") and not low:find("border") then
+                table.insert(staticRotatedElements, { elem = child, rot = curRot })
+            end
         end
     end
 
-    -- Resolve target zone: prioritize greatZone > goodZone > any rotated static child (target arc)
-    local targetZone = greatZone or goodZone
-    if not targetZone then
-        for _, elem in ipairs(candidates) do
-            if elem ~= needle and elem.Name ~= "Space" and elem.Name ~= "key" and not elem.Name:lower():find("bg") and not elem.Name:lower():find("back") then
-                local rot = (elem:IsA("UIGradient") and elem.Rotation or elem.Rotation) % 360
-                if rot ~= 0 then
-                    targetZone = elem
+    if not needle and #rotatingCandidates > 0 then
+        table.sort(rotatingCandidates, function(a, b) return a.delta > b.delta end)
+        needle = rotatingCandidates[1].elem
+    end
+
+    if not needle then
+        for _, child in ipairs(allCandidates) do
+            if child:IsA("GuiObject") and child.Name ~= "Space" and child.Name ~= "key" then
+                local sz = child.AbsoluteSize
+                if (sz.X > 0 and sz.Y > 0) and (sz.X / sz.Y > 4 or sz.Y / sz.X > 4) then
+                    needle = child
                     break
                 end
             end
         end
     end
 
-    return needle, targetZone, greatZone, candidates
+    local targetZone = greatZone or goodZone
+    if not targetZone and #staticRotatedElements > 0 then
+        for _, item in ipairs(staticRotatedElements) do
+            if item.elem ~= needle and not item.elem:IsDescendantOf(needle) then
+                targetZone = item.elem
+                break
+            end
+        end
+    end
+
+    return needle, targetZone, greatZone, allCandidates
+end
+
+-- Resolve target rotation angle for guaranteed Great / Perfect hit
+local function resolveTargetRotation(targetZone, greatZone)
+    if greatZone then
+        return (greatZone:IsA("UIGradient") and greatZone.Rotation or greatZone.Rotation) % 360
+    end
+    if targetZone then
+        return (targetZone:IsA("UIGradient") and targetZone.Rotation or targetZone.Rotation) % 360
+    end
+    return 130
 end
 
 -- Snap needle directly onto Great Zone (Turns skillcheck into an All-Time Great Zone!)
-local function snapNeedleToGreatZone(needle, targetZone)
+local function snapNeedleToGreatZone(needle, targetRot)
     if not needle then return end
     pcall(function()
-        local targetRot = 120
-        if targetZone then
-            targetRot = (targetZone:IsA("UIGradient") and targetZone.Rotation or targetZone.Rotation) % 360
-        end
         if needle:IsA("UIGradient") then
             needle.Rotation = targetRot
         else
@@ -3325,6 +3349,11 @@ local function snapNeedleToGreatZone(needle, targetZone)
             local grad = needle:FindFirstChildOfClass("UIGradient")
             if grad then
                 grad.Rotation = targetRot
+            end
+            for _, ch in ipairs(needle:GetChildren()) do
+                if ch:IsA("GuiObject") or ch:IsA("UIGradient") then
+                    pcall(function() ch.Rotation = targetRot end)
+                end
             end
         end
     end)
@@ -3372,18 +3401,12 @@ local function unlockCameraAndMovement()
 end
 
 -- Standalone skillcheck trigger execution (Full Multi-Dispatch: PC Key, Gamepad, Touch Tap, CAS & Direct UI)
-local function triggerPerfectHit(check, gui, needle, targetZone)
+local function triggerPerfectHit(check, gui, needle, targetRot)
     task.spawn(function()
         pcall(function()
-            -- 1. Determine target rotation for Great Zone
-            local targetRot = 120
-            if targetZone then
-                targetRot = (targetZone:IsA("UIGradient") and targetZone.Rotation or targetZone.Rotation) % 360
-            end
-
-            -- Snap & clamp needle directly onto Great Zone before dispatch
+            -- Snap needle directly onto Great Zone before dispatch
             if needle then
-                snapNeedleToGreatZone(needle, targetZone)
+                snapNeedleToGreatZone(needle, targetRot)
             end
 
             local boundKeyName = player:GetAttribute("kb_skillcheck") or "Space"
@@ -3436,35 +3459,47 @@ local function triggerPerfectHit(check, gui, needle, targetZone)
             })
 
             -- ============================================================
-            -- CHANNEL 1: PC KEYBOARD & GAMEPAD DISPATCH
+            -- CHANNEL 1: PC KEYBOARD & GAMEPAD DISPATCH (Instant down & up in same frame)
             -- ============================================================
             pcall(function()
                 VirtualInputManager:SendKeyEvent(true, boundKeyCode, false, game)
+                VirtualInputManager:SendKeyEvent(false, boundKeyCode, false, game)
                 if boundKeyCode ~= Enum.KeyCode.Space then
                     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
                 end
                 VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.ButtonL1, false, game)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.ButtonL1, false, game)
             end)
 
-            if typeof(keypress) == "function" then
-                pcall(keypress, 0x20)
+            if typeof(keypress) == "function" and typeof(keyrelease) == "function" then
+                pcall(function()
+                    keypress(0x20)
+                    keyrelease(0x20)
+                end)
             end
 
             pcall(function()
                 local vu = game:GetService("VirtualUser")
                 vu:SetKeyDown("0x20")
+                vu:SetKeyUp("0x20")
             end)
 
             -- ============================================================
-            -- CHANNEL 2: MOBILE TOUCH DISPATCH (Touch ID 3 - Immune to Camera & Thumbstick conflicts)
+            -- CHANNEL 2: MOBILE TOUCH DISPATCH (Instant Release in SAME frame - Zero Camera Stolen)
             -- ============================================================
             if cx > 0 and cy > 0 then
                 pcall(function()
                     VirtualInputManager:SendTouchEvent(3, 0, cx, cy)
+                    VirtualInputManager:SendTouchEvent(3, 2, cx, cy)
                     VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
                 end)
-                if typeof(touchpress) == "function" then
-                    pcall(touchpress, 3, cx, cy)
+                if typeof(touchpress) == "function" and typeof(touchrelease) == "function" then
+                    pcall(function()
+                        touchpress(3, cx, cy)
+                        touchrelease(3)
+                    end)
                 end
             end
 
@@ -3511,7 +3546,6 @@ local function triggerPerfectHit(check, gui, needle, targetZone)
                             if target:IsA("GuiButton") then
                                 pcall(firesignal, target.Activated)
                                 pcall(firesignal, target.MouseButton1Click)
-                                pcall(firesignal, target.MouseButton1Down)
                             end
                         end
                         if typeof(getconnections) == "function" then
@@ -3545,47 +3579,17 @@ local function triggerPerfectHit(check, gui, needle, targetZone)
                 pcall(function() cas:CallFunction("action", Enum.UserInputState.Begin, mockKey) end)
             end)
 
-            -- Maintain needle lock for 0.04s across next 2-3 frames to defeat any script race condition
-            for i = 1, 3 do
-                task.wait(0.012)
+            -- Maintain needle lock for 0.03s across next 2 frames to defeat any script race condition
+            for i = 1, 2 do
+                task.wait(0.015)
                 if needle then
-                    snapNeedleToGreatZone(needle, targetZone)
+                    snapNeedleToGreatZone(needle, targetRot)
                 end
             end
 
-            -- ============================================================
-            -- CLEAN INPUT RELEASE (Guarantees zero stuck keys or frozen camera)
-            -- ============================================================
-            pcall(function()
-                VirtualInputManager:SendKeyEvent(false, boundKeyCode, false, game)
-                if boundKeyCode ~= Enum.KeyCode.Space then
-                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-                end
-                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.ButtonL1, false, game)
-            end)
-
-            if typeof(keyrelease) == "function" then
-                pcall(keyrelease, 0x20)
-            end
-
-            pcall(function()
-                local vu = game:GetService("VirtualUser")
-                vu:SetKeyUp("0x20")
-            end)
-
-            if cx > 0 and cy > 0 then
-                pcall(function()
-                    VirtualInputManager:SendTouchEvent(3, 2, cx, cy)
-                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
-                end)
-                if typeof(touchrelease) == "function" then
-                    pcall(touchrelease, 3)
-                end
-            end
-
-            -- Safe camera unlock
+            -- Clean camera and movement unlock
             unlockCameraAndMovement()
-            task.delay(0.08, unlockCameraAndMovement)
+            task.delay(0.06, unlockCameraAndMovement)
         end)
     end)
 end
@@ -3659,22 +3663,23 @@ local function startSkillcheckWatcher()
         if isTriggerInput then
             local gui, check = getActiveSkillCheckGui()
             if check and check.Visible then
-                local needle, targetZone = evaluateSkillCheckFrame(check, rotHistory)
+                local needle, targetZone, greatZone = evaluateSkillCheckFrame(check, rotHistory)
+                local targetRot = resolveTargetRotation(targetZone, greatZone)
                 if needle then
-                    snapNeedleToGreatZone(needle, targetZone)
+                    snapNeedleToGreatZone(needle, targetRot)
                 end
             end
         end
     end)
 
-    -- RenderStepped 60FPS+ high-precision autonomous watcher & needle lock
+    -- RenderStepped 60FPS+ high-precision autonomous watcher & instant Great execution
     skillcheckConn = RunService.RenderStepped:Connect(function()
         if not perfectSkillcheckEnabled then return end
 
         local gui, check = getActiveSkillCheckGui()
         if check and check.Visible and check.AbsoluteSize.X > 5 and check.AbsoluteSize.Y > 5 then
-            -- Safety: auto-reset if prompt remained open after 0.95s so back-to-back skill checks fire
-            if promptHandled and (os.clock() - promptHandledTick > 0.95) then
+            -- Safety: auto-reset if prompt remained open after 0.75s so subsequent skill checks re-trigger
+            if promptHandled and (os.clock() - promptHandledTick > 0.75) then
                 promptHandled = false
                 promptOpenTick = os.clock()
             end
@@ -3694,46 +3699,31 @@ local function startSkillcheckWatcher()
                     end
                 end
 
-                local shouldHit = false
+                local targetRot = resolveTargetRotation(targetZone, greatZone)
                 local elapsed = os.clock() - promptOpenTick
 
-                if needle and targetZone then
-                    local nRot = (needle:IsA("UIGradient") and needle.Rotation or needle.Rotation) % 360
-                    local tRot = (targetZone:IsA("UIGradient") and targetZone.Rotation or targetZone.Rotation) % 360
-
-                    -- Forward clockwise angular distance from current needle to target zone
-                    local distToZone = (tRot - nRot + 360) % 360
-
-                    -- When needle approaches the target zone (within 16° or up to 6° past):
-                    -- At 360°/s (6°/frame at 60 FPS), distToZone <= 16 means needle is entering or in the Great Zone!
-                    if (distToZone <= 16 or distToZone >= 354) and elapsed >= 0.18 then
-                        snapNeedleToGreatZone(needle, targetZone)
+                -- Automatic Execution Rule:
+                -- Wait 0.08s (5-6 frames) after prompt opens so game script has bound all input listeners.
+                -- Then instantly snap needle to Great Zone and execute perfect hit!
+                -- If needle is already within 15° of targetRot, hit immediately without waiting.
+                local shouldHit = false
+                if needle then
+                    local curRot = (needle:IsA("UIGradient") and needle.Rotation or needle.Rotation) % 360
+                    local distToZone = (targetRot - curRot + 360) % 360
+                    if distToZone <= 15 or distToZone >= 355 then
                         shouldHit = true
-                    elseif elapsed >= 0.72 then
-                        -- Timeout safety: if needle was moving slowly or zone missed, hit before prompt expires
-                        snapNeedleToGreatZone(needle, targetZone)
+                    elseif elapsed >= 0.08 then
                         shouldHit = true
                     end
-                elseif needle then
-                    -- Needle found, target zone angle could not be parsed:
-                    -- In Violence District, success zones are placed in the 120° - 200° sector
-                    local nRot = (needle:IsA("UIGradient") and needle.Rotation or needle.Rotation) % 360
-                    if (nRot >= 120 and nRot <= 180 and elapsed >= 0.28) or elapsed >= 0.42 then
-                        snapNeedleToGreatZone(needle, nil)
-                        shouldHit = true
-                    end
-                else
-                    -- Timed fallback: natural skillcheck sweet spot in Violence District (0.34s - 0.46s)
-                    if elapsed >= 0.35 then
-                        shouldHit = true
-                    end
+                elseif elapsed >= 0.08 then
+                    shouldHit = true
                 end
 
-                if shouldHit and (tick() - lastSkillCheckSolvedTime > 0.30) then
+                if shouldHit and (tick() - lastSkillCheckSolvedTime > 0.25) then
                     promptHandled = true
                     promptHandledTick = os.clock()
                     lastSkillCheckSolvedTime = tick()
-                    triggerPerfectHit(check, gui, needle, targetZone)
+                    triggerPerfectHit(check, gui, needle, targetRot)
                 end
             end
         else
@@ -3788,9 +3778,9 @@ task.spawn(function()
 end)
 
 -- Tab Skillcheck UI Toggle Configuration
-V_ObjectiveSection:Toggle({
+local perfectSkillcheckToggle = Tab:Toggle({
     Title = "Perfect Skillcheck (All-Time Great)",
-    Description = "100% Perfect/Great skillchecks via needle-to-zone locking & auto multi-dispatch (Universal PC & Mobile)",
+    Description = "100% Autonomous Perfect/Great skillchecks: instant Great-zone snap & multi-channel input dispatch.",
     Default = perfectSkillcheckEnabled,
     Callback = function(v)
         perfectSkillcheckEnabled = v
@@ -3818,7 +3808,6 @@ V_ObjectiveSection:Toggle({
 if perfectSkillcheckEnabled then
     startSkillcheckWatcher()
 end
-
 -- ============================================================
 -- 4. AUTO REPAIR GENERATOR (AUTO SEARCH, TRAVEL & ACCURATE FIX DETECTION)
 -- ============================================================
