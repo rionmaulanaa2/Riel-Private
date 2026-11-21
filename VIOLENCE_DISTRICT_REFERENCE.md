@@ -36,7 +36,7 @@ All game communication takes place through designated remote folders under `Repl
 | `BreakGenMarker` | RemoteEvent | Server $\to$ Client | `(genModel)` | Replicates gen kick marker visually. |
 | `BreakGenCommit` | RemoteEvent | Server $\to$ Client | `(requestId)` | Confirms killer kick interaction server-side. |
 | `BreakGenReject` | RemoteEvent | Server $\to$ Client | `(requestId)` | Rejects killer kick if gen is blocked or completed. |
-| `SkillCheckResultEvent` | RemoteEvent | Client $\to$ Server | `(result: string ("success" / "fail"), score: number (1 for Great, -10 for fail), genModel: Model, genPoint: BasePart, requestId: string, char: Model (player.Character))` | Reports skillcheck result directly to the server. Server awards +1% progression bonus on Great success. |
+| `SkillCheckResultEvent` | RemoteEvent | Client $\to$ Server | `(result: string ("success" / "fail"), score: number (1 for default Great +1%, -10 for fail, or adjustable 10/100 for accelerated progression), genModel: Model, genPoint: BasePart, requestId: string, char: Model (player.Character))` | Reports skillcheck result directly to the server. Server awards generator progression based on score. |
 | `SkillCheckFailEvent` | RemoteEvent | Server $\to$ Client | `(animationId: string, genPoint: BasePart)` | Fired to survivor when a skillcheck fails. Triggers explosion VFX, regression, locks walkspeed, and forces failure animation. |
 | `Escapetime` | RemoteEvent | Server $\to$ Client | `(timeRemaining: number)` | Updates endgame collapse timer. |
 
