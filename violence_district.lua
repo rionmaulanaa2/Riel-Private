@@ -1347,13 +1347,17 @@ do
 end
 
 -- ============================================================
--- 3. PERFECT SKILLCHECK (ALL-TIME GREAT ZONE & UNIVERSAL MULTI-DISPATCH ENGINE)
+-- 3. AUTOMATIC PERFECT SKILL CHECK & NO SKILL CHECK ENGINE
 -- ============================================================
 local perfectSkillcheckEnabled = true
 autoSkillCheckEnabled = true
+local noSkillCheckEnabled = false
+local originalCheckPosition = nil
+local lastHiddenCheck = nil
 local skillcheckConn = nil
 local skillcheckManualConn = nil
 local skillcheckHooked = false
+local skillcheckHiderHooked = false
 local lastSkillCheckSolvedTime = 0
 
 -- Helper to check if a GuiObject is truly active, rendered and visible on screen
@@ -1437,6 +1441,14 @@ local function evaluateSkillCheckFrame(check, lastRotTable)
                 goodZone = child
             end
 
+            -- Detect white-colored sector (Great Zone in Violence District / DbD)
+            if not greatZone and child:IsA("GuiObject") and curRot ~= 0 then
+                local col = child:IsA("ImageLabel") and child.ImageColor3 or child.BackgroundColor3
+                if col.R > 0.88 and col.G > 0.88 and col.B > 0.88 then
+                    greatZone = child
+                end
+            end
+
             if lastRotTable then
                 local prevRot = lastRotTable[child]
                 if prevRot ~= nil then
@@ -1484,12 +1496,26 @@ local function evaluateSkillCheckFrame(check, lastRotTable)
 end
 
 -- Resolve target rotation angle for guaranteed Great / Perfect hit
-local function resolveTargetRotation(targetZone, greatZone)
+local function resolveTargetRotation(targetZone, greatZone, check)
     if greatZone then
-        return (greatZone:IsA("UIGradient") and greatZone.Rotation or greatZone.Rotation) % 360
+        local r = (greatZone:IsA("UIGradient") and greatZone.Rotation or greatZone.Rotation) % 360
+        if r ~= 0 then return r end
     end
     if targetZone then
-        return (targetZone:IsA("UIGradient") and targetZone.Rotation or targetZone.Rotation) % 360
+        local r = (targetZone:IsA("UIGradient") and targetZone.Rotation or targetZone.Rotation) % 360
+        if r ~= 0 then return r end
+    end
+    if check then
+        local targetVal = check:GetAttribute("TargetAngle") or check:GetAttribute("SuccessAngle") or check:GetAttribute("GreatAngle")
+        if typeof(targetVal) == "number" then return targetVal % 360 end
+        for _, ch in ipairs(check:GetChildren()) do
+            if ch:IsA("NumberValue") or ch:IsA("IntValue") then
+                local low = ch.Name:lower()
+                if low:find("target") or low:find("angle") or low:find("great") or low:find("rot") then
+                    return ch.Value % 360
+                end
+            end
+        end
     end
     return 130
 end
@@ -1790,6 +1816,55 @@ local function hookSkillCheckFailPrevention()
     end)
 end
 
+-- Instant Popup Suppressor for "No Skill Check"
+local function hookSkillCheckHider()
+    if skillcheckHiderHooked then return end
+    skillcheckHiderHooked = true
+
+    pcall(function()
+        local pg = player:FindFirstChild("PlayerGui")
+        if not pg then return end
+
+        local function watchGui(gui)
+            if not gui or not (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) then return end
+            local gName = gui.Name:lower()
+            if gName:find("skill") or gName:find("qte") then
+                local check = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Wheel", true) or gui:FindFirstChild("SkillCheck", true)
+                if check and check:IsA("GuiObject") then
+                    check:GetPropertyChangedSignal("Visible"):Connect(function()
+                        if noSkillCheckEnabled and check.Visible then
+                            if not originalCheckPosition then
+                                originalCheckPosition = check.Position
+                                lastHiddenCheck = check
+                            end
+                            check.Position = UDim2.fromScale(-99, -99)
+                        end
+                    end)
+                end
+                if gui:IsA("ScreenGui") then
+                    gui:GetPropertyChangedSignal("Enabled"):Connect(function()
+                        if noSkillCheckEnabled and gui.Enabled then
+                            local c = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Wheel", true) or gui:FindFirstChild("SkillCheck", true)
+                            if c and c:IsA("GuiObject") then
+                                if not originalCheckPosition then
+                                    originalCheckPosition = c.Position
+                                    lastHiddenCheck = c
+                                end
+                                c.Position = UDim2.fromScale(-99, -99)
+                            end
+                        end
+                    end)
+                end
+            end
+        end
+
+        for _, g in ipairs(pg:GetChildren()) do
+            watchGui(g)
+        end
+        pg.ChildAdded:Connect(watchGui)
+    end)
+end
+
 local function startSkillcheckWatcher()
     if skillcheckConn then
         pcall(function() skillcheckConn:Disconnect() end)
@@ -1801,6 +1876,7 @@ local function startSkillcheckWatcher()
     end
 
     hookSkillCheckFailPrevention()
+    hookSkillCheckHider()
 
     local promptOpenTick = 0
     local promptHandled = false
@@ -1808,9 +1884,8 @@ local function startSkillcheckWatcher()
     local rotHistory = {}
 
     -- Manual Tap / Key Hook: If user taps/presses manually at ANY time, snap needle to Great Zone instantly!
-    -- This guarantees that ANY user interaction is 100% Great, fulfilling "All-Time Great Zone"
     skillcheckManualConn = UserInputService.InputBegan:Connect(function(input, processed)
-        if not perfectSkillcheckEnabled then return end
+        if not perfectSkillcheckEnabled and not noSkillCheckEnabled then return end
         local isTriggerInput = (input.UserInputType == Enum.UserInputType.Keyboard and (input.KeyCode == Enum.KeyCode.Space or input.KeyCode == (Enum.KeyCode[player:GetAttribute("kb_skillcheck") or "Space"] or Enum.KeyCode.Space)))
             or (input.UserInputType == Enum.UserInputType.Touch)
             or (input.UserInputType == Enum.UserInputType.MouseButton1)
@@ -1820,7 +1895,7 @@ local function startSkillcheckWatcher()
             local gui, check = getActiveSkillCheckGui()
             if check and check.Visible then
                 local needle, targetZone, greatZone = evaluateSkillCheckFrame(check, rotHistory)
-                local targetRot = resolveTargetRotation(targetZone, greatZone)
+                local targetRot = resolveTargetRotation(targetZone, greatZone, check)
                 if needle then
                     snapNeedleToGreatZone(needle, targetRot)
                 end
@@ -1830,10 +1905,29 @@ local function startSkillcheckWatcher()
 
     -- RenderStepped 60FPS+ high-precision autonomous watcher & instant Great execution
     skillcheckConn = RunService.RenderStepped:Connect(function()
-        if not perfectSkillcheckEnabled then return end
+        if not perfectSkillcheckEnabled and not noSkillCheckEnabled then return end
 
         local gui, check = getActiveSkillCheckGui()
         if check and check.Visible and check.AbsoluteSize.X > 5 and check.AbsoluteSize.Y > 5 then
+            -- If No Skill Check is enabled, instantly suppress popup visually from screen
+            if noSkillCheckEnabled and check:IsA("GuiObject") then
+                if not originalCheckPosition then
+                    originalCheckPosition = check.Position
+                    lastHiddenCheck = check
+                end
+                check.Position = UDim2.fromScale(-99, -99)
+                pcall(function()
+                    if gui then
+                        for _, s in ipairs(gui:GetDescendants()) do
+                            if s:IsA("Sound") and s.Playing then
+                                s.Volume = 0
+                                s:Stop()
+                            end
+                        end
+                    end
+                end)
+            end
+
             -- Safety: auto-reset if prompt remained open after 0.75s so subsequent skill checks re-trigger
             if promptHandled and (os.clock() - promptHandledTick > 0.75) then
                 promptHandled = false
@@ -1855,27 +1949,28 @@ local function startSkillcheckWatcher()
                     end
                 end
 
-                local targetRot = resolveTargetRotation(targetZone, greatZone)
+                local targetRot = resolveTargetRotation(targetZone, greatZone, check)
                 local elapsed = os.clock() - promptOpenTick
 
                 -- Automatic Execution Rule:
-                -- Wait 0.08s (5-6 frames) after prompt opens so game script has bound all input listeners.
-                -- Then instantly snap needle to Great Zone and execute perfect hit!
-                -- If needle is already within 15° of targetRot, hit immediately without waiting.
+                -- If No Skill Check is active, hit ultra-fast at elapsed >= 0.05 (3-4 frames)
+                -- Otherwise wait 0.08s (5-6 frames) or hit immediately when within 15° of targetRot.
                 local shouldHit = false
+                local minWait = noSkillCheckEnabled and 0.05 or 0.08
+
                 if needle then
                     local curRot = (needle:IsA("UIGradient") and needle.Rotation or needle.Rotation) % 360
                     local distToZone = (targetRot - curRot + 360) % 360
                     if distToZone <= 15 or distToZone >= 355 then
                         shouldHit = true
-                    elseif elapsed >= 0.08 then
+                    elseif elapsed >= minWait then
                         shouldHit = true
                     end
-                elseif elapsed >= 0.08 then
+                elseif elapsed >= minWait then
                     shouldHit = true
                 end
 
-                if shouldHit and (tick() - lastSkillCheckSolvedTime > 0.25) then
+                if shouldHit and (tick() - lastSkillCheckSolvedTime > 0.20) then
                     promptHandled = true
                     promptHandledTick = os.clock()
                     lastSkillCheckSolvedTime = tick()
@@ -1883,6 +1978,13 @@ local function startSkillcheckWatcher()
                 end
             end
         else
+            -- Prompt closed / finished: restore original position if it was hidden
+            if lastHiddenCheck and originalCheckPosition and lastHiddenCheck.Parent then
+                pcall(function() lastHiddenCheck.Position = originalCheckPosition end)
+            end
+            lastHiddenCheck = nil
+            originalCheckPosition = nil
+
             if promptHandled or promptOpenTick > 0 then
                 unlockCameraAndMovement()
             end
@@ -1933,15 +2035,15 @@ task.spawn(function()
     end
 end)
 
--- Tab Skillcheck UI Toggle Configuration
-local perfectSkillcheckToggle = V_ObjectiveSection:Toggle({
-    Title = "Perfect Skillcheck (All-Time Great)",
-    Description = "100% Autonomous Perfect/Great skillchecks: instant Great-zone snap & multi-channel input dispatch.",
+-- Objectives & Skillcheck UI Toggles Configuration
+local autoSkillcheckToggle = V_ObjectiveSection:Toggle({
+    Title = "Automatic Perfect Skill Check",
+    Description = "100% Autonomous Perfect/Great skillchecks: automatically hits Great on every generator/heal skillcheck.",
     Default = perfectSkillcheckEnabled,
     Callback = function(v)
         perfectSkillcheckEnabled = v
         autoSkillCheckEnabled = v
-        if not v then
+        if not v and not noSkillCheckEnabled then
             if skillcheckConn then
                 pcall(function() skillcheckConn:Disconnect() end)
                 skillcheckConn = nil
@@ -1951,17 +2053,51 @@ local perfectSkillcheckToggle = V_ObjectiveSection:Toggle({
                 skillcheckManualConn = nil
             end
             unlockCameraAndMovement()
-            WindUI:Notify({ Title = "Skillcheck", Content = "Perfect Skillcheck disabled.", Duration = 2 })
+            WindUI:Notify({ Title = "Skillcheck", Content = "Automatic Perfect Skill Check disabled.", Duration = 2 })
             return
         end
 
         startSkillcheckWatcher()
-        WindUI:Notify({ Title = "Skillcheck", Content = "Perfect Skillcheck (All-Time Great) active!", Duration = 2 })
+        WindUI:Notify({ Title = "Skillcheck", Content = "Automatic Perfect Skill Check active!", Duration = 2 })
     end
 })
 
--- Auto-activate Perfect Skillcheck on script initialization
-if perfectSkillcheckEnabled then
+local noSkillcheckToggle = V_ObjectiveSection:Toggle({
+    Title = "No Skill Check",
+    Description = "Prevents skill check wheels from popping up on screen and automatically solves them invisibly.",
+    Default = noSkillCheckEnabled,
+    Callback = function(v)
+        noSkillCheckEnabled = v
+        if v then
+            if not perfectSkillcheckEnabled then
+                perfectSkillcheckEnabled = true
+                autoSkillCheckEnabled = true
+            end
+            startSkillcheckWatcher()
+            WindUI:Notify({ Title = "No Skill Check", Content = "No Skill Check active: pop-ups hidden & auto-solved!", Duration = 2 })
+        else
+            if lastHiddenCheck and originalCheckPosition and lastHiddenCheck.Parent then
+                pcall(function() lastHiddenCheck.Position = originalCheckPosition end)
+            end
+            lastHiddenCheck = nil
+            originalCheckPosition = nil
+            if not perfectSkillcheckEnabled then
+                if skillcheckConn then
+                    pcall(function() skillcheckConn:Disconnect() end)
+                    skillcheckConn = nil
+                end
+                if skillcheckManualConn then
+                    pcall(function() skillcheckManualConn:Disconnect() end)
+                    skillcheckManualConn = nil
+                end
+            end
+            WindUI:Notify({ Title = "No Skill Check", Content = "No Skill Check disabled: normal UI restored.", Duration = 2 })
+        end
+    end
+})
+
+-- Auto-activate watchers on script initialization
+if perfectSkillcheckEnabled or noSkillCheckEnabled then
     startSkillcheckWatcher()
 end
 -- ============================================================
