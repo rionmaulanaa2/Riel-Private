@@ -674,7 +674,7 @@ local function unlockCameraAndMovement()
         if cam then
             local myChar = player.Character
             if myChar and not myChar:GetAttribute("Knocked") and not isCharacterHooked(myChar) then
-                if cam.CameraType == Enum.CameraType.Scriptable then
+                if cam.CameraType ~= Enum.CameraType.Custom then
                     cam.CameraType = Enum.CameraType.Custom
                 end
                 local hum = myChar:FindFirstChildOfClass("Humanoid")
@@ -683,16 +683,52 @@ local function unlockCameraAndMovement()
                 end
             end
         end
-        -- Cleanly release synthetic touches (touch ID 0 release so camera rotation is never locked)
+        -- Re-enable Roblox PlayerModule camera controller if disabled
         pcall(function()
-            VirtualInputManager:SendTouchEvent(0, 2, 0, 0)
-            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
-            if typeof(touchrelease) == "function" then
-                pcall(touchrelease, 0)
+            local ps = player:FindFirstChild("PlayerScripts")
+            local pm = ps and ps:FindFirstChild("PlayerModule")
+            if pm then
+                local req = require(pm)
+                if req and req.GetCameras then
+                    local cams = req:GetCameras()
+                    if cams and cams.activeCameraController and not cams.activeCameraController:GetIsMouseInteractionEnabled() then
+                        pcall(function() cams.activeCameraController:Enable(true) end)
+                    end
+                end
             end
         end)
     end)
 end
+
+-- Real-time Camera Lock Guard: Enforces unlocked camera state on every frame
+RunService.RenderStepped:Connect(function()
+    pcall(function()
+        local myChar = player.Character
+        if myChar and myChar:IsDescendantOf(workspace) then
+            if not isCharacterHooked(myChar) and not isCharacterKnocked(myChar) then
+                local cam = workspace.CurrentCamera
+                if cam and cam.CameraType == Enum.CameraType.Scriptable then
+                    cam.CameraType = Enum.CameraType.Custom
+                end
+                if myChar:GetAttribute("overridelookscript") == true then
+                    myChar:SetAttribute("overridelookscript", false)
+                end
+                if myChar:GetAttribute("CamAnimLock") == true then
+                    myChar:SetAttribute("CamAnimLock", false)
+                end
+                if myChar:GetAttribute("previewfreezelook") == true then
+                    myChar:SetAttribute("previewfreezelook", false)
+                end
+                if player:GetAttribute("overridelookscript") == true then
+                    player:SetAttribute("overridelookscript", false)
+                end
+                if UserInputService.ModalEnabled == true then
+                    UserInputService.ModalEnabled = false
+                end
+            end
+        end
+    end)
+end)
 
 local function cleanAllESPs()
     if cleanKillerESP then pcall(cleanKillerESP) end
@@ -2048,28 +2084,26 @@ local function triggerPerfectHit(check, gui, needle, targetRot)
             end
 
             -- ============================================================
-            -- CHANNEL 2: MOBILE TOUCH DISPATCH (Native Touch ID 0 - Instant Release in SAME frame)
+            -- CHANNEL 2: MOBILE TOUCH DISPATCH (Uses Touch ID 1 to NEVER collide with camera finger 0)
             -- ============================================================
-            pcall(function()
-                VirtualInputManager:SendTouchEvent(0, 0, tapX, tapY)
-                VirtualInputManager:SendTouchEvent(0, 2, tapX, tapY)
-            end)
-            if typeof(touchpress) == "function" and typeof(touchrelease) == "function" then
+            if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
                 pcall(function()
-                    touchpress(0, tapX, tapY)
-                    touchrelease(0)
+                    VirtualInputManager:SendTouchEvent(1, 0, tapX, tapY)
+                    VirtualInputManager:SendTouchEvent(1, 2, tapX, tapY)
                 end)
             end
 
             -- ============================================================
-            -- CHANNEL 3: MOUSE BUTTON DISPATCH
+            -- CHANNEL 3: MOUSE BUTTON DISPATCH (Only on PC with mouse)
             -- ============================================================
-            pcall(function()
-                VirtualInputManager:SendMouseButtonEvent(tapX, tapY, 0, true, game, 0)
-                VirtualInputManager:SendMouseButtonEvent(tapX, tapY, 0, false, game, 0)
-            end)
-            if typeof(mouse1click) == "function" then
-                pcall(mouse1click)
+            if UserInputService.MouseEnabled and not UserInputService.TouchEnabled then
+                pcall(function()
+                    VirtualInputManager:SendMouseButtonEvent(tapX, tapY, 0, true, game, 0)
+                    VirtualInputManager:SendMouseButtonEvent(tapX, tapY, 0, false, game, 0)
+                end)
+                if typeof(mouse1click) == "function" then
+                    pcall(mouse1click)
+                end
             end
 
             -- ============================================================
@@ -2117,9 +2151,19 @@ local function triggerPerfectHit(check, gui, needle, targetRot)
                                 pcall(firesignal, target.MouseButton1Up)
                             end
                         end
-                        if typeof(getconnections) == "function" and target:IsA("GuiButton") and target.Activated then
-                            for _, conn in ipairs(getconnections(target.Activated)) do
-                                if conn and conn.Fire then pcall(function() conn:Fire() end) end
+                        if typeof(getconnections) == "function" and target:IsA("GuiObject") then
+                            if target.InputBegan then
+                                for _, conn in ipairs(getconnections(target.InputBegan)) do
+                                    if conn and conn.Fire then
+                                        pcall(function() conn:Fire(mockKey, false) end)
+                                        pcall(function() conn:Fire(mockTouch, false) end)
+                                    end
+                                end
+                            end
+                            if target:IsA("GuiButton") and target.Activated then
+                                for _, conn in ipairs(getconnections(target.Activated)) do
+                                    if conn and conn.Fire then pcall(function() conn:Fire() end) end
+                                end
                             end
                         end
                     end
@@ -2132,8 +2176,11 @@ local function triggerPerfectHit(check, gui, needle, targetRot)
             pcall(function()
                 local cas = game:GetService("ContextActionService")
                 pcall(function() cas:CallFunction("skillcheck", Enum.UserInputState.Begin, mockKey) end)
+                pcall(function() cas:CallFunction("SkillCheck", Enum.UserInputState.Begin, mockKey) end)
+                pcall(function() cas:CallFunction("Skillcheck", Enum.UserInputState.Begin, mockKey) end)
                 pcall(function() cas:CallFunction("PadSkillCheck", Enum.UserInputState.Begin, mockKey) end)
                 pcall(function() cas:CallFunction("action", Enum.UserInputState.Begin, mockKey) end)
+                pcall(function() cas:CallFunction("Action", Enum.UserInputState.Begin, mockKey) end)
             end)
 
             -- Maintain needle lock for 0.05s across next 3 frames to defeat any script race condition
@@ -2156,19 +2203,34 @@ local function hookSkillCheckFailPrevention()
     if skillcheckHooked then return end
     skillcheckHooked = true
 
+    local function cancelFailState()
+        unlockCameraAndMovement()
+        pcall(function()
+            local myChar = player.Character
+            local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+            if hum then
+                for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+                    local anim = track.Animation
+                    local animName = (anim and anim.Name or ""):lower()
+                    if animName:find("fail") or animName:find("shock") or animName:find("explode") or animName:find("skill") then
+                        pcall(function() track:Stop(0) end)
+                    end
+                end
+            end
+        end)
+    end
+
     pcall(function()
         local remotes = getVDRemotes()
         if remotes.Generator and remotes.Generator:FindFirstChild("SkillCheckFailEvent") then
             pcall(function()
                 remotes.Generator.SkillCheckFailEvent.OnClientEvent:Connect(function()
                     task.spawn(function()
-                        unlockCameraAndMovement()
-                        task.wait(0.1)
-                        unlockCameraAndMovement()
-                        task.wait(0.3)
-                        unlockCameraAndMovement()
-                        task.wait(0.7)
-                        unlockCameraAndMovement()
+                        cancelFailState()
+                        task.wait(0.05)
+                        cancelFailState()
+                        task.wait(0.2)
+                        cancelFailState()
                     end)
                 end)
             end)
@@ -2177,13 +2239,11 @@ local function hookSkillCheckFailPrevention()
             pcall(function()
                 remotes.Healing.SkillCheckFailEvent.OnClientEvent:Connect(function()
                     task.spawn(function()
-                        unlockCameraAndMovement()
-                        task.wait(0.1)
-                        unlockCameraAndMovement()
-                        task.wait(0.3)
-                        unlockCameraAndMovement()
-                        task.wait(0.7)
-                        unlockCameraAndMovement()
+                        cancelFailState()
+                        task.wait(0.05)
+                        cancelFailState()
+                        task.wait(0.2)
+                        cancelFailState()
                     end)
                 end)
             end)
@@ -2324,23 +2384,23 @@ local function startSkillcheckWatcher()
                 local elapsed = os.clock() - promptOpenTick
 
                 -- Precision Great Zone timing logic:
-                -- 1. If needle rotation is active, hit when needle arrives in Great Zone (distToZone <= 15 or distToZone >= 345, elapsed >= 0.12)
-                -- 2. Fallback: standard physical arrival of Great Zone is between 0.28s and 0.40s
+                -- 1. If needle rotation is active, hit when needle arrives in Great Zone (distToZone <= 20 or distToZone >= 340, elapsed >= 0.10)
+                -- 2. Fallback: prompt hit at 0.18s to guarantee prompt never runs to timeout
                 local shouldHit = false
 
                 if needle then
                     local curRot = (needle:IsA("UIGradient") and needle.Rotation or needle.Rotation) % 360
                     local distToZone = (targetRot - curRot + 360) % 360
-                    if (distToZone <= 15 or distToZone >= 345) and elapsed >= 0.12 then
+                    if (distToZone <= 20 or distToZone >= 340) and elapsed >= 0.10 then
                         shouldHit = true
-                    elseif elapsed >= 0.28 then
+                    elseif elapsed >= 0.18 then
                         shouldHit = true
                     end
-                elseif elapsed >= 0.28 then
+                elseif elapsed >= 0.18 then
                     shouldHit = true
                 end
 
-                if shouldHit and (tick() - lastSkillCheckSolvedTime > 0.18) then
+                if shouldHit and (tick() - lastSkillCheckSolvedTime > 0.15) then
                     promptHandled = true
                     promptHandledTick = os.clock()
                     lastSkillCheckSolvedTime = tick()
@@ -2458,6 +2518,60 @@ local noSkillcheckToggle = V_ObjectiveSection:Toggle({
         end
     end
 })
+
+local frequentSkillcheckEnabled = false
+local frequentSkillcheckInterval = 1.5
+local lastFrequentBoostTick = 0
+
+local frequentSkillcheckToggle = V_ObjectiveSection:Toggle({
+    Title = "Frequent Skill Checks (Rapid Boost)",
+    Description = "Automatically triggers extra Perfect/Great skillcheck boosts (+1% progression each) every 1.5s while repairing or healing.",
+    Default = false,
+    Callback = function(v)
+        frequentSkillcheckEnabled = v
+        if v then
+            WindUI:Notify({ Title = "Skillcheck", Content = "Frequent Skill Checks active: rapid +1% boost enabled!", Duration = 2 })
+        else
+            WindUI:Notify({ Title = "Skillcheck", Content = "Frequent Skill Checks disabled.", Duration = 2 })
+        end
+    end
+})
+
+local frequentSkillcheckSlider = V_ObjectiveSection:Slider({
+    Title = "Skill Check Interval",
+    Description = "Interval in seconds between extra skillcheck boosts (Default: 1.5s).",
+    Step = 0.5,
+    Value = {
+        Min = 1.0,
+        Max = 5.0,
+        Default = 1.5,
+    },
+    Callback = function(v)
+        frequentSkillcheckInterval = tonumber(v) or 1.5
+    end
+})
+
+-- Frequent Skill Checks Background Dispatcher (Rapid Great Generator Boost)
+task.spawn(function()
+    while true do
+        task.wait(0.2)
+        pcall(function()
+            if not frequentSkillcheckEnabled then return end
+            local myChar = player.Character
+            if not myChar or not myChar:IsDescendantOf(workspace) then return end
+            local isRep = myChar:GetAttribute("isRepairing") == true
+            local isHeal = myChar:GetAttribute("isHealing") == true
+
+            if (isRep or isHeal) and not isCharacterKnocked(myChar) and not isCharacterHooked(myChar) then
+                if os.clock() - lastFrequentBoostTick >= frequentSkillcheckInterval then
+                    lastFrequentBoostTick = os.clock()
+                    fireSkillCheckSuccessRemote()
+                    unlockCameraAndMovement()
+                end
+            end
+        end)
+    end
+end)
 
 -- Auto-activate watchers and remote interception hooks on script initialization
 hookSkillCheckRemotes()
