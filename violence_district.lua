@@ -1659,10 +1659,100 @@ local function unlockCameraAndMovement()
     end)
 end
 
--- Standalone skillcheck trigger execution (Full Multi-Dispatch: PC Key, Gamepad, Touch Tap, CAS & Direct UI)
+-- Helper to locate active Generator and GeneratorPoint context
+local function findActiveRepairContext()
+    local myChar = player.Character
+    if not myChar then return nil, nil, nil end
+    local hrp = myChar:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil, nil, nil end
+
+    local targetPoint = currentRepairPoint
+    if not targetPoint or not targetPoint.Parent then
+        local pPos = hrp.Position
+        local closestDist = 20
+        if CollectionService then
+            for _, pt in ipairs(CollectionService:GetTagged("GeneratorPoint")) do
+                if pt:IsA("BasePart") then
+                    local d = (pt.Position - pPos).Magnitude
+                    if d < closestDist then
+                        closestDist = d
+                        targetPoint = pt
+                    end
+                end
+            end
+        end
+        if not targetPoint then
+            for _, desc in ipairs(workspace:GetDescendants()) do
+                if desc:IsA("BasePart") and desc.Name:find("GeneratorPoint") then
+                    local d = (desc.Position - pPos).Magnitude
+                    if d < closestDist then
+                        closestDist = d
+                        targetPoint = desc
+                    end
+                end
+            end
+        end
+    end
+
+    local genModel = nil
+    if targetPoint then
+        genModel = targetPoint.Parent
+        if genModel and genModel.Name ~= "Generator" and genModel.Parent and genModel.Parent.Name == "Generator" then
+            genModel = genModel.Parent
+        end
+    end
+
+    local requestId = myChar:GetAttribute("RepairRequestId")
+        or player:GetAttribute("RepairRequestId")
+        or HttpService:GenerateGUID(false)
+
+    return genModel, targetPoint, requestId
+end
+
+-- Primary Network Remote: Directly fires SkillCheckResultEvent to Server (100% Guaranteed Perfect Server-Side)
+local function fireSkillCheckSuccessRemote()
+    pcall(function()
+        local remotes = getVDRemotes()
+        if remotes.Generator and remotes.Generator:FindFirstChild("SkillCheckResultEvent") then
+            local genModel, genPoint, requestId = findActiveRepairContext()
+            if genModel and genPoint then
+                pcall(function()
+                    remotes.Generator.SkillCheckResultEvent:FireServer(
+                        "success",
+                        1,
+                        genModel,
+                        genPoint,
+                        requestId,
+                        { player.Name }
+                    )
+                end)
+            end
+        end
+        if remotes.Healing and remotes.Healing:FindFirstChild("SkillCheckResultEvent") then
+            local myChar = player.Character
+            if myChar and myChar:GetAttribute("isHealing") then
+                local healRequestId = myChar:GetAttribute("HealRequestId") or HttpService:GenerateGUID(false)
+                pcall(function()
+                    remotes.Healing.SkillCheckResultEvent:FireServer(
+                        "success",
+                        1,
+                        myChar,
+                        healRequestId,
+                        { player.Name }
+                    )
+                end)
+            end
+        end
+    end)
+end
+
+-- Standalone skillcheck trigger execution (Full Multi-Dispatch: Direct Remote, PC Key, Gamepad, Touch Tap, CAS & Direct UI)
 local function triggerPerfectHit(check, gui, needle, targetRot)
     task.spawn(function()
         pcall(function()
+            -- 0. Direct server remote confirmation (Guaranteed Server-Side Great)
+            fireSkillCheckSuccessRemote()
+
             -- 1. Snap needle directly onto Great Zone before dispatch
             if needle then
                 snapNeedleToGreatZone(needle, targetRot)
@@ -1979,9 +2069,16 @@ local function startSkillcheckWatcher()
 
         local gui, check = getActiveSkillCheckGui()
         if check and check.Visible and check.AbsoluteSize.X > 5 and check.AbsoluteSize.Y > 5 then
-            -- If No Skill Check is enabled, cleanly hide visual elements via transparency
+            -- If No Skill Check is enabled, cleanly hide visual elements via transparency and solve immediately
             if noSkillCheckEnabled and check:IsA("GuiObject") then
                 applyStealthHider(check, gui)
+                if not promptHandled and (tick() - lastSkillCheckSolvedTime > 0.10) then
+                    promptHandled = true
+                    promptHandledTick = os.clock()
+                    lastSkillCheckSolvedTime = tick()
+                    fireSkillCheckSuccessRemote()
+                    triggerPerfectHit(check, gui, nil, 130)
+                end
             end
 
             -- Safety: auto-reset if prompt remained open after 0.80s so subsequent skill checks re-trigger
