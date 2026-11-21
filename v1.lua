@@ -3287,7 +3287,6 @@ local skillcheckHooked = false
 local skillcheckHiderHooked = false
 local skillcheckRemoteHooked = false
 local lastSkillCheckSolvedTime = 0
-local skillCheckScoreValue = 1
 
 -- Visual stealth suppressor for "No Skill Check": hides UI cleanly via transparency without moving off-screen
 local function applyStealthHider(check, gui)
@@ -3400,11 +3399,12 @@ local function getActiveSkillCheckGui()
     for _, name in ipairs(candidateGuiNames) do
         local gui = pg:FindFirstChild(name)
         if gui and (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) then
-            if not gui:IsA("ScreenGui") or gui.Enabled then
-                local check = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Wheel", true) or gui:FindFirstChild("SkillCheck", true)
-                if check and isGuiElementTrulyVisible(check, gui) then
-                    return gui, check
-                end
+            if gui:IsA("ScreenGui") and not gui.Enabled then
+                gui.Enabled = true
+            end
+            local check = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Wheel", true) or gui:FindFirstChild("SkillCheck", true)
+            if check and isGuiElementTrulyVisible(check, gui) then
+                return gui, check
             end
         end
     end
@@ -3691,15 +3691,13 @@ local function fireSkillCheckSuccessRemote()
         local myChar = player.Character
         if not myChar then return end
 
-        local scoreToSend = tonumber(skillCheckScoreValue) or 1
-
         if remotes.Generator and remotes.Generator:FindFirstChild("SkillCheckResultEvent") then
             local genModel, genPoint, requestId = findActiveRepairContext()
             if genModel and genPoint then
                 pcall(function()
                     remotes.Generator.SkillCheckResultEvent:FireServer(
                         "success",
-                        scoreToSend,
+                        1,
                         genModel,
                         genPoint,
                         requestId,
@@ -3716,7 +3714,7 @@ local function fireSkillCheckSuccessRemote()
                 pcall(function()
                     remotes.Healing.SkillCheckResultEvent:FireServer(
                         "success",
-                        scoreToSend,
+                        1,
                         myChar,
                         healRequestId,
                         myChar
@@ -3727,7 +3725,7 @@ local function fireSkillCheckSuccessRemote()
     end)
 end
 
--- Metamethod & Function Interception Hook: Intercepts game remotes to capture live context, mutate any "fail" packet into "success", and apply custom score
+-- Metamethod & Function Interception Hook: Intercepts game remotes to capture live context and guarantee 100% Great success on every check
 local function hookSkillCheckRemotes()
     if skillcheckRemoteHooked then return end
     skillcheckRemoteHooked = true
@@ -3736,31 +3734,16 @@ local function hookSkillCheckRemotes()
     local upk = unpack or table.unpack
 
     local function handleSkillCheckMutation(self, args)
-        local scoreToSend = tonumber(skillCheckScoreValue) or 1
-
-        if (perfectSkillcheckEnabled or noSkillCheckEnabled or scoreToSend ~= 1) then
-            if args[1] == "fail" then
-                args[1] = "success"
-            end
-            if args[1] == "success" then
-                args[2] = scoreToSend
-            end
+        if perfectSkillcheckEnabled or noSkillCheckEnabled then
+            args[1] = "success"
+            args[2] = 1
             if not args[6] or typeof(args[6]) ~= "Instance" then
                 args[6] = player.Character
             end
 
-            -- Immediately ensure camera & UI are cleanly dismissed
             unlockCameraAndMovement()
-            pcall(function()
-                local pg = player:FindFirstChild("PlayerGui")
-                if pg then
-                    local g = pg:FindFirstChild("SkillCheckPromptGui") or pg:FindFirstChild("SkillCheckPromptGui-con")
-                    if g and g:IsA("ScreenGui") then g.Enabled = false end
-                end
-                restoreCheckVisuals()
-            end)
             task.spawn(function()
-                for i = 1, 8 do
+                for i = 1, 6 do
                     task.wait(0.04 * i)
                     unlockCameraAndMovement()
                 end
@@ -3796,14 +3779,9 @@ local function hookSkillCheckRemotes()
                             if typeof(args[4]) == "string" and args[4] ~= "" then
                                 lastCapturedHealRequestId = args[4]
                             end
-                            local scoreToSend = tonumber(skillCheckScoreValue) or 1
-                            if (perfectSkillcheckEnabled or noSkillCheckEnabled or scoreToSend ~= 1) then
-                                if args[1] == "fail" then
-                                    args[1] = "success"
-                                end
-                                if args[1] == "success" then
-                                    args[2] = scoreToSend
-                                end
+                            if (perfectSkillcheckEnabled or noSkillCheckEnabled) then
+                                args[1] = "success"
+                                args[2] = 1
                                 if not args[3] or typeof(args[3]) ~= "Instance" then
                                     args[3] = player.Character
                                 end
@@ -3885,14 +3863,9 @@ local function hookSkillCheckRemotes()
                     if typeof(args[4]) == "string" and args[4] ~= "" then
                         lastCapturedHealRequestId = args[4]
                     end
-                    local scoreToSend = tonumber(skillCheckScoreValue) or 1
-                    if (perfectSkillcheckEnabled or noSkillCheckEnabled or scoreToSend ~= 1) then
-                        if args[1] == "fail" then
-                            args[1] = "success"
-                        end
-                        if args[1] == "success" then
-                            args[2] = scoreToSend
-                        end
+                    if (perfectSkillcheckEnabled or noSkillCheckEnabled) then
+                        args[1] = "success"
+                        args[2] = 1
                         if not args[3] or typeof(args[3]) ~= "Instance" then
                             args[3] = player.Character
                         end
@@ -4098,17 +4071,6 @@ local function triggerPerfectHit(check, gui, needle, targetRot)
             -- Clean camera and movement unlock
             unlockCameraAndMovement()
             task.delay(0.08, unlockCameraAndMovement)
-
-            -- Auto-dismiss lingering prompt so game script loop doesn't run to timeout
-            task.delay(0.12, function()
-                pcall(function()
-                    if check and check.Visible and not noSkillCheckEnabled then
-                        check.Visible = false
-                        if gui and gui:IsA("ScreenGui") then gui.Enabled = false end
-                        unlockCameraAndMovement()
-                    end
-                end)
-            end)
         end)
     end)
 end
@@ -4415,41 +4377,6 @@ local noSkillcheckToggle = V_ObjectiveSection:Toggle({
             end
             WindUI:Notify({ Title = "No Skill Check", Content = "No Skill Check disabled: normal UI restored.", Duration = 2 })
         end
-    end
-})
-
-local skillCheckScoreSlider = V_ObjectiveSection:Slider({
-    Title = "Skill Check Score (Experimental)",
-    Description = "Adjusts progress score sent to server on success (Default: 1 = +1%). Test 10 (+10%) or 100 (+100% instant completion).",
-    Step = 1,
-    Value = {
-        Min = 1,
-        Max = 100,
-        Default = skillCheckScoreValue,
-    },
-    Callback = function(v)
-        skillCheckScoreValue = math.floor(v)
-    end
-})
-
-local skillCheckScoreDropdown = V_ObjectiveSection:Dropdown({
-    Title = "Score Preset (Experimental)",
-    Description = "Quick selection for skill check progress score.",
-    Values = { "1 (Standard / +1%)", "10 (+10%)", "25 (+25%)", "50 (+50%)", "100 (Instant Complete / +100%)" },
-    Value = "1 (Standard / +1%)",
-    Callback = function(choice)
-        if choice:find("100") then
-            skillCheckScoreValue = 100
-        elseif choice:find("50") then
-            skillCheckScoreValue = 50
-        elseif choice:find("25") then
-            skillCheckScoreValue = 25
-        elseif choice:find("10") then
-            skillCheckScoreValue = 10
-        else
-            skillCheckScoreValue = 1
-        end
-        WindUI:Notify({ Title = "Skill Check Score", Content = "Score set to: " .. tostring(skillCheckScoreValue), Duration = 2 })
     end
 })
 
