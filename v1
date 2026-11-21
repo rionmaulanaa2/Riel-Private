@@ -2482,6 +2482,10 @@ local trackedSurvivors = {}
 local cleanKillerESP = nil
 local cleanSurvivorESP = nil
 local cleanGenESP = nil
+local lastCapturedRepairRequestId = nil
+local lastCapturedGenModel = nil
+local lastCapturedGenPoint = nil
+local lastCapturedHealRequestId = nil
 
 local function cleanAllESPs()
     if cleanKillerESP then pcall(cleanKillerESP) end
@@ -2504,6 +2508,10 @@ local function onMatchOrCharacterReset()
     currentKillerTarget = nil
     currentRepairPoint = nil
     lastDetectedRole = nil
+    lastCapturedRepairRequestId = nil
+    lastCapturedGenModel = nil
+    lastCapturedGenPoint = nil
+    lastCapturedHealRequestId = nil
 end
 
 -- Connect local player respawn
@@ -3201,6 +3209,7 @@ local skillcheckConn = nil
 local skillcheckManualConn = nil
 local skillcheckHooked = false
 local skillcheckHiderHooked = false
+local skillcheckRemoteHooked = false
 local lastSkillCheckSolvedTime = 0
 
 -- Visual stealth suppressor for "No Skill Check": hides UI cleanly via transparency without moving off-screen
@@ -3508,45 +3517,78 @@ local function findActiveRepairContext()
     local myChar = player.Character
     if not myChar then return nil, nil, nil end
     local hrp = myChar:FindFirstChild("HumanoidRootPart")
-    if not hrp then return nil, nil, nil end
 
-    local targetPoint = currentRepairPoint
+    local genModel = lastCapturedGenModel
+    local targetPoint = lastCapturedGenPoint
+
     if not targetPoint or not targetPoint.Parent then
-        local pPos = hrp.Position
-        local closestDist = 20
-        if CollectionService then
-            for _, pt in ipairs(CollectionService:GetTagged("GeneratorPoint")) do
-                if pt:IsA("BasePart") then
-                    local d = (pt.Position - pPos).Magnitude
-                    if d < closestDist then
-                        closestDist = d
-                        targetPoint = pt
+        targetPoint = currentRepairPoint
+    end
+
+    if not targetPoint or not targetPoint.Parent then
+        if hrp then
+            local pPos = hrp.Position
+            local closestDist = 25
+
+            -- 1. Check workspace.Map.Generators
+            pcall(function()
+                local map = workspace:FindFirstChild("Map")
+                local gens = map and map:FindFirstChild("Generators")
+                if gens then
+                    for _, gen in ipairs(gens:GetChildren()) do
+                        for _, child in ipairs(gen:GetChildren()) do
+                            if child:IsA("BasePart") and child.Name:find("GeneratorPoint") then
+                                local d = (child.Position - pPos).Magnitude
+                                if d < closestDist then
+                                    closestDist = d
+                                    targetPoint = child
+                                    genModel = gen
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+
+            -- 2. CollectionService tagged points
+            if not targetPoint and CollectionService then
+                for _, pt in ipairs(CollectionService:GetTagged("GeneratorPoint")) do
+                    if pt:IsA("BasePart") then
+                        local d = (pt.Position - pPos).Magnitude
+                        if d < closestDist then
+                            closestDist = d
+                            targetPoint = pt
+                        end
                     end
                 end
             end
-        end
-        if not targetPoint then
-            for _, desc in ipairs(workspace:GetDescendants()) do
-                if desc:IsA("BasePart") and desc.Name:find("GeneratorPoint") then
-                    local d = (desc.Position - pPos).Magnitude
-                    if d < closestDist then
-                        closestDist = d
-                        targetPoint = desc
+
+            -- 3. General workspace fallback
+            if not targetPoint then
+                for _, desc in ipairs(workspace:GetDescendants()) do
+                    if desc:IsA("BasePart") and desc.Name:find("GeneratorPoint") then
+                        local d = (desc.Position - pPos).Magnitude
+                        if d < closestDist then
+                            closestDist = d
+                            targetPoint = desc
+                        end
                     end
                 end
             end
         end
     end
 
-    local genModel = nil
-    if targetPoint then
+    if targetPoint and not genModel then
         genModel = targetPoint.Parent
         if genModel and genModel.Name ~= "Generator" and genModel.Parent and genModel.Parent.Name == "Generator" then
             genModel = genModel.Parent
         end
     end
 
-    local requestId = myChar:GetAttribute("RepairRequestId")
+    local ms = myChar:FindFirstChild("CheckInterractable") or myChar:FindFirstChild("motherscript")
+    local requestId = lastCapturedRepairRequestId
+        or (ms and (ms:GetAttribute("RepairRequestId") or ms:GetAttribute("requestId") or ms:GetAttribute("SessionId")))
+        or myChar:GetAttribute("RepairRequestId")
         or player:GetAttribute("RepairRequestId")
         or HttpService:GenerateGUID(false)
 
@@ -3557,6 +3599,9 @@ end
 local function fireSkillCheckSuccessRemote()
     pcall(function()
         local remotes = getVDRemotes()
+        local myChar = player.Character
+        if not myChar then return end
+
         if remotes.Generator and remotes.Generator:FindFirstChild("SkillCheckResultEvent") then
             local genModel, genPoint, requestId = findActiveRepairContext()
             if genModel and genPoint then
@@ -3567,24 +3612,175 @@ local function fireSkillCheckSuccessRemote()
                         genModel,
                         genPoint,
                         requestId,
-                        { player.Name }
+                        myChar
                     )
                 end)
             end
         end
         if remotes.Healing and remotes.Healing:FindFirstChild("SkillCheckResultEvent") then
-            local myChar = player.Character
-            if myChar and myChar:GetAttribute("isHealing") then
-                local healRequestId = myChar:GetAttribute("HealRequestId") or HttpService:GenerateGUID(false)
+            if myChar:GetAttribute("isHealing") then
+                local healRequestId = lastCapturedHealRequestId
+                    or myChar:GetAttribute("HealRequestId")
+                    or HttpService:GenerateGUID(false)
                 pcall(function()
                     remotes.Healing.SkillCheckResultEvent:FireServer(
                         "success",
                         1,
                         myChar,
                         healRequestId,
-                        { player.Name }
+                        myChar
                     )
                 end)
+            end
+        end
+    end)
+end
+
+-- Metamethod & Function Interception Hook: Intercepts game remotes to capture live context and mutate any "fail" packet into "success"
+local function hookSkillCheckRemotes()
+    if skillcheckRemoteHooked then return end
+    skillcheckRemoteHooked = true
+
+    local newc = (typeof(newcclosure) == "function") and newcclosure or function(f) return f end
+    local upk = unpack or table.unpack
+
+    -- 1. Metamethod Hook (__namecall)
+    pcall(function()
+        if typeof(hookmetamethod) == "function" then
+            local oldNamecall
+            oldNamecall = hookmetamethod(game, "__namecall", newc(function(self, ...)
+                local method = (typeof(getnamecallmethod) == "function" and getnamecallmethod()) or (typeof(get_namecall_method) == "function" and get_namecall_method())
+                if method and (method == "FireServer" or method == "fireServer") and typeof(self) == "Instance" then
+                    local sName = self.Name
+                    if sName == "SkillCheckResultEvent" then
+                        local args = { ... }
+                        local parentName = self.Parent and self.Parent.Name or ""
+                        if parentName == "Generator" or parentName == "Remotes" or parentName == "" then
+                            if args[3] and typeof(args[3]) == "Instance" then
+                                lastCapturedGenModel = args[3]
+                            end
+                            if args[4] and typeof(args[4]) == "Instance" then
+                                lastCapturedGenPoint = args[4]
+                            end
+                            if typeof(args[5]) == "string" and args[5] ~= "" then
+                                lastCapturedRepairRequestId = args[5]
+                            end
+
+                            if (perfectSkillcheckEnabled or noSkillCheckEnabled) and args[1] == "fail" then
+                                args[1] = "success"
+                                args[2] = 1
+                                if not args[6] or typeof(args[6]) ~= "Instance" then
+                                    args[6] = player.Character
+                                end
+                                return oldNamecall(self, upk(args))
+                            end
+                        elseif parentName == "Healing" then
+                            if typeof(args[4]) == "string" and args[4] ~= "" then
+                                lastCapturedHealRequestId = args[4]
+                            end
+                            if (perfectSkillcheckEnabled or noSkillCheckEnabled) and args[1] == "fail" then
+                                args[1] = "success"
+                                args[2] = 1
+                                if not args[3] or typeof(args[3]) ~= "Instance" then
+                                    args[3] = player.Character
+                                end
+                                if not args[5] or typeof(args[5]) ~= "Instance" then
+                                    args[5] = player.Character
+                                end
+                                return oldNamecall(self, upk(args))
+                            end
+                        end
+                    elseif sName == "RepairEvent" then
+                        local args = { ... }
+                        if args[1] and typeof(args[1]) == "Instance" then
+                            lastCapturedGenPoint = args[1]
+                            if args[1].Parent then
+                                lastCapturedGenModel = args[1].Parent
+                            end
+                        end
+                        if typeof(args[4]) == "string" and args[4] ~= "" then
+                            lastCapturedRepairRequestId = args[4]
+                        end
+                    elseif sName == "HealEvent" then
+                        local args = { ... }
+                        if typeof(args[3]) == "string" and args[3] ~= "" then
+                            lastCapturedHealRequestId = args[3]
+                        end
+                    end
+                end
+                return oldNamecall(self, ...)
+            end))
+        end
+    end)
+
+    -- 2. Direct Function Hook (targetRemote.FireServer)
+    pcall(function()
+        if typeof(hookfunction) == "function" then
+            local remotes = getVDRemotes()
+            if remotes.Generator and remotes.Generator:FindFirstChild("SkillCheckResultEvent") then
+                local remoteObj = remotes.Generator.SkillCheckResultEvent
+                local oldFireServer
+                oldFireServer = hookfunction(remoteObj.FireServer, newc(function(self, ...)
+                    local args = { ... }
+                    if args[3] and typeof(args[3]) == "Instance" then
+                        lastCapturedGenModel = args[3]
+                    end
+                    if args[4] and typeof(args[4]) == "Instance" then
+                        lastCapturedGenPoint = args[4]
+                    end
+                    if typeof(args[5]) == "string" and args[5] ~= "" then
+                        lastCapturedRepairRequestId = args[5]
+                    end
+
+                    if (perfectSkillcheckEnabled or noSkillCheckEnabled) and args[1] == "fail" then
+                        args[1] = "success"
+                        args[2] = 1
+                        if not args[6] or typeof(args[6]) ~= "Instance" then
+                            args[6] = player.Character
+                        end
+                        return oldFireServer(self, upk(args))
+                    end
+                    return oldFireServer(self, ...)
+                end))
+            end
+            if remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
+                local repRemote = remotes.Generator.RepairEvent
+                local oldRepFire
+                oldRepFire = hookfunction(repRemote.FireServer, newc(function(self, ...)
+                    local args = { ... }
+                    if args[1] and typeof(args[1]) == "Instance" then
+                        lastCapturedGenPoint = args[1]
+                        if args[1].Parent then
+                            lastCapturedGenModel = args[1].Parent
+                        end
+                    end
+                    if typeof(args[4]) == "string" and args[4] ~= "" then
+                        lastCapturedRepairRequestId = args[4]
+                    end
+                    return oldRepFire(self, ...)
+                end))
+            end
+            if remotes.Healing and remotes.Healing:FindFirstChild("SkillCheckResultEvent") then
+                local healRemote = remotes.Healing.SkillCheckResultEvent
+                local oldHealFire
+                oldHealFire = hookfunction(healRemote.FireServer, newc(function(self, ...)
+                    local args = { ... }
+                    if typeof(args[4]) == "string" and args[4] ~= "" then
+                        lastCapturedHealRequestId = args[4]
+                    end
+                    if (perfectSkillcheckEnabled or noSkillCheckEnabled) and args[1] == "fail" then
+                        args[1] = "success"
+                        args[2] = 1
+                        if not args[3] or typeof(args[3]) ~= "Instance" then
+                            args[3] = player.Character
+                        end
+                        if not args[5] or typeof(args[5]) ~= "Instance" then
+                            args[5] = player.Character
+                        end
+                        return oldHealFire(self, upk(args))
+                    end
+                    return oldHealFire(self, ...)
+                end))
             end
         end
     end)
@@ -3873,6 +4069,7 @@ local function startSkillcheckWatcher()
         skillcheckManualConn = nil
     end
 
+    hookSkillCheckRemotes()
     hookSkillCheckFailPrevention()
     hookSkillCheckHider()
 
@@ -4084,7 +4281,8 @@ local noSkillcheckToggle = V_ObjectiveSection:Toggle({
     end
 })
 
--- Auto-activate watchers on script initialization
+-- Auto-activate watchers and remote interception hooks on script initialization
+hookSkillCheckRemotes()
 if perfectSkillcheckEnabled or noSkillCheckEnabled then
     startSkillcheckWatcher()
 end
