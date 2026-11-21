@@ -2538,29 +2538,6 @@ local function unlockCameraAndMovement()
     end)
 end
 
--- Camera lock guard: immediately resets any look script lock attribute to false in real time
-local function bindCameraUnlockGuards(char)
-    if not char then return end
-    local attrsToGuard = { "overridelookscript", "CamAnimLock", "previewfreezelook" }
-    for _, attrName in ipairs(attrsToGuard) do
-        pcall(function()
-            char:GetAttributeChangedSignal(attrName):Connect(function()
-                if char:GetAttribute(attrName) == true and not isCharacterHooked(char) and not isCharacterKnocked(char) then
-                    char:SetAttribute(attrName, false)
-                    local cam = workspace.CurrentCamera
-                    if cam and cam.CameraType == Enum.CameraType.Scriptable then
-                        cam.CameraType = Enum.CameraType.Custom
-                    end
-                end
-            end)
-        end)
-    end
-end
-
-if player.Character then
-    bindCameraUnlockGuards(player.Character)
-end
-
 local function cleanAllESPs()
     if cleanKillerESP then pcall(cleanKillerESP) end
     if cleanSurvivorESP then pcall(cleanSurvivorESP) end
@@ -2593,7 +2570,6 @@ end
 player.CharacterAdded:Connect(function(newChar)
     task.wait(0.4)
     onMatchOrCharacterReset()
-    bindCameraUnlockGuards(newChar)
 end)
 
 -- Connect other players' character respawns and team changes (cleans only that specific player's tracking)
@@ -3399,12 +3375,11 @@ local function getActiveSkillCheckGui()
     for _, name in ipairs(candidateGuiNames) do
         local gui = pg:FindFirstChild(name)
         if gui and (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) then
-            if gui:IsA("ScreenGui") and not gui.Enabled then
-                gui.Enabled = true
-            end
-            local check = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Wheel", true) or gui:FindFirstChild("SkillCheck", true)
-            if check and isGuiElementTrulyVisible(check, gui) then
-                return gui, check
+            if not gui:IsA("ScreenGui") or gui.Enabled then
+                local check = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Wheel", true) or gui:FindFirstChild("SkillCheck", true)
+                if check and isGuiElementTrulyVisible(check, gui) then
+                    return gui, check
+                end
             end
         end
     end
@@ -3550,57 +3525,6 @@ local function snapNeedleToGreatZone(needle, targetRot)
     end)
 end
 
--- Standalone camera and movement unlocker
-local function unlockCameraAndMovement()
-    pcall(function()
-        local myChar = player.Character
-        if myChar then
-            myChar:SetAttribute("overridelookscript", false)
-            myChar:SetAttribute("CamAnimLock", false)
-            myChar:SetAttribute("previewfreezelook", false)
-            myChar:SetAttribute("Immobile", false)
-            local hum = myChar:FindFirstChildOfClass("Humanoid")
-            if hum then
-                hum.AutoRotate = true
-                if hum.WalkSpeed < 8 and not myChar:GetAttribute("Knocked") and not isCharacterKnocked(myChar) and not isCharacterHooked(myChar) then
-                    hum.WalkSpeed = 16
-                end
-            end
-            local hrp = myChar:FindFirstChild("HumanoidRootPart")
-            if hrp and CollectionService then
-                pcall(function() CollectionService:RemoveTag(hrp, "doing action") end)
-            end
-        end
-        pcall(function()
-            player:SetAttribute("overridelookscript", false)
-            player:SetAttribute("CamAnimLock", false)
-            player:SetAttribute("previewfreezelook", false)
-            UserInputService.ModalEnabled = false
-        end)
-        local cam = workspace.CurrentCamera
-        if cam then
-            local myChar = player.Character
-            if myChar and not myChar:GetAttribute("Knocked") and not isCharacterHooked(myChar) then
-                if cam.CameraType == Enum.CameraType.Scriptable then
-                    cam.CameraType = Enum.CameraType.Custom
-                end
-                local hum = myChar:FindFirstChildOfClass("Humanoid")
-                if hum and cam.CameraSubject ~= hum then
-                    cam.CameraSubject = hum
-                end
-            end
-        end
-        -- Cleanly release synthetic touches (touch ID 0 release so camera rotation is never locked)
-        pcall(function()
-            VirtualInputManager:SendTouchEvent(0, 2, 0, 0)
-            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
-            if typeof(touchrelease) == "function" then
-                pcall(touchrelease, 0)
-            end
-        end)
-    end)
-end
-
 -- Helper to locate active Generator and GeneratorPoint context
 local function findActiveRepairContext()
     local myChar = player.Character
@@ -3725,31 +3649,13 @@ local function fireSkillCheckSuccessRemote()
     end)
 end
 
--- Metamethod & Function Interception Hook: Intercepts game remotes to capture live context and guarantee 100% Great success on every check
+-- Metamethod & Function Interception Hook: Intercepts game remotes to capture live context and mutate any "fail" packet into "success"
 local function hookSkillCheckRemotes()
     if skillcheckRemoteHooked then return end
     skillcheckRemoteHooked = true
 
     local newc = (typeof(newcclosure) == "function") and newcclosure or function(f) return f end
     local upk = unpack or table.unpack
-
-    local function handleSkillCheckMutation(self, args)
-        if perfectSkillcheckEnabled or noSkillCheckEnabled then
-            args[1] = "success"
-            args[2] = 1
-            if not args[6] or typeof(args[6]) ~= "Instance" then
-                args[6] = player.Character
-            end
-
-            unlockCameraAndMovement()
-            task.spawn(function()
-                for i = 1, 6 do
-                    task.wait(0.04 * i)
-                    unlockCameraAndMovement()
-                end
-            end)
-        end
-    end
 
     -- 1. Metamethod Hook (__namecall)
     pcall(function()
@@ -3773,13 +3679,21 @@ local function hookSkillCheckRemotes()
                                 lastCapturedRepairRequestId = args[5]
                             end
 
-                            handleSkillCheckMutation(self, args)
-                            return oldNamecall(self, upk(args))
+                            if (perfectSkillcheckEnabled or noSkillCheckEnabled) and args[1] == "fail" then
+                                args[1] = "success"
+                                args[2] = 1
+                                if not args[6] or typeof(args[6]) ~= "Instance" then
+                                    args[6] = player.Character
+                                end
+                                unlockCameraAndMovement()
+                                task.delay(0.05, unlockCameraAndMovement)
+                                return oldNamecall(self, upk(args))
+                            end
                         elseif parentName == "Healing" then
                             if typeof(args[4]) == "string" and args[4] ~= "" then
                                 lastCapturedHealRequestId = args[4]
                             end
-                            if (perfectSkillcheckEnabled or noSkillCheckEnabled) then
+                            if (perfectSkillcheckEnabled or noSkillCheckEnabled) and args[1] == "fail" then
                                 args[1] = "success"
                                 args[2] = 1
                                 if not args[3] or typeof(args[3]) ~= "Instance" then
@@ -3789,6 +3703,7 @@ local function hookSkillCheckRemotes()
                                     args[5] = player.Character
                                 end
                                 unlockCameraAndMovement()
+                                task.delay(0.05, unlockCameraAndMovement)
                                 return oldNamecall(self, upk(args))
                             end
                         end
@@ -3834,8 +3749,17 @@ local function hookSkillCheckRemotes()
                         lastCapturedRepairRequestId = args[5]
                     end
 
-                    handleSkillCheckMutation(self, args)
-                    return oldFireServer(self, upk(args))
+                    if (perfectSkillcheckEnabled or noSkillCheckEnabled) and args[1] == "fail" then
+                        args[1] = "success"
+                        args[2] = 1
+                        if not args[6] or typeof(args[6]) ~= "Instance" then
+                            args[6] = player.Character
+                        end
+                        unlockCameraAndMovement()
+                        task.delay(0.05, unlockCameraAndMovement)
+                        return oldFireServer(self, upk(args))
+                    end
+                    return oldFireServer(self, ...)
                 end))
             end
             if remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
@@ -3863,7 +3787,7 @@ local function hookSkillCheckRemotes()
                     if typeof(args[4]) == "string" and args[4] ~= "" then
                         lastCapturedHealRequestId = args[4]
                     end
-                    if (perfectSkillcheckEnabled or noSkillCheckEnabled) then
+                    if (perfectSkillcheckEnabled or noSkillCheckEnabled) and args[1] == "fail" then
                         args[1] = "success"
                         args[2] = 1
                         if not args[3] or typeof(args[3]) ~= "Instance" then
@@ -3873,6 +3797,7 @@ local function hookSkillCheckRemotes()
                             args[5] = player.Character
                         end
                         unlockCameraAndMovement()
+                        task.delay(0.05, unlockCameraAndMovement)
                         return oldHealFire(self, upk(args))
                     end
                     return oldHealFire(self, ...)
@@ -4053,11 +3978,6 @@ local function triggerPerfectHit(check, gui, needle, targetRot)
                 pcall(function() cas:CallFunction("skillcheck", Enum.UserInputState.Begin, mockKey) end)
                 pcall(function() cas:CallFunction("PadSkillCheck", Enum.UserInputState.Begin, mockKey) end)
                 pcall(function() cas:CallFunction("action", Enum.UserInputState.Begin, mockKey) end)
-                task.defer(function()
-                    pcall(function() cas:CallFunction("skillcheck", Enum.UserInputState.End, mockKey) end)
-                    pcall(function() cas:CallFunction("PadSkillCheck", Enum.UserInputState.End, mockKey) end)
-                    pcall(function() cas:CallFunction("action", Enum.UserInputState.End, mockKey) end)
-                end)
             end)
 
             -- Maintain needle lock for 0.05s across next 3 frames to defeat any script race condition
@@ -4248,23 +4168,23 @@ local function startSkillcheckWatcher()
                 local elapsed = os.clock() - promptOpenTick
 
                 -- Precision Great Zone timing logic:
-                -- 1. If needle rotation is active, hit when needle arrives in Great Zone (distToZone <= 20 or distToZone >= 340, elapsed >= 0.08)
-                -- 2. Fallback: hit at 0.20s to guarantee prompt never runs to timeout
+                -- 1. If needle rotation is active, hit when needle arrives in Great Zone (distToZone <= 15 or distToZone >= 345, elapsed >= 0.12)
+                -- 2. Fallback: standard physical arrival of Great Zone is between 0.28s and 0.40s
                 local shouldHit = false
 
                 if needle then
                     local curRot = (needle:IsA("UIGradient") and needle.Rotation or needle.Rotation) % 360
                     local distToZone = (targetRot - curRot + 360) % 360
-                    if (distToZone <= 20 or distToZone >= 340) and elapsed >= 0.08 then
+                    if (distToZone <= 15 or distToZone >= 345) and elapsed >= 0.12 then
                         shouldHit = true
-                    elseif elapsed >= 0.20 then
+                    elseif elapsed >= 0.28 then
                         shouldHit = true
                     end
-                elseif elapsed >= 0.15 then
+                elseif elapsed >= 0.28 then
                     shouldHit = true
                 end
 
-                if shouldHit and (tick() - lastSkillCheckSolvedTime > 0.12) then
+                if shouldHit and (tick() - lastSkillCheckSolvedTime > 0.18) then
                     promptHandled = true
                     promptHandledTick = os.clock()
                     lastSkillCheckSolvedTime = tick()
@@ -4302,7 +4222,10 @@ task.spawn(function()
                 if not isHook and not isKnock then
                     if myChar:GetAttribute("overridelookscript") == true 
                         or myChar:GetAttribute("CamAnimLock") == true 
-                        or myChar:GetAttribute("previewfreezelook") == true then
+                        or myChar:GetAttribute("previewfreezelook") == true
+                        or player:GetAttribute("overridelookscript") == true 
+                        or player:GetAttribute("CamAnimLock") == true 
+                        or player:GetAttribute("previewfreezelook") == true then
                         unlockCameraAndMovement()
                     end
 
