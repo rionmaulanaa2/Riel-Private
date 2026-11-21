@@ -3196,13 +3196,92 @@ end
 local perfectSkillcheckEnabled = true
 autoSkillCheckEnabled = true
 local noSkillCheckEnabled = false
-local originalCheckPosition = nil
-local lastHiddenCheck = nil
+local hiddenElements = {}
 local skillcheckConn = nil
 local skillcheckManualConn = nil
 local skillcheckHooked = false
 local skillcheckHiderHooked = false
 local lastSkillCheckSolvedTime = 0
+
+-- Visual stealth suppressor for "No Skill Check": hides UI cleanly via transparency without moving off-screen
+local function applyStealthHider(check, gui)
+    if not check then return end
+    pcall(function()
+        if check:IsA("GuiObject") then
+            if not hiddenElements[check] then
+                hiddenElements[check] = {
+                    bg = check.BackgroundTransparency,
+                    img = check:IsA("ImageLabel") and check.ImageTransparency or nil
+                }
+            end
+            check.BackgroundTransparency = 1
+            if check:IsA("ImageLabel") then
+                check.ImageTransparency = 1
+            end
+        end
+
+        for _, desc in ipairs(check:GetDescendants()) do
+            if not hiddenElements[desc] then
+                hiddenElements[desc] = {
+                    bg = desc:IsA("GuiObject") and desc.BackgroundTransparency or nil,
+                    img = desc:IsA("ImageLabel") and desc.ImageTransparency or nil,
+                    txt = desc:IsA("TextLabel") and desc.TextTransparency or nil,
+                    vol = desc:IsA("Sound") and desc.Volume or nil
+                }
+            end
+            if desc:IsA("ImageLabel") or desc:IsA("ImageButton") then
+                desc.ImageTransparency = 1
+                desc.BackgroundTransparency = 1
+            elseif desc:IsA("TextLabel") or desc:IsA("TextButton") then
+                desc.TextTransparency = 1
+                desc.BackgroundTransparency = 1
+            elseif desc:IsA("Frame") then
+                desc.BackgroundTransparency = 1
+            elseif desc:IsA("UIGradient") then
+                desc.Transparency = NumberSequence.new(1)
+            elseif desc:IsA("Sound") then
+                desc.Volume = 0
+                if desc.Playing then desc:Stop() end
+            end
+        end
+
+        if gui then
+            for _, s in ipairs(gui:GetDescendants()) do
+                if s:IsA("Sound") and s.Playing then
+                    s.Volume = 0
+                    s:Stop()
+                end
+            end
+        end
+    end)
+end
+
+local function restoreCheckVisuals()
+    pcall(function()
+        for elem, orig in pairs(hiddenElements) do
+            if elem and elem.Parent then
+                pcall(function()
+                    if orig.bg ~= nil and elem:IsA("GuiObject") then
+                        elem.BackgroundTransparency = orig.bg
+                    end
+                    if orig.img ~= nil and (elem:IsA("ImageLabel") or elem:IsA("ImageButton")) then
+                        elem.ImageTransparency = orig.img
+                    end
+                    if orig.txt ~= nil and (elem:IsA("TextLabel") or elem:IsA("TextButton")) then
+                        elem.TextTransparency = orig.txt
+                    end
+                    if orig.vol ~= nil and elem:IsA("Sound") then
+                        elem.Volume = orig.vol
+                    end
+                    if elem:IsA("UIGradient") then
+                        elem.Transparency = NumberSequence.new(0)
+                    end
+                end)
+            end
+        end
+        hiddenElements = {}
+    end)
+end
 
 -- Helper to check if a GuiObject is truly active, rendered and visible on screen
 local function isGuiElementTrulyVisible(elem, rootGui)
@@ -3413,14 +3492,12 @@ local function unlockCameraAndMovement()
                 cam.CameraType = Enum.CameraType.Custom
             end
         end
-        -- Cleanly release synthetic touches (touch IDs 3 and 4 only, NEVER touch 0 or 1 which belong to player thumbs!)
+        -- Cleanly release synthetic touches (touch ID 0 release so camera rotation is never locked)
         pcall(function()
-            VirtualInputManager:SendTouchEvent(3, 2, 0, 0)
-            VirtualInputManager:SendTouchEvent(4, 2, 0, 0)
+            VirtualInputManager:SendTouchEvent(0, 2, 0, 0)
             VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
             if typeof(touchrelease) == "function" then
-                pcall(touchrelease, 3)
-                pcall(touchrelease, 4)
+                pcall(touchrelease, 0)
             end
         end)
     end)
@@ -3430,7 +3507,7 @@ end
 local function triggerPerfectHit(check, gui, needle, targetRot)
     task.spawn(function()
         pcall(function()
-            -- Snap needle directly onto Great Zone before dispatch
+            -- 1. Snap needle directly onto Great Zone before dispatch
             if needle then
                 snapNeedleToGreatZone(needle, targetRot)
             end
@@ -3438,19 +3515,21 @@ local function triggerPerfectHit(check, gui, needle, targetRot)
             local boundKeyName = player:GetAttribute("kb_skillcheck") or "Space"
             local boundKeyCode = Enum.KeyCode[boundKeyName] or Enum.KeyCode.Space
 
-            -- Physical screen center of Check wheel (incorporating GuiInset for mobile notch/topbar)
-            local center = Vector2.new(0, 0)
-            if check and check:IsA("GuiObject") then
-                pcall(function()
-                    local inset = Vector2.new(0, 0)
-                    pcall(function() inset = game:GetService("GuiService"):GetGuiInset() end)
-                    center = check.AbsolutePosition + (check.AbsoluteSize / 2) + inset
-                end)
-            end
-            local cx = center.X
-            local cy = center.Y
+            -- Physical screen center coordinates (with camera viewport fallback)
+            local tapX, tapY
+            local inset = Vector2.new(0, 0)
+            pcall(function() inset = game:GetService("GuiService"):GetGuiInset() end)
+            local cam = workspace.CurrentCamera
+            local vp = cam and cam.ViewportSize or Vector2.new(800, 600)
 
-            -- Construct mock InputObjects with metatables for maximum executor compatibility
+            if check and check:IsA("GuiObject") and check.AbsolutePosition.X > 0 and check.AbsolutePosition.Y > 0 and check.AbsoluteSize.X > 5 then
+                local center = check.AbsolutePosition + (check.AbsoluteSize / 2) + inset
+                tapX, tapY = center.X, center.Y
+            else
+                tapX, tapY = vp.X / 2, vp.Y / 2
+            end
+
+            -- Construct mock InputObjects for fallback signal delivery
             local mockKey = setmetatable({
                 KeyCode = boundKeyCode,
                 UserInputType = Enum.UserInputType.Keyboard,
@@ -3471,14 +3550,14 @@ local function triggerPerfectHit(check, gui, needle, targetRot)
                 KeyCode = Enum.KeyCode.Unknown,
                 UserInputType = Enum.UserInputType.Touch,
                 UserInputState = Enum.UserInputState.Begin,
-                Position = Vector3.new(cx, cy, 0),
+                Position = Vector3.new(tapX, tapY, 0),
                 Delta = Vector3.new(0, 0, 0)
             }, {
                 __index = function(t, k)
                     if k == "KeyCode" then return Enum.KeyCode.Unknown
                     elseif k == "UserInputType" then return Enum.UserInputType.Touch
                     elseif k == "UserInputState" then return Enum.UserInputState.Begin
-                    elseif k == "Position" then return Vector3.new(cx, cy, 0)
+                    elseif k == "Position" then return Vector3.new(tapX, tapY, 0)
                     end
                     return nil
                 end
@@ -3505,38 +3584,39 @@ local function triggerPerfectHit(check, gui, needle, targetRot)
                 end)
             end
 
+            -- ============================================================
+            -- CHANNEL 2: MOBILE TOUCH DISPATCH (Native Touch ID 0 - Instant Release in SAME frame)
+            -- ============================================================
             pcall(function()
-                local vu = game:GetService("VirtualUser")
-                vu:SetKeyDown("0x20")
-                vu:SetKeyUp("0x20")
+                VirtualInputManager:SendTouchEvent(0, 0, tapX, tapY)
+                VirtualInputManager:SendTouchEvent(0, 2, tapX, tapY)
             end)
-
-            -- ============================================================
-            -- CHANNEL 2: MOBILE TOUCH DISPATCH (Instant Release in SAME frame - Zero Camera Stolen)
-            -- ============================================================
-            if cx > 0 and cy > 0 then
+            if typeof(touchpress) == "function" and typeof(touchrelease) == "function" then
                 pcall(function()
-                    VirtualInputManager:SendTouchEvent(3, 0, cx, cy)
-                    VirtualInputManager:SendTouchEvent(3, 2, cx, cy)
-                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
-                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                    touchpress(0, tapX, tapY)
+                    touchrelease(0)
                 end)
-                if typeof(touchpress) == "function" and typeof(touchrelease) == "function" then
-                    pcall(function()
-                        touchpress(3, cx, cy)
-                        touchrelease(3)
-                    end)
-                end
             end
 
             -- ============================================================
-            -- CHANNEL 3: DIRECT FIRESIGNAL & GETCONNECTIONS (Bypasses UI layer)
+            -- CHANNEL 3: MOUSE BUTTON DISPATCH
+            -- ============================================================
+            pcall(function()
+                VirtualInputManager:SendMouseButtonEvent(tapX, tapY, 0, true, game, 0)
+                VirtualInputManager:SendMouseButtonEvent(tapX, tapY, 0, false, game, 0)
+            end)
+            if typeof(mouse1click) == "function" then
+                pcall(mouse1click)
+            end
+
+            -- ============================================================
+            -- CHANNEL 4: DIRECT FIRESIGNAL & GETCONNECTIONS
             -- ============================================================
             pcall(function()
                 if typeof(firesignal) == "function" then
                     pcall(firesignal, UserInputService.InputBegan, mockKey, false)
                     pcall(firesignal, UserInputService.InputBegan, mockTouch, false)
-                    pcall(firesignal, UserInputService.TouchTap, { Vector2.new(cx, cy) }, false)
+                    pcall(firesignal, UserInputService.TouchTap, { Vector2.new(tapX, tapY) }, false)
                 end
                 if typeof(getconnections) == "function" then
                     pcall(function()
@@ -3551,15 +3631,13 @@ local function triggerPerfectHit(check, gui, needle, targetRot)
             end)
 
             -- ============================================================
-            -- CHANNEL 4: DIRECT UI TARGET & SPACE BUTTON DISPATCH
+            -- CHANNEL 5: DIRECT UI TARGET & SPACE BUTTON DISPATCH
             -- ============================================================
             pcall(function()
-                if check then
+                if check and check:IsA("GuiObject") then
                     local targets = { check }
-                    local spaceBtn = check:FindFirstChild("Space")
-                    if spaceBtn then table.insert(targets, spaceBtn) end
-                    for _, ch in ipairs(check:GetChildren()) do
-                        if ch:IsA("GuiButton") or ch.Name:lower():find("tap") or ch.Name:lower():find("button") then
+                    for _, ch in ipairs(check:GetDescendants()) do
+                        if ch:IsA("GuiObject") then
                             table.insert(targets, ch)
                         end
                     end
@@ -3572,31 +3650,21 @@ local function triggerPerfectHit(check, gui, needle, targetRot)
                             if target:IsA("GuiButton") then
                                 pcall(firesignal, target.Activated)
                                 pcall(firesignal, target.MouseButton1Click)
+                                pcall(firesignal, target.MouseButton1Down)
+                                pcall(firesignal, target.MouseButton1Up)
                             end
                         end
-                        if typeof(getconnections) == "function" then
-                            pcall(function()
-                                if target.InputBegan then
-                                    for _, conn in ipairs(getconnections(target.InputBegan)) do
-                                        if conn and conn.Fire then
-                                            pcall(function() conn:Fire(mockTouch, false) end)
-                                            pcall(function() conn:Fire(mockKey, false) end)
-                                        end
-                                    end
-                                end
-                                if target:IsA("GuiButton") and target.Activated then
-                                    for _, conn in ipairs(getconnections(target.Activated)) do
-                                        if conn and conn.Fire then pcall(function() conn:Fire() end) end
-                                    end
-                                end
-                            end)
+                        if typeof(getconnections) == "function" and target:IsA("GuiButton") and target.Activated then
+                            for _, conn in ipairs(getconnections(target.Activated)) do
+                                if conn and conn.Fire then pcall(function() conn:Fire() end) end
+                            end
                         end
                     end
                 end
             end)
 
             -- ============================================================
-            -- CHANNEL 5: CONTEXT ACTION SERVICE
+            -- CHANNEL 6: CONTEXT ACTION SERVICE
             -- ============================================================
             pcall(function()
                 local cas = game:GetService("ContextActionService")
@@ -3605,9 +3673,9 @@ local function triggerPerfectHit(check, gui, needle, targetRot)
                 pcall(function() cas:CallFunction("action", Enum.UserInputState.Begin, mockKey) end)
             end)
 
-            -- Maintain needle lock for 0.03s across next 2 frames to defeat any script race condition
-            for i = 1, 2 do
-                task.wait(0.015)
+            -- Maintain needle lock for 0.05s across next 3 frames to defeat any script race condition
+            for i = 1, 3 do
+                task.wait(0.016)
                 if needle then
                     snapNeedleToGreatZone(needle, targetRot)
                 end
@@ -3615,7 +3683,7 @@ local function triggerPerfectHit(check, gui, needle, targetRot)
 
             -- Clean camera and movement unlock
             unlockCameraAndMovement()
-            task.delay(0.06, unlockCameraAndMovement)
+            task.delay(0.08, unlockCameraAndMovement)
         end)
     end)
 end
@@ -3677,11 +3745,9 @@ local function hookSkillCheckHider()
                 if check and check:IsA("GuiObject") then
                     check:GetPropertyChangedSignal("Visible"):Connect(function()
                         if noSkillCheckEnabled and check.Visible then
-                            if not originalCheckPosition then
-                                originalCheckPosition = check.Position
-                                lastHiddenCheck = check
-                            end
-                            check.Position = UDim2.fromScale(-99, -99)
+                            applyStealthHider(check, gui)
+                        elseif not noSkillCheckEnabled then
+                            restoreCheckVisuals()
                         end
                     end)
                 end
@@ -3690,12 +3756,10 @@ local function hookSkillCheckHider()
                         if noSkillCheckEnabled and gui.Enabled then
                             local c = gui:FindFirstChild("Check", true) or gui:FindFirstChild("Wheel", true) or gui:FindFirstChild("SkillCheck", true)
                             if c and c:IsA("GuiObject") then
-                                if not originalCheckPosition then
-                                    originalCheckPosition = c.Position
-                                    lastHiddenCheck = c
-                                end
-                                c.Position = UDim2.fromScale(-99, -99)
+                                applyStealthHider(c, gui)
                             end
+                        elseif not noSkillCheckEnabled then
+                            restoreCheckVisuals()
                         end
                     end)
                 end
@@ -3727,7 +3791,7 @@ local function startSkillcheckWatcher()
     local promptHandledTick = 0
     local rotHistory = {}
 
-    -- Manual Tap / Key Hook: If user taps/presses manually at ANY time, snap needle to Great Zone instantly!
+    -- Manual Tap / Key Hook: If user taps/presses manually at ANY time, snap needle to Great Zone and solve instantly!
     skillcheckManualConn = UserInputService.InputBegan:Connect(function(input, processed)
         if not perfectSkillcheckEnabled and not noSkillCheckEnabled then return end
         local isTriggerInput = (input.UserInputType == Enum.UserInputType.Keyboard and (input.KeyCode == Enum.KeyCode.Space or input.KeyCode == (Enum.KeyCode[player:GetAttribute("kb_skillcheck") or "Space"] or Enum.KeyCode.Space)))
@@ -3743,6 +3807,12 @@ local function startSkillcheckWatcher()
                 if needle then
                     snapNeedleToGreatZone(needle, targetRot)
                 end
+                if not promptHandled and (tick() - lastSkillCheckSolvedTime > 0.15) then
+                    promptHandled = true
+                    promptHandledTick = os.clock()
+                    lastSkillCheckSolvedTime = tick()
+                    triggerPerfectHit(check, gui, needle, targetRot)
+                end
             end
         end
     end)
@@ -3753,27 +3823,13 @@ local function startSkillcheckWatcher()
 
         local gui, check = getActiveSkillCheckGui()
         if check and check.Visible and check.AbsoluteSize.X > 5 and check.AbsoluteSize.Y > 5 then
-            -- If No Skill Check is enabled, instantly suppress popup visually from screen
+            -- If No Skill Check is enabled, cleanly hide visual elements via transparency
             if noSkillCheckEnabled and check:IsA("GuiObject") then
-                if not originalCheckPosition then
-                    originalCheckPosition = check.Position
-                    lastHiddenCheck = check
-                end
-                check.Position = UDim2.fromScale(-99, -99)
-                pcall(function()
-                    if gui then
-                        for _, s in ipairs(gui:GetDescendants()) do
-                            if s:IsA("Sound") and s.Playing then
-                                s.Volume = 0
-                                s:Stop()
-                            end
-                        end
-                    end
-                end)
+                applyStealthHider(check, gui)
             end
 
-            -- Safety: auto-reset if prompt remained open after 0.75s so subsequent skill checks re-trigger
-            if promptHandled and (os.clock() - promptHandledTick > 0.75) then
+            -- Safety: auto-reset if prompt remained open after 0.80s so subsequent skill checks re-trigger
+            if promptHandled and (os.clock() - promptHandledTick > 0.80) then
                 promptHandled = false
                 promptOpenTick = os.clock()
             end
@@ -3796,25 +3852,24 @@ local function startSkillcheckWatcher()
                 local targetRot = resolveTargetRotation(targetZone, greatZone, check)
                 local elapsed = os.clock() - promptOpenTick
 
-                -- Automatic Execution Rule:
-                -- If No Skill Check is active, hit ultra-fast at elapsed >= 0.05 (3-4 frames)
-                -- Otherwise wait 0.08s (5-6 frames) or hit immediately when within 15° of targetRot.
+                -- Precision Great Zone timing logic:
+                -- 1. If needle rotation is active, hit when needle arrives in Great Zone (distToZone <= 15 or distToZone >= 345, elapsed >= 0.12)
+                -- 2. Fallback: standard physical arrival of Great Zone is between 0.28s and 0.40s
                 local shouldHit = false
-                local minWait = noSkillCheckEnabled and 0.05 or 0.08
 
                 if needle then
                     local curRot = (needle:IsA("UIGradient") and needle.Rotation or needle.Rotation) % 360
                     local distToZone = (targetRot - curRot + 360) % 360
-                    if distToZone <= 15 or distToZone >= 355 then
+                    if (distToZone <= 15 or distToZone >= 345) and elapsed >= 0.12 then
                         shouldHit = true
-                    elseif elapsed >= minWait then
+                    elseif elapsed >= 0.28 then
                         shouldHit = true
                     end
-                elseif elapsed >= minWait then
+                elseif elapsed >= 0.28 then
                     shouldHit = true
                 end
 
-                if shouldHit and (tick() - lastSkillCheckSolvedTime > 0.20) then
+                if shouldHit and (tick() - lastSkillCheckSolvedTime > 0.18) then
                     promptHandled = true
                     promptHandledTick = os.clock()
                     lastSkillCheckSolvedTime = tick()
@@ -3822,12 +3877,8 @@ local function startSkillcheckWatcher()
                 end
             end
         else
-            -- Prompt closed / finished: restore original position if it was hidden
-            if lastHiddenCheck and originalCheckPosition and lastHiddenCheck.Parent then
-                pcall(function() lastHiddenCheck.Position = originalCheckPosition end)
-            end
-            lastHiddenCheck = nil
-            originalCheckPosition = nil
+            -- Prompt closed / finished: restore original visual transparency
+            restoreCheckVisuals()
 
             if promptHandled or promptOpenTick > 0 then
                 unlockCameraAndMovement()
@@ -3920,11 +3971,7 @@ local noSkillcheckToggle = V_ObjectiveSection:Toggle({
             startSkillcheckWatcher()
             WindUI:Notify({ Title = "No Skill Check", Content = "No Skill Check active: pop-ups hidden & auto-solved!", Duration = 2 })
         else
-            if lastHiddenCheck and originalCheckPosition and lastHiddenCheck.Parent then
-                pcall(function() lastHiddenCheck.Position = originalCheckPosition end)
-            end
-            lastHiddenCheck = nil
-            originalCheckPosition = nil
+            restoreCheckVisuals()
             if not perfectSkillcheckEnabled then
                 if skillcheckConn then
                     pcall(function() skillcheckConn:Disconnect() end)
