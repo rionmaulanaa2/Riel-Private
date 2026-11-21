@@ -1934,7 +1934,7 @@ task.spawn(function()
 end)
 
 -- Tab Skillcheck UI Toggle Configuration
-local perfectSkillcheckToggle = Tab:Toggle({
+local perfectSkillcheckToggle = V_ObjectiveSection:Toggle({
     Title = "Perfect Skillcheck (All-Time Great)",
     Description = "100% Autonomous Perfect/Great skillchecks: instant Great-zone snap & multi-channel input dispatch.",
     Default = perfectSkillcheckEnabled,

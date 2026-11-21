@@ -95,6 +95,30 @@ const foreignPatterns = [
             }
         });
     });
+
+    // Check that all UI method callers (:Toggle, :Slider, :Dropdown, :Button) are declared sections/tabs
+    const declaredSections = new Set();
+    lines.forEach(line => {
+        const m = line.match(/^\s*(local\s+)?([A-Za-z0-9_]+)\s*=\s*([A-Za-z0-9_]+):(Section|Tab)\(/);
+        if (m) declaredSections.add(m[2]);
+        const m2 = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*Window:(Section|Tab)\(/);
+        if (m2) declaredSections.add(m2[1]);
+        const m3 = line.match(/^\s*local\s+([A-Za-z0-9_]+Section|[A-Za-z0-9_]+Tab)\s*=/);
+        if (m3) declaredSections.add(m3[1]);
+    });
+
+    lines.forEach((line, idx) => {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('--')) return;
+        const match = trimmed.match(/([A-Za-z0-9_]+):(Toggle|Slider|Dropdown|Button)\(/);
+        if (match) {
+            const caller = match[1];
+            if (!declaredSections.has(caller)) {
+                console.error(`  ❌ [STATIC AUDIT] ${fileName} line ${idx + 1}: Undeclared caller '${caller}' for :${match[2]} -> ${trimmed}`);
+                totalErrors++;
+            }
+        }
+    });
 });
 
 console.log('====================================================');
