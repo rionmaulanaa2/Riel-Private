@@ -2229,7 +2229,7 @@ end
 
 local function isCharacterKnocked(char)
     if not char or not char.Parent then return false end
-    -- Authoritative game attributes set on downed crawling survivors
+    -- Authoritative game attributes and tags set by server on downed crawling survivors
     if char:GetAttribute("Knocked") == true or char:GetAttribute("isKnocked") == true
         or char:GetAttribute("Downed") == true or char:GetAttribute("isDowned") == true then
         return true
@@ -2239,12 +2239,6 @@ local function isCharacterKnocked(char)
     end
     if char:FindFirstChild("downed") or char:FindFirstChild("Knocked") or char:FindFirstChild("Downed") then
         return true
-    end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum and (hum.PlatformStand or (hum.Sit and not char:GetAttribute("isRepairing"))) then
-        if not char:GetAttribute("isSliding") and not char:GetAttribute("isVaulting") then
-            return true
-        end
     end
     return false
 end
@@ -7081,15 +7075,27 @@ local function findNearestSurvivor()
     local bestTarget = nil
     local bestDist = math.huge
     local candidateModels = {}
+    local seen = {}
 
-    -- 1. Check Players
+    -- 1. Check all survivors currently tracked by ESP!
+    if trackedSurvivors then
+        for c, _ in pairs(trackedSurvivors) do
+            if c and c.Parent and c ~= myChar and not seen[c] then
+                seen[c] = true
+                table.insert(candidateModels, c)
+            end
+        end
+    end
+
+    -- 2. Check Players
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player and plr.Character and plr.Character ~= myChar then
+        if plr ~= player and plr.Character and plr.Character ~= myChar and not seen[plr.Character] then
+            seen[plr.Character] = true
             table.insert(candidateModels, plr.Character)
         end
     end
 
-    -- 2. Check workspace subfolders (Survivors, Characters, Match, Entities)
+    -- 3. Check workspace subfolders (Survivors, Characters, Match, Entities)
     local searchContainers = { workspace }
     for _, fName in ipairs({ "Survivors", "Players", "Characters", "Match", "Entities" }) do
         local folder = workspace:FindFirstChild(fName)
@@ -7100,7 +7106,8 @@ local function findNearestSurvivor()
 
     for _, container in ipairs(searchContainers) do
         for _, obj in ipairs(container:GetChildren()) do
-            if obj:IsA("Model") and obj ~= myChar and not Players:GetPlayerFromCharacter(obj) then
+            if obj:IsA("Model") and obj ~= myChar and not seen[obj] then
+                seen[obj] = true
                 table.insert(candidateModels, obj)
             end
         end
@@ -7131,15 +7138,27 @@ local function findNearestDownedSurvivor()
     local bestDowned = nil
     local bestDist = math.huge
     local candidateModels = {}
+    local seen = {}
 
-    -- 1. Check Players
+    -- 1. Check all survivors currently tracked by ESP!
+    if trackedSurvivors then
+        for c, _ in pairs(trackedSurvivors) do
+            if c and c.Parent and c ~= myChar and not seen[c] then
+                seen[c] = true
+                table.insert(candidateModels, c)
+            end
+        end
+    end
+
+    -- 2. Check Players
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player and plr.Character and plr.Character ~= myChar then
+        if plr ~= player and plr.Character and plr.Character ~= myChar and not seen[plr.Character] then
+            seen[plr.Character] = true
             table.insert(candidateModels, plr.Character)
         end
     end
 
-    -- 2. Check workspace subfolders
+    -- 3. Check workspace subfolders
     local searchContainers = { workspace }
     for _, fName in ipairs({ "Survivors", "Players", "Characters", "Match", "Entities" }) do
         local folder = workspace:FindFirstChild(fName)
@@ -7150,7 +7169,8 @@ local function findNearestDownedSurvivor()
 
     for _, container in ipairs(searchContainers) do
         for _, obj in ipairs(container:GetChildren()) do
-            if obj:IsA("Model") and obj ~= myChar and not Players:GetPlayerFromCharacter(obj) then
+            if obj:IsA("Model") and obj ~= myChar and not seen[obj] then
+                seen[obj] = true
                 table.insert(candidateModels, obj)
             end
         end
@@ -7763,21 +7783,80 @@ local survivorDropdownRef = nil
 local function getAliveSurvivorList()
     local result = {}
     local myChar = player.Character
+    local seen = {}
+
+    -- 1. Check all survivors currently detected & tracked by ESP!
+    if trackedSurvivors then
+        for c, _ in pairs(trackedSurvivors) do
+            if c and c.Parent and c ~= myChar and not seen[c] then
+                local hrp = c:FindFirstChild("HumanoidRootPart")
+                if hrp and c:IsDescendantOf(workspace) then
+                    seen[c] = true
+                    local plr = Players:GetPlayerFromCharacter(c)
+                    local pName = plr and (plr.DisplayName or plr.Name) or c.Name
+                    local status = isCharacterKnocked(c) and " [Downed]" or (isCharacterHooked(c) and " [Hooked]" or "")
+                    local label = string.format("%s%s", pName, status)
+                    table.insert(result, {
+                        label = label,
+                        player = plr,
+                        character = c,
+                        name = pName
+                    })
+                end
+            end
+        end
+    end
+
+    -- 2. Check Players
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player and plr.Character and plr.Character ~= myChar then
-            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
-            local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
-            if hum and hrp and hum.Health > 0 and plr.Character:IsDescendantOf(workspace) then
-                local label = string.format("%s (@%s)", plr.DisplayName or plr.Name, plr.Name)
+        if plr ~= player and plr.Character and plr.Character ~= myChar and not seen[plr.Character] then
+            local c = plr.Character
+            local hrp = c:FindFirstChild("HumanoidRootPart")
+            if hrp and c:IsDescendantOf(workspace) and not isEntityInLobbyOrSpectating(c, plr) then
+                seen[c] = true
+                local pName = plr.DisplayName or plr.Name
+                local status = isCharacterKnocked(c) and " [Downed]" or (isCharacterHooked(c) and " [Hooked]" or "")
+                local label = string.format("%s (@%s)%s", pName, plr.Name, status)
                 table.insert(result, {
                     label = label,
                     player = plr,
-                    character = plr.Character,
+                    character = c,
                     name = plr.Name
                 })
             end
         end
     end
+
+    -- 3. Check workspace subfolders (Survivors, Players, Characters, Match, Entities)
+    local searchContainers = { workspace }
+    for _, fName in ipairs({ "Survivors", "Players", "Characters", "Match", "Entities" }) do
+        local folder = workspace:FindFirstChild(fName)
+        if folder and (folder:IsA("Folder") or folder:IsA("Model")) then
+            table.insert(searchContainers, folder)
+        end
+    end
+
+    for _, container in ipairs(searchContainers) do
+        for _, obj in ipairs(container:GetChildren()) do
+            if obj:IsA("Model") and obj ~= myChar and not seen[obj] then
+                local hrp = obj:FindFirstChild("HumanoidRootPart")
+                if hrp and obj:IsDescendantOf(workspace) and not isEntityInLobbyOrSpectating(obj) then
+                    seen[obj] = true
+                    local plr = Players:GetPlayerFromCharacter(obj)
+                    local pName = plr and (plr.DisplayName or plr.Name) or obj.Name
+                    local status = isCharacterKnocked(obj) and " [Downed]" or (isCharacterHooked(obj) and " [Hooked]" or "")
+                    local label = string.format("%s%s", pName, status)
+                    table.insert(result, {
+                        label = label,
+                        player = plr,
+                        character = obj,
+                        name = pName
+                    })
+                end
+            end
+        end
+    end
+
     return result
 end
 
@@ -7832,9 +7911,46 @@ V_KillerSection:Button({
             return
         end
 
+        -- Fetch live survivor list
         local survivors = getAliveSurvivorList()
+
+        -- Robust fallbacks if getAliveSurvivorList had 0 entries
         if #survivors == 0 then
-            WindUI:Notify({ Title = "Teleport Failed", Content = "No alive survivors detected in the match!", Duration = 2.5 })
+            local nearest, nDist = findNearestSurvivor()
+            if nearest and nearest:FindFirstChild("HumanoidRootPart") then
+                table.insert(survivors, {
+                    label = nearest.Name,
+                    character = nearest,
+                    name = nearest.Name
+                })
+            end
+        end
+
+        if #survivors == 0 then
+            local downed, dDist = findNearestDownedSurvivor()
+            if downed and downed:FindFirstChild("HumanoidRootPart") then
+                table.insert(survivors, {
+                    label = downed.Name .. " (Downed)",
+                    character = downed,
+                    name = downed.Name
+                })
+            end
+        end
+
+        if #survivors == 0 and trackedSurvivors then
+            for c, _ in pairs(trackedSurvivors) do
+                if c and c.Parent and c ~= myChar and c:FindFirstChild("HumanoidRootPart") then
+                    table.insert(survivors, {
+                        label = c.Name,
+                        character = c,
+                        name = c.Name
+                    })
+                end
+            end
+        end
+
+        if #survivors == 0 then
+            WindUI:Notify({ Title = "Teleport Failed", Content = "No survivors detected in the match!", Duration = 2.5 })
             return
         end
 
@@ -7869,14 +7985,15 @@ V_KillerSection:Button({
             myHrp.CFrame = behindCF
             myHrp.AssemblyLinearVelocity = Vector3.zero
             myHrp.AssemblyAngularVelocity = Vector3.zero
-            task.wait(0.03)
+            task.wait(0.02)
         end
 
         currentKillerTarget = tChar
 
+        local tName = targetEntry.player and (targetEntry.player.DisplayName or targetEntry.player.Name) or targetEntry.name or "Survivor"
         WindUI:Notify({
             Title = "⚡ Teleported to Survivor",
-            Content = string.format("Warped behind %s!", targetEntry.player.DisplayName or targetEntry.name),
+            Content = string.format("Warped behind %s!", tName),
             Duration = 2.5
         })
     end
