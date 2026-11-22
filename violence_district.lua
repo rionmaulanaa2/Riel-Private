@@ -1773,7 +1773,7 @@ local function fireSkillCheckSuccessRemote()
                         genModel,
                         genPoint,
                         requestId,
-                        myChar
+                        { player.Name }
                     )
                 end)
             end
@@ -1827,12 +1827,19 @@ local function hookSkillCheckRemotes()
                                 lastCapturedRepairRequestId = args[5]
                             end
 
-                            if (perfectSkillcheckEnabled or noSkillCheckEnabled) and args[1] == "fail" then
+                            if perfectSkillcheckEnabled or noSkillCheckEnabled then
                                 args[1] = "success"
                                 args[2] = 1
-                                if not args[6] or typeof(args[6]) ~= "Instance" then
-                                    args[6] = player.Character
+                                if not args[3] or typeof(args[3]) ~= "Instance" then
+                                    args[3] = lastCapturedGenModel
                                 end
+                                if not args[4] or typeof(args[4]) ~= "Instance" then
+                                    args[4] = lastCapturedGenPoint
+                                end
+                                if not args[5] or typeof(args[5]) ~= "string" or args[5] == "" then
+                                    args[5] = lastCapturedRepairRequestId or HttpService:GenerateGUID(false)
+                                end
+                                args[6] = { player.Name }
                                 unlockCameraAndMovement()
                                 task.delay(0.05, unlockCameraAndMovement)
                                 return oldNamecall(self, upk(args))
@@ -1841,7 +1848,7 @@ local function hookSkillCheckRemotes()
                             if typeof(args[4]) == "string" and args[4] ~= "" then
                                 lastCapturedHealRequestId = args[4]
                             end
-                            if (perfectSkillcheckEnabled or noSkillCheckEnabled) and args[1] == "fail" then
+                            if perfectSkillcheckEnabled or noSkillCheckEnabled then
                                 args[1] = "success"
                                 args[2] = 1
                                 if not args[3] or typeof(args[3]) ~= "Instance" then
@@ -1897,12 +1904,19 @@ local function hookSkillCheckRemotes()
                         lastCapturedRepairRequestId = args[5]
                     end
 
-                    if (perfectSkillcheckEnabled or noSkillCheckEnabled) and args[1] == "fail" then
+                    if perfectSkillcheckEnabled or noSkillCheckEnabled then
                         args[1] = "success"
                         args[2] = 1
-                        if not args[6] or typeof(args[6]) ~= "Instance" then
-                            args[6] = player.Character
+                        if not args[3] or typeof(args[3]) ~= "Instance" then
+                            args[3] = lastCapturedGenModel
                         end
+                        if not args[4] or typeof(args[4]) ~= "Instance" then
+                            args[4] = lastCapturedGenPoint
+                        end
+                        if not args[5] or typeof(args[5]) ~= "string" or args[5] == "" then
+                            args[5] = lastCapturedRepairRequestId or HttpService:GenerateGUID(false)
+                        end
+                        args[6] = { player.Name }
                         unlockCameraAndMovement()
                         task.delay(0.05, unlockCameraAndMovement)
                         return oldFireServer(self, upk(args))
@@ -1935,7 +1949,7 @@ local function hookSkillCheckRemotes()
                     if typeof(args[4]) == "string" and args[4] ~= "" then
                         lastCapturedHealRequestId = args[4]
                     end
-                    if (perfectSkillcheckEnabled or noSkillCheckEnabled) and args[1] == "fail" then
+                    if perfectSkillcheckEnabled or noSkillCheckEnabled then
                         args[1] = "success"
                         args[2] = 1
                         if not args[3] or typeof(args[3]) ~= "Instance" then
@@ -1955,180 +1969,19 @@ local function hookSkillCheckRemotes()
     end)
 end
 
--- Standalone skillcheck trigger execution (Full Multi-Dispatch: Direct Remote, PC Key, Gamepad, Touch Tap, CAS & Direct UI)
+-- Standalone skillcheck trigger execution (Pure Network Remote & Needle Sync, Zero Tap Interference)
 local function triggerPerfectHit(check, gui, needle, targetRot)
     task.spawn(function()
         pcall(function()
-            -- 0. Direct server remote confirmation (Guaranteed Server-Side Great)
+            -- 0. Direct server remote confirmation (Guaranteed Server-Side Great: "success", 1, genModel, genPoint, requestId, { player.Name })
             fireSkillCheckSuccessRemote()
 
-            -- 1. Snap needle directly onto Great Zone before dispatch
+            -- 1. Snap needle directly onto Great Zone for perfect visual alignment
             if needle then
                 snapNeedleToGreatZone(needle, targetRot)
             end
 
-            local boundKeyName = player:GetAttribute("kb_skillcheck") or "Space"
-            local boundKeyCode = Enum.KeyCode[boundKeyName] or Enum.KeyCode.Space
-
-            -- Physical screen center coordinates (with camera viewport fallback)
-            local tapX, tapY
-            local inset = Vector2.new(0, 0)
-            pcall(function() inset = game:GetService("GuiService"):GetGuiInset() end)
-            local cam = workspace.CurrentCamera
-            local vp = cam and cam.ViewportSize or Vector2.new(800, 600)
-
-            if check and check:IsA("GuiObject") and check.AbsolutePosition.X > 0 and check.AbsolutePosition.Y > 0 and check.AbsoluteSize.X > 5 then
-                local center = check.AbsolutePosition + (check.AbsoluteSize / 2) + inset
-                tapX, tapY = center.X, center.Y
-            else
-                tapX, tapY = vp.X / 2, vp.Y / 2
-            end
-
-            -- Construct mock InputObjects for fallback signal delivery
-            local mockKey = setmetatable({
-                KeyCode = boundKeyCode,
-                UserInputType = Enum.UserInputType.Keyboard,
-                UserInputState = Enum.UserInputState.Begin,
-                Position = Vector3.new(0, 0, 0),
-                Delta = Vector3.new(0, 0, 0)
-            }, {
-                __index = function(t, k)
-                    if k == "KeyCode" then return boundKeyCode
-                    elseif k == "UserInputType" then return Enum.UserInputType.Keyboard
-                    elseif k == "UserInputState" then return Enum.UserInputState.Begin
-                    end
-                    return nil
-                end
-            })
-
-            local mockTouch = setmetatable({
-                KeyCode = Enum.KeyCode.Unknown,
-                UserInputType = Enum.UserInputType.Touch,
-                UserInputState = Enum.UserInputState.Begin,
-                Position = Vector3.new(tapX, tapY, 0),
-                Delta = Vector3.new(0, 0, 0)
-            }, {
-                __index = function(t, k)
-                    if k == "KeyCode" then return Enum.KeyCode.Unknown
-                    elseif k == "UserInputType" then return Enum.UserInputType.Touch
-                    elseif k == "UserInputState" then return Enum.UserInputState.Begin
-                    elseif k == "Position" then return Vector3.new(tapX, tapY, 0)
-                    end
-                    return nil
-                end
-            })
-
-            -- ============================================================
-            -- CHANNEL 1: PC KEYBOARD & GAMEPAD DISPATCH (Instant down & up in same frame)
-            -- ============================================================
-            pcall(function()
-                VirtualInputManager:SendKeyEvent(true, boundKeyCode, false, game)
-                VirtualInputManager:SendKeyEvent(false, boundKeyCode, false, game)
-                if boundKeyCode ~= Enum.KeyCode.Space then
-                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-                end
-                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.ButtonL1, false, game)
-                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.ButtonL1, false, game)
-            end)
-
-            if typeof(keypress) == "function" and typeof(keyrelease) == "function" then
-                pcall(function()
-                    keypress(0x20)
-                    keyrelease(0x20)
-                end)
-            end
-
-            -- ============================================================
-            -- CHANNEL 2: MOBILE TOUCH DISPATCH (Native Touch ID 0 - Instant Release in SAME frame)
-            -- ============================================================
-            pcall(function()
-                VirtualInputManager:SendTouchEvent(0, 0, tapX, tapY)
-                VirtualInputManager:SendTouchEvent(0, 2, tapX, tapY)
-            end)
-            if typeof(touchpress) == "function" and typeof(touchrelease) == "function" then
-                pcall(function()
-                    touchpress(0, tapX, tapY)
-                    touchrelease(0)
-                end)
-            end
-
-            -- ============================================================
-            -- CHANNEL 3: MOUSE BUTTON DISPATCH
-            -- ============================================================
-            pcall(function()
-                VirtualInputManager:SendMouseButtonEvent(tapX, tapY, 0, true, game, 0)
-                VirtualInputManager:SendMouseButtonEvent(tapX, tapY, 0, false, game, 0)
-            end)
-            if typeof(mouse1click) == "function" then
-                pcall(mouse1click)
-            end
-
-            -- ============================================================
-            -- CHANNEL 4: DIRECT FIRESIGNAL & GETCONNECTIONS
-            -- ============================================================
-            pcall(function()
-                if typeof(firesignal) == "function" then
-                    pcall(firesignal, UserInputService.InputBegan, mockKey, false)
-                    pcall(firesignal, UserInputService.InputBegan, mockTouch, false)
-                    pcall(firesignal, UserInputService.TouchTap, { Vector2.new(tapX, tapY) }, false)
-                end
-                if typeof(getconnections) == "function" then
-                    pcall(function()
-                        for _, conn in ipairs(getconnections(UserInputService.InputBegan)) do
-                            if conn and conn.Fire then
-                                pcall(function() conn:Fire(mockKey, false) end)
-                                pcall(function() conn:Fire(mockTouch, false) end)
-                            end
-                        end
-                    end)
-                end
-            end)
-
-            -- ============================================================
-            -- CHANNEL 5: DIRECT UI TARGET & SPACE BUTTON DISPATCH
-            -- ============================================================
-            pcall(function()
-                if check and check:IsA("GuiObject") then
-                    local targets = { check }
-                    for _, ch in ipairs(check:GetDescendants()) do
-                        if ch:IsA("GuiObject") then
-                            table.insert(targets, ch)
-                        end
-                    end
-
-                    for _, target in ipairs(targets) do
-                        if typeof(firesignal) == "function" then
-                            pcall(firesignal, target.InputBegan, mockTouch, false)
-                            pcall(firesignal, target.InputBegan, mockKey, false)
-                            pcall(firesignal, target.TouchTap)
-                            if target:IsA("GuiButton") then
-                                pcall(firesignal, target.Activated)
-                                pcall(firesignal, target.MouseButton1Click)
-                                pcall(firesignal, target.MouseButton1Down)
-                                pcall(firesignal, target.MouseButton1Up)
-                            end
-                        end
-                        if typeof(getconnections) == "function" and target:IsA("GuiButton") and target.Activated then
-                            for _, conn in ipairs(getconnections(target.Activated)) do
-                                if conn and conn.Fire then pcall(function() conn:Fire() end) end
-                            end
-                        end
-                    end
-                end
-            end)
-
-            -- ============================================================
-            -- CHANNEL 6: CONTEXT ACTION SERVICE
-            -- ============================================================
-            pcall(function()
-                local cas = game:GetService("ContextActionService")
-                pcall(function() cas:CallFunction("skillcheck", Enum.UserInputState.Begin, mockKey) end)
-                pcall(function() cas:CallFunction("PadSkillCheck", Enum.UserInputState.Begin, mockKey) end)
-                pcall(function() cas:CallFunction("action", Enum.UserInputState.Begin, mockKey) end)
-            end)
-
-            -- Maintain needle lock for 0.05s across next 3 frames to defeat any script race condition
+            -- Maintain needle lock for next 3 frames to defeat script race condition
             for i = 1, 3 do
                 task.wait(0.016)
                 if needle then
