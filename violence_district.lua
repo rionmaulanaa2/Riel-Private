@@ -67,12 +67,17 @@ task.spawn(function()
                     if currentRole == "Killer" then
                         -- Invalidate all survivor automation sessions immediately
                         repairSession = (repairSession or 0) + 1
+                        remoteGenSession = (remoteGenSession or 0) + 1
                         saveSession = (saveSession or 0) + 1
                         palletSession = (palletSession or 0) + 1
                         parrySession = (parrySession or 0) + 1
                         dodgeSession = (dodgeSession or 0) + 1
 
                         -- Disable all survivor-only automation features
+                        if remoteGenRepairEnabled then
+                            remoteGenRepairEnabled = false
+                            if stopRemoteRepair then pcall(stopRemoteRepair) end
+                        end
                         if autoRepairEnabled then
                             autoRepairEnabled = false
                             if currentRepairPoint then
@@ -2309,98 +2314,7 @@ hookSkillCheckRemotes()
 if perfectSkillcheckEnabled or noSkillCheckEnabled then
     startSkillcheckWatcher()
 end
--- ============================================================
--- 4. AUTO REPAIR GENERATOR (AUTO SEARCH, TRAVEL & ACCURATE FIX DETECTION)
--- ============================================================
--- Unified autoRepairEnabled & currentRepairPoint
-currentRepairPoint = nil
-local repairSafeDistance = 25
-local travelMode = "Safe Teleport"
-local safeTeleportStep = 3.5
-local isTraveling = false
-local completedGenerators = {}
 
-local function getGeneratorModel(part)
-    if not part then return nil end
-    local curr = part.Parent
-    while curr and curr ~= workspace do
-        if curr:IsA("Model") and (curr.Name:lower():find("gen") or curr:FindFirstChild("GeneratorBody") or curr:GetAttribute("RepairProgress") ~= nil or curr:GetAttribute("Progress") ~= nil) then
-            return curr
-        end
-        curr = curr.Parent
-    end
-    return part:FindFirstAncestorOfClass("Model") or part.Parent
-end
-
--- Comprehensive generator completion validator for Violence District
-local function isGeneratorCompleted(point)
-    if not point or not point.Parent then return true end
-    local CollectionService = game:GetService("CollectionService")
-    local genModel = getGeneratorModel(point) or point.Parent
-
-    -- Check session completed blacklist
-    if completedGenerators[point] or (genModel and completedGenerators[genModel]) then
-        return true, 100
-    end
-
-    -- 1. Check CollectionService Tags (Official Violence District: "Blocked" tag marks finished generator)
-    if CollectionService:HasTag(point, "Blocked") or CollectionService:HasTag(point, "Repaired") or CollectionService:HasTag(point, "Completed") then
-        return true, 100
-    end
-    if genModel and (CollectionService:HasTag(genModel, "Blocked") or CollectionService:HasTag(genModel, "Repaired") or CollectionService:HasTag(genModel, "Completed")) then
-        return true, 100
-    end
-    if point.Parent and CollectionService:HasTag(point.Parent, "Blocked") then
-        return true, 100
-    end
-
-    -- 2. Check Violence District "RepairProgress" attribute (0 to 100)
-    local rawProgress = (genModel and genModel:GetAttribute("RepairProgress"))
-        or (point.Parent and point.Parent:GetAttribute("RepairProgress"))
-        or point:GetAttribute("RepairProgress")
-        or (genModel and genModel:GetAttribute("Progress"))
-        or (point.Parent and point.Parent:GetAttribute("Progress"))
-        or point:GetAttribute("Progress")
-
-    if rawProgress and tonumber(rawProgress) then
-        local pVal = tonumber(rawProgress)
-        if pVal >= 99.5 or (pVal >= 1 and pVal <= 1.01 and pVal > 0) then
-            return true, 100
-        else
-            return false, pVal
-        end
-    end
-
-    -- 3. Check Boolean completion attributes
-    local boolAttrs = {"Completed", "completed", "Repaired", "repaired", "Fixed", "fixed", "Blocked", "Done", "done"}
-    for _, attr in ipairs(boolAttrs) do
-        if (genModel and genModel:GetAttribute(attr) == true)
-            or (point.Parent and point.Parent:GetAttribute(attr) == true)
-            or (point:GetAttribute(attr) == true) then
-            return true, 100
-        end
-    end
-
-    -- 4. Check NumberValue or BoolValue children
-    for _, obj in ipairs({genModel, point.Parent, point}) do
-        if obj then
-            local rpVal = obj:FindFirstChild("RepairProgress") or obj:FindFirstChild("Progress")
-            if rpVal and (rpVal:IsA("NumberValue") or rpVal:IsA("IntValue")) then
-                if rpVal.Value >= 99.5 then
-                    return true, 100
-                else
-                    return false, rpVal.Value
-                end
-            end
-            local compVal = obj:FindFirstChild("Completed") or obj:FindFirstChild("Repaired") or obj:FindFirstChild("Fixed")
-            if compVal and compVal:IsA("BoolValue") and compVal.Value == true then
-                return true, 100
-            end
-        end
-    end
-
-    return false, 0
-end
 
 -- ============================================================
 -- 4. AUTO REPAIR GENERATOR (AUTO SEARCH, SAFE FAR TRAVEL & RETRY LOGIC)
@@ -3501,6 +3415,282 @@ V_ObjectiveSection:Toggle({
                 task.wait(0.15)
             end
         end)
+    end
+})
+
+-- ============================================================
+-- 4.1 REMOTE GENERATOR REPAIR (CROSS-MAP AUTO FIX WITHOUT PHYSICAL PROXIMITY)
+-- ============================================================
+local remoteGenRepairEnabled = false
+local remoteGenRepairMode = "Pure Remote (Anywhere)"
+local remoteGenPulseInterval = 0.8
+local remoteGenSession = 0
+local currentRemoteGenPoint = nil
+local currentRemoteGenModel = nil
+local remoteOriginalCFrame = nil
+
+local function stopRemoteRepair()
+    pcall(function()
+        local remotes = getVDRemotes()
+        if currentRemoteGenPoint and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
+            remotes.Generator.RepairEvent:FireServer(currentRemoteGenPoint, false, nil, HttpService:GenerateGUID(false), player.Character)
+        end
+    end)
+    pcall(function()
+        if remoteGenRepairMode == "Underground Ghost" and remoteOriginalCFrame then
+            local myChar = player.Character
+            local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            if myHrp then
+                myHrp.CFrame = remoteOriginalCFrame
+            end
+        end
+    end)
+    remoteOriginalCFrame = nil
+    currentRemoteGenPoint = nil
+    currentRemoteGenModel = nil
+    pcall(function()
+        if player.Character then
+            player.Character:SetAttribute("isRepairing", false)
+        end
+    end)
+    unlockCameraAndMovement()
+end
+
+local function findNextUnfinishedGeneratorRemote()
+    local myChar = player.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local myPos = myHrp and myHrp.Position or Vector3.new(0, 0, 0)
+    local candidatePoints = {}
+    local processedGenerators = {}
+
+    local function addPoint(pt)
+        if pt and pt:IsA("BasePart") and not (myChar and pt:IsDescendantOf(myChar)) then
+            local genModel = getGeneratorModel(pt) or pt.Parent
+            if genModel and not processedGenerators[genModel] then
+                local isCompleted, prog = isGeneratorCompleted(pt)
+                if not isCompleted and prog < 99.5 then
+                    table.insert(candidatePoints, { point = pt, model = genModel, progress = prog })
+                    processedGenerators[genModel] = true
+                end
+            end
+        end
+    end
+
+    pcall(function()
+        local CollectionService = game:GetService("CollectionService")
+        for _, pt in ipairs(CollectionService:GetTagged("GeneratorPoint")) do
+            addPoint(pt)
+        end
+    end)
+
+    pcall(function()
+        local mapGens = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("Generators")
+        if mapGens then
+            for _, gen in ipairs(mapGens:GetChildren()) do
+                for _, desc in ipairs(gen:GetDescendants()) do
+                    if desc:IsA("BasePart") and (desc.Name:find("GeneratorPoint") or desc.Name == "RepairPoint") then
+                        addPoint(desc)
+                    end
+                end
+            end
+        end
+    end)
+
+    if #candidatePoints == 0 then
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and (obj.Name == "RepairPoint" or obj.Name == "GeneratorPoint") then
+                addPoint(obj)
+            end
+        end
+    end
+
+    if #candidatePoints == 0 then return nil, nil end
+
+    table.sort(candidatePoints, function(a, b)
+        if math.abs(a.progress - b.progress) > 1 then
+            return a.progress > b.progress
+        end
+        local distA = (myPos - a.point.Position).Magnitude
+        local distB = (myPos - b.point.Position).Magnitude
+        return distA < distB
+    end)
+
+    return candidatePoints[1].point, candidatePoints[1].model
+end
+
+local function startRemoteRepairThread()
+    remoteGenSession = remoteGenSession + 1
+    local thisSession = remoteGenSession
+
+    task.spawn(function()
+        while remoteGenRepairEnabled and (remoteGenSession == thisSession) and scriptRunning do
+            local iterSuccess, iterErr = pcall(function()
+                local myChar = player.Character
+                if not myChar or not myChar:IsDescendantOf(workspace) then
+                    task.wait(0.5)
+                    return
+                end
+                local hum = myChar:FindFirstChildOfClass("Humanoid")
+                local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                if not myHrp or not hum or hum.Health <= 0 then
+                    task.wait(0.5)
+                    return
+                end
+                if isCharacterHooked(myChar) or isCharacterKnocked(myChar) then
+                    task.wait(0.5)
+                    return
+                end
+
+                local targetPoint, genModel = findNextUnfinishedGeneratorRemote()
+                if not targetPoint or not genModel then
+                    WindUI:Notify({ Title = "Remote Gen", Content = "All generators 100% completed!", Duration = 3 })
+                    task.wait(2.5)
+                    return
+                end
+
+                currentRemoteGenPoint = targetPoint
+                currentRemoteGenModel = genModel
+
+                local remotes = getVDRemotes()
+                if not remotes.Generator or not remotes.Generator:FindFirstChild("RepairEvent") then
+                    task.wait(1)
+                    return
+                end
+
+                local genName = genModel.Name or "Generator"
+                local isDone, currentProg = isGeneratorCompleted(targetPoint)
+                WindUI:Notify({
+                    Title = "⚡ Remote Repair",
+                    Content = string.format("Fixing %s [%.0f%%] (%s)", genName, currentProg or 0, remoteGenRepairMode),
+                    Duration = 2
+                })
+
+                -- Mode: Underground Ghost positioning
+                if remoteGenRepairMode == "Underground Ghost" then
+                    if not remoteOriginalCFrame and myHrp then
+                        remoteOriginalCFrame = myHrp.CFrame
+                    end
+                    if myHrp then
+                        myHrp.CFrame = CFrame.new(targetPoint.Position - Vector3.new(0, 7.5, 0))
+                    end
+                end
+
+                local requestId = HttpService:GenerateGUID(false)
+                lastCapturedGenModel = genModel
+                lastCapturedGenPoint = targetPoint
+                lastCapturedRepairRequestId = requestId
+
+                -- Begin Repair on server
+                pcall(function()
+                    remotes.Generator.RepairEvent:FireServer(targetPoint, true, nil, requestId, myChar)
+                    myChar:SetAttribute("isRepairing", true)
+                end)
+
+                local genTimeout = tick() + 75
+                while remoteGenRepairEnabled and (remoteGenSession == thisSession) and scriptRunning and tick() < genTimeout do
+                    local doneNow, progNow = isGeneratorCompleted(targetPoint)
+                    if doneNow or (progNow and progNow >= 99.5) then
+                        completedGenerators[targetPoint] = true
+                        completedGenerators[genModel] = true
+                        pcall(function()
+                            remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, requestId, myChar)
+                        end)
+                        currentRemoteGenPoint = nil
+                        currentRemoteGenModel = nil
+                        WindUI:Notify({ Title = "⚡ Remote Repair", Content = "⚡ " .. genName .. " Fixed 100%! Next...", Duration = 2 })
+                        task.wait(0.4)
+                        break
+                    end
+
+                    -- Keep repair pulse active
+                    pcall(function()
+                        remotes.Generator.RepairEvent:FireServer(targetPoint, true, nil, requestId, myChar)
+                    end)
+
+                    -- Send Great Skill Check Progression Boost (+1% per pulse directly with { player.Name })
+                    if remotes.Generator:FindFirstChild("SkillCheckResultEvent") then
+                        pcall(function()
+                            remotes.Generator.SkillCheckResultEvent:FireServer(
+                                "success",
+                                1,
+                                genModel,
+                                targetPoint,
+                                requestId,
+                                { player.Name }
+                            )
+                        end)
+                    end
+
+                    -- In Underground Ghost mode, ensure character stays safe underground
+                    if remoteGenRepairMode == "Underground Ghost" and myHrp then
+                        local safePos = targetPoint.Position - Vector3.new(0, 7.5, 0)
+                        if (myHrp.Position - safePos).Magnitude > 3 then
+                            myHrp.CFrame = CFrame.new(safePos)
+                        end
+                    end
+
+                    task.wait(remoteGenPulseInterval)
+                end
+
+                if currentRemoteGenPoint == targetPoint then
+                    pcall(function()
+                        remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, requestId, myChar)
+                    end)
+                    currentRemoteGenPoint = nil
+                    currentRemoteGenModel = nil
+                end
+            end)
+
+            if not iterSuccess then
+                task.wait(0.5)
+            end
+            task.wait(0.2)
+        end
+
+        stopRemoteRepair()
+    end)
+end
+
+V_ObjectiveSection:Toggle({
+    Title = "Remote Generator Repair",
+    Description = "Repairs generators from anywhere across the map without needing to stand near or travel to them.",
+    Default = false,
+    Callback = function(v)
+        remoteGenRepairEnabled = v
+        if v then
+            remoteOriginalCFrame = nil
+            completedGenerators = {}
+            startRemoteRepairThread()
+            WindUI:Notify({ Title = "Remote Gen", Content = "Remote Generator Repair enabled (" .. remoteGenRepairMode .. ")!", Duration = 2.5 })
+        else
+            remoteGenSession = remoteGenSession + 1
+            stopRemoteRepair()
+            WindUI:Notify({ Title = "Remote Gen", Content = "Remote Generator Repair stopped.", Duration = 2 })
+        end
+    end
+})
+
+V_ObjectiveSection:Dropdown({
+    Title = "Remote Repair Mode",
+    Description = "Pure Remote (zero movement) or Underground Ghost (7 studs below gen floor, bypasses server distance checks)",
+    Values = { "Pure Remote (Anywhere)", "Underground Ghost" },
+    Value = "Pure Remote (Anywhere)",
+    Callback = function(v)
+        remoteGenRepairMode = v
+    end
+})
+
+V_ObjectiveSection:Slider({
+    Title = "Remote Repair Speed",
+    Description = "Interval between skillcheck progression boosts (0.3s Fast - 2.0s Legit)",
+    Step = 0.1,
+    Value = {
+        Min = 0.3,
+        Max = 2.0,
+        Default = 0.8,
+    },
+    Callback = function(v)
+        remoteGenPulseInterval = tonumber(v) or 0.8
     end
 })
 
