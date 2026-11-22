@@ -40,13 +40,114 @@ V_RoleSection = ViolenceTab:Section({
     Title = "Role Detection & Mode Switcher"
 })
 
-autoRoleAdaptEnabled = true
+-- ============================================================
+-- AUTHORITATIVE ROLE IDENTIFICATION (KILLER & SURVIVOR)
+-- ============================================================
+isPlayerKiller = nil
+
+local function checkPlayerKillerStatus()
+    -- If user has enabled any killer automation feature, they are intentionally playing the Killer
+    if autoCatchEnabled or autoAimSurvivorEnabled or autoHitSurvivorEnabled or autoHookSurvivorEnabled then
+        return true
+    end
+
+    local myChar = player.Character
+    if not myChar then return false end
+
+    -- Authoritative SelectedKiller attributes from game dump
+    if player:GetAttribute("SelectedKiller") ~= nil or myChar:GetAttribute("SelectedKiller") ~= nil
+        or player:GetAttribute("Killer") ~= nil or myChar:GetAttribute("Killer") ~= nil
+        or player:GetAttribute("IsKiller") == true or player:GetAttribute("Role") == "Killer"
+        or player:GetAttribute("killer") == true or myChar:GetAttribute("IsKiller") == true then
+        return true
+    end
+
+    -- 1. Explicit Team verification (Authoritative in Violence District)
+    if player.Team then
+        local tName = player.Team.Name:lower()
+        if tName:find("killer") or tName:find("slasher") then
+            return true
+        end
+        if tName:find("survivor") then
+            return false
+        end
+    end
+
+    -- 2. Killer-specific player attributes assigned by server
+    if player:GetAttribute("IsKiller") == true or player:GetAttribute("Role") == "Killer" or player:GetAttribute("killer") == true then
+        return true
+    end
+
+    -- 3. Check PlayerGui for Killer HUD (Slasher-mob, Slasher, Slasher-con)
+    -- EXCLUDE 'KillerPerks' because it is present in PlayerGui for ALL players by default!
+    local pg = player:FindFirstChild("PlayerGui")
+    if pg then
+        if pg:FindFirstChild("Slasher-mob") or pg:FindFirstChild("Slasher") or pg:FindFirstChild("Slasher-con") then
+            return true
+        end
+        for _, gui in ipairs(pg:GetChildren()) do
+            local gName = gui.Name:lower()
+            if gName ~= "killerperks" and (gName == "slasher" or gName:find("slasher-") or gName == "killergui" or gName == "killerhud") then
+                return true
+            end
+        end
+    end
+
+    -- 4. CollectionService & Attributes on character
+    if CollectionService:HasTag(myChar, "Killer") or CollectionService:HasTag(player, "Killer") then
+        return true
+    end
+    if myChar:GetAttribute("Butcher") == true 
+        or myChar:GetAttribute("IsKiller") == true 
+        or myChar:GetAttribute("KillerName") ~= nil 
+        or myChar:GetAttribute("killercarry") ~= nil then
+        return true
+    end
+
+    -- 5. Killer weapons equipped in character
+    for _, item in ipairs(myChar:GetChildren()) do
+        if item:IsA("Tool") or item:IsA("BasePart") or item:IsA("Model") then
+            local iName = item.Name:lower()
+            if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
+                or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
+                or iName:find("axe") or (iName:find("blade") and not iName:find("parry")) then
+                return true
+            end
+        end
+    end
+
+    -- 6. Check Backpack for Killer weapons
+    local bp = player:FindFirstChild("Backpack")
+    if bp then
+        for _, item in ipairs(bp:GetChildren()) do
+            if item:IsA("Tool") then
+                local iName = item.Name:lower()
+                if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
+                    or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
+                    or iName:find("axe") or (iName:find("blade") and not iName:find("parry")) then
+                    return true
+                end
+            end
+        end
+    end
+
+    -- 7. Killer specific child objects/scripts
+    if myChar:FindFirstChild("CancelVault") or myChar:FindFirstChild("Damageviz") or myChar:FindFirstChild("RedStain") or myChar:FindFirstChild("KillerHitbox") then
+        return true
+    end
+
+    return false
+end
+
+isPlayerKiller = checkPlayerKillerStatus
+
+autoRoleAdaptEnabled = false -- Default to false so it NEVER disables active user toggles
 local lastDetectedRole = nil
 
 V_RoleSection:Toggle({
     Title = "Auto Role Adapt",
     Description = "Automatically detects Killer/Survivor role and auto-disables opposing features",
-    Default = true,
+    Default = false,
     Callback = function(v)
         autoRoleAdaptEnabled = v
         WindUI:Notify({ Title = "Role Adapt", Content = v and "Auto Role Adapt active!" or "Auto Role Adapt disabled.", Duration = 2 })
@@ -59,55 +160,43 @@ task.spawn(function()
         pcall(function()
             if not scriptRunning then return end
             if autoRoleAdaptEnabled then
-                local isKiller = isPlayerKiller and isPlayerKiller()
-                local currentRole = isKiller and "Killer" or "Survivor"
+                -- NEVER override or shut down active features manually enabled by the user!
+                if autoCatchEnabled or autoAimSurvivorEnabled or autoHitSurvivorEnabled or autoHookSurvivorEnabled then
+                    -- Killer automation is actively in use
+                    lastDetectedRole = "Killer"
+                elseif autoRepairEnabled or ghostRepairEnabled or autoPalletEnabled or autoParryEnabled or autoDodgeEnabled or autoSaveEnabled then
+                    -- Survivor automation is actively in use
+                    lastDetectedRole = "Survivor"
+                else
+                    local isKiller = isPlayerKiller and isPlayerKiller()
+                    local currentRole = isKiller and "Killer" or "Survivor"
 
-                if currentRole ~= lastDetectedRole then
-                    lastDetectedRole = currentRole
-                    if currentRole == "Killer" then
-                        -- Invalidate all survivor automation sessions immediately
-                        repairSession = (repairSession or 0) + 1
-                        ghostRepairSession = (ghostRepairSession or 0) + 1
-                        saveSession = (saveSession or 0) + 1
-                        palletSession = (palletSession or 0) + 1
-                        parrySession = (parrySession or 0) + 1
-                        dodgeSession = (dodgeSession or 0) + 1
-
-                        -- Disable all survivor-only automation features
-                        if ghostRepairEnabled then
-                            ghostRepairEnabled = false
-                            if stopGhostRepair then pcall(stopGhostRepair) end
-                        end
-                        if autoRepairEnabled then
+                    if currentRole ~= lastDetectedRole then
+                        lastDetectedRole = currentRole
+                        if currentRole == "Killer" then
+                            repairSession = (repairSession or 0) + 1
+                            ghostRepairSession = (ghostRepairSession or 0) + 1
+                            saveSession = (saveSession or 0) + 1
+                            palletSession = (palletSession or 0) + 1
+                            parrySession = (parrySession or 0) + 1
+                            dodgeSession = (dodgeSession or 0) + 1
+                            if ghostRepairEnabled then ghostRepairEnabled = false if stopGhostRepair then pcall(stopGhostRepair) end end
                             autoRepairEnabled = false
-                            if currentRepairPoint then
-                                local remotes = getVDRemotes()
-                                if remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
-                                    pcall(function()
-                                        remotes.Generator.RepairEvent:FireServer(currentRepairPoint, false, nil, HttpService:GenerateGUID(false), player.Character)
-                                    end)
-                                end
-                                currentRepairPoint = nil
-                            end
+                            autoDodgeEnabled = false
+                            autoPalletEnabled = false
+                            autoParryEnabled = false
+                            autoSaveEnabled = false
+                            WindUI:Notify({ Title = "👹 Role: KILLER", Content = "Detected Killer role.", Duration = 2 })
+                        elseif currentRole == "Survivor" then
+                            catchSession = (catchSession or 0) + 1
+                            autoCatchEnabled = false
+                            autoHookSurvivorEnabled = false
+                            autoAimSurvivorEnabled = false
+                            autoHitSurvivorEnabled = false
+                            currentKillerTarget = nil
+                            if updateKillerAim then updateKillerAim() end
+                            WindUI:Notify({ Title = "🏃 Role: SURVIVOR", Content = "Detected Survivor role.", Duration = 2 })
                         end
-                        autoDodgeEnabled = false
-                        autoPalletEnabled = false
-                        autoParryEnabled = false
-                        autoSaveEnabled = false
-                        WindUI:Notify({ Title = "👹 Role: KILLER", Content = "Detected Killer role. Survivor automation auto-disabled.", Duration = 2.5 })
-
-                    elseif currentRole == "Survivor" then
-                        -- Invalidate killer automation sessions immediately
-                        catchSession = (catchSession or 0) + 1
-
-                        -- Disable all killer-only automation features
-                        autoCatchEnabled = false
-                        autoHookSurvivorEnabled = false
-                        autoAimSurvivorEnabled = false
-                        autoHitSurvivorEnabled = false
-                        currentKillerTarget = nil
-                        updateKillerAim()
-                        WindUI:Notify({ Title = "🏃 Role: SURVIVOR", Content = "Detected Survivor role. Killer automation auto-disabled.", Duration = 2.5 })
                     end
                 end
             end
@@ -234,15 +323,8 @@ local function isEntityInLobbyOrSpectating(char, plr)
         if plr:GetAttribute("InLobby") == true or plr:GetAttribute("Lobby") == true then
             return true
         end
-        if plr:GetAttribute("IsDead") == true or plr:GetAttribute("HasEscaped") == true then
+        if plr:GetAttribute("IsDead") == true or plr:GetAttribute("HasEscaped") == true or plr:GetAttribute("Escaped") == true then
             return true
-        end
-        local team = plr.Team
-        if team then
-            local tName = team.Name:lower()
-            if tName:find("lobby") or tName:find("choos") or tName:find("spectat") or tName:find("intermission") then
-                return true
-            end
         end
     end
 
@@ -252,9 +334,6 @@ local function isEntityInLobbyOrSpectating(char, plr)
         end
         local lobby = workspace:FindFirstChild("Lobby")
         if lobby and char:IsDescendantOf(lobby) then
-            return true
-        end
-        if char:FindFirstAncestor("Lobby") then
             return true
         end
     end
@@ -306,131 +385,25 @@ end
 
 local function isCharacterKnocked(char)
     if not char or not char.Parent then return false end
+    -- Authoritative game attributes set on downed crawling survivors
     if char:GetAttribute("Knocked") == true or char:GetAttribute("isKnocked") == true
-        or char:GetAttribute("Downed") == true or char:GetAttribute("isDowned") == true
-        or char:GetAttribute("isBleeding") == true then
+        or char:GetAttribute("Downed") == true or char:GetAttribute("isDowned") == true then
         return true
     end
-    if CollectionService and CollectionService:HasTag(char, "Knocked") then return true end
-    if char:FindFirstChild("downed") or char:FindFirstChild("Knocked") then return true end
+    if CollectionService and (CollectionService:HasTag(char, "Knocked") or CollectionService:HasTag(char, "Downed")) then
+        return true
+    end
+    if char:FindFirstChild("downed") or char:FindFirstChild("Knocked") or char:FindFirstChild("Downed") then
+        return true
+    end
     local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum then
-        -- In Violence District, dying/downed survivors drop to Health <= 0 while crawling on ground
-        if hum.Health <= 0 and char:FindFirstChild("HumanoidRootPart") then
-            if not char:GetAttribute("IsDead") and not char:GetAttribute("Sacrificed") and not char:GetAttribute("Escaped") and not char:GetAttribute("HasEscaped") then
-                return true
-            end
-        end
-        if hum.Health < 30 then
-            return true
-        end
-        if hum.PlatformStand then
+    if hum and (hum.PlatformStand or (hum.Sit and not char:GetAttribute("isRepairing"))) then
+        if not char:GetAttribute("isSliding") and not char:GetAttribute("isVaulting") then
             return true
         end
     end
     return false
 end
-
--- ============================================================
--- AUTHORITATIVE ROLE IDENTIFICATION (KILLER & SURVIVOR)
--- ============================================================
-local isPlayerKiller
-
-local function checkPlayerKillerStatus()
-    -- If user has enabled any killer automation feature, they are intentionally playing the Killer
-    if autoCatchEnabled or autoAimSurvivorEnabled or autoHitSurvivorEnabled or autoHookSurvivorEnabled then
-        return true
-    end
-
-    local myChar = player.Character
-    if not myChar then return false end
-
-    -- Authoritative SelectedKiller attributes from game dump
-    if player:GetAttribute("SelectedKiller") ~= nil or myChar:GetAttribute("SelectedKiller") ~= nil
-        or player:GetAttribute("Killer") ~= nil or myChar:GetAttribute("Killer") ~= nil
-        or player:GetAttribute("IsKiller") == true or player:GetAttribute("Role") == "Killer"
-        or player:GetAttribute("killer") == true or myChar:GetAttribute("IsKiller") == true then
-        return true
-    end
-
-    -- 1. Explicit Team verification (Authoritative in Violence District)
-    if player.Team then
-        local tName = player.Team.Name:lower()
-        if tName:find("killer") or tName:find("slasher") then
-            return true
-        end
-        if tName:find("survivor") then
-            return false
-        end
-    end
-
-    -- 2. Killer-specific player attributes assigned by server
-    if player:GetAttribute("IsKiller") == true or player:GetAttribute("Role") == "Killer" or player:GetAttribute("killer") == true then
-        return true
-    end
-
-    -- 3. Check PlayerGui for Killer HUD (Slasher-mob, Slasher, Slasher-con)
-    -- EXCLUDE 'KillerPerks' because it is present in PlayerGui for ALL players by default!
-    local pg = player:FindFirstChild("PlayerGui")
-    if pg then
-        if pg:FindFirstChild("Slasher-mob") or pg:FindFirstChild("Slasher") or pg:FindFirstChild("Slasher-con") then
-            return true
-        end
-        for _, gui in ipairs(pg:GetChildren()) do
-            local gName = gui.Name:lower()
-            if gName ~= "killerperks" and (gName == "slasher" or gName:find("slasher-") or gName == "killergui" or gName == "killerhud") then
-                return true
-            end
-        end
-    end
-
-    -- 4. CollectionService & Attributes on character
-    if CollectionService:HasTag(myChar, "Killer") or CollectionService:HasTag(player, "Killer") then
-        return true
-    end
-    if myChar:GetAttribute("Butcher") == true 
-        or myChar:GetAttribute("IsKiller") == true 
-        or myChar:GetAttribute("KillerName") ~= nil 
-        or myChar:GetAttribute("killercarry") ~= nil then
-        return true
-    end
-
-    -- 5. Killer weapons equipped in character
-    for _, item in ipairs(myChar:GetChildren()) do
-        if item:IsA("Tool") or item:IsA("BasePart") or item:IsA("Model") then
-            local iName = item.Name:lower()
-            if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
-                or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
-                or iName:find("axe") or (iName:find("blade") and not iName:find("parry")) then
-                return true
-            end
-        end
-    end
-
-    -- 6. Check Backpack for Killer weapons
-    local bp = player:FindFirstChild("Backpack")
-    if bp then
-        for _, item in ipairs(bp:GetChildren()) do
-            if item:IsA("Tool") then
-                local iName = item.Name:lower()
-                if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
-                    or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
-                    or iName:find("axe") or (iName:find("blade") and not iName:find("parry")) then
-                    return true
-                end
-            end
-        end
-    end
-
-    -- 7. Killer specific child objects/scripts
-    if myChar:FindFirstChild("CancelVault") or myChar:FindFirstChild("Damageviz") or myChar:FindFirstChild("RedStain") or myChar:FindFirstChild("KillerHitbox") then
-        return true
-    end
-
-    return false
-end
-
-isPlayerKiller = checkPlayerKillerStatus
 
 local function isCharacterKiller(char, plr)
     local valid, hum, hrp = isValidCharacter(char)
@@ -5208,7 +5181,7 @@ local function isSurvivorValidTarget(c)
     if isCarried then return false end
 
     -- In 1v4 match: if local player is Killer or killer automation is active, every other upright alive character is a Survivor!
-    if isPlayerKiller() or autoCatchEnabled or autoAimSurvivorEnabled or autoHitSurvivorEnabled or autoHookSurvivorEnabled then
+    if autoCatchEnabled or autoAimSurvivorEnabled or autoHitSurvivorEnabled or autoHookSurvivorEnabled or (isPlayerKiller and isPlayerKiller()) then
         return true
     end
 
@@ -5249,7 +5222,7 @@ local function isSurvivorDowned(c)
     if isCarried then return false end
 
     -- Exclude Killer
-    if not (isPlayerKiller() or autoCatchEnabled or autoAimSurvivorEnabled or autoHitSurvivorEnabled or autoHookSurvivorEnabled) then
+    if not (autoCatchEnabled or autoAimSurvivorEnabled or autoHitSurvivorEnabled or autoHookSurvivorEnabled or (isPlayerKiller and isPlayerKiller())) then
         if isCharacterKiller(c, plr) or c == getKiller() then return false end
     end
 
@@ -5545,7 +5518,7 @@ local function updateKillerAim()
 
     if not autoAimSurvivorEnabled then return end
 
-    RunService:BindToRenderStep("KillerAutoAim", Enum.RenderPriority.Camera.Value + 1, function()
+    local function performAim()
         if not autoAimSurvivorEnabled then return end
 
         local myChar = player.Character
@@ -5571,13 +5544,20 @@ local function updateKillerAim()
 
         local aimPos = sHrp.Position + Vector3.new(0, 1.2, 0)
 
-        -- Lock Camera directly at Survivor (runs AFTER CameraModule, so it is never overwritten)
+        -- Lock Camera directly at Survivor
         cam.CFrame = CFrame.lookAt(cam.CFrame.Position, aimPos)
 
         -- Lock Killer body towards Survivor for server hit validation
         local lookTarget = Vector3.new(sHrp.Position.X, myHrp.Position.Y, sHrp.Position.Z)
         myHrp.CFrame = CFrame.lookAt(myHrp.Position, lookTarget)
+    end
+
+    local ok = pcall(function()
+        RunService:BindToRenderStep("KillerAutoAim", 201, performAim)
     end)
+    if not ok then
+        killerAimConn = RunService.RenderStepped:Connect(performAim)
+    end
 end
 
 -- Standalone Killer Combat Loop (Runs when Auto Aim or Auto Hit is ON, even if Auto Catch is OFF!)
@@ -6275,6 +6255,7 @@ V_KillerSection:Toggle({
                     task.wait(0.2)
                 end)
                 if not ok then
+                    -- Log error if any occurs in loop
                     task.wait(0.1)
                 end
                 task.wait(0.04)
