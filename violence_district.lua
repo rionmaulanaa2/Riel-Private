@@ -44,6 +44,13 @@ V_RoleSection = ViolenceTab:Section({
 -- AUTHORITATIVE ROLE IDENTIFICATION (KILLER & SURVIVOR)
 -- ============================================================
 isPlayerKiller = nil
+local getKiller = nil
+local isCharacterKiller = nil
+local isCharacterSurvivor = nil
+local isKillerStunnedOrLocked = nil
+local isKillerCarrying = nil
+local isSurvivorParryingOrShielded = nil
+local updateKillerAim = nil
 
 local function checkPlayerKillerStatus()
     -- If user has enabled any killer automation feature, they are intentionally playing the Killer
@@ -207,7 +214,10 @@ end)
 
 
 local HttpService = game:GetService("HttpService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
+local VirtualInputManager = nil
+pcall(function()
+    VirtualInputManager = game:GetService("VirtualInputManager")
+end)
 
 -- Remote access helper (Expanded with Collision & Mechanics from the dump.lua)
 getVDRemotes = function()
@@ -387,7 +397,9 @@ local function isCharacterKnocked(char)
     if not char or not char.Parent then return false end
     -- Authoritative game attributes and tags set by server on downed crawling survivors
     if char:GetAttribute("Knocked") == true or char:GetAttribute("isKnocked") == true
-        or char:GetAttribute("Downed") == true or char:GetAttribute("isDowned") == true then
+        or char:GetAttribute("Downed") == true or char:GetAttribute("isDowned") == true
+        or char:GetAttribute("Down") == true or char:GetAttribute("Crawling") == true
+        or char:GetAttribute("BleedingOut") == true then
         return true
     end
     if CollectionService and (CollectionService:HasTag(char, "Knocked") or CollectionService:HasTag(char, "Downed")) then
@@ -399,7 +411,78 @@ local function isCharacterKnocked(char)
     return false
 end
 
-local function isCharacterKiller(char, plr)
+-- Helper to detect if Killer is currently carrying a survivor on shoulder
+isKillerCarrying = function(char)
+    char = char or player.Character
+    if not char then return false end
+    return char:GetAttribute("IsCarrying") == true
+        or char:GetAttribute("isCarrying") == true
+        or char:GetAttribute("killercarry") ~= nil
+        or char:FindFirstChild("CarriedSurvivor") ~= nil
+        or char:FindFirstChild("Carry") ~= nil
+        or char:GetAttribute("BeingCarried") ~= nil
+end
+
+-- Helper to detect if Killer is currently stunned, blinded, or immobilized by survivor items/pallets
+isKillerStunnedOrLocked = function(char)
+    if not char or not char.Parent then return false end
+
+    -- 1. Game attributes set by Violence District on actual stun/blind/shot
+    if char:GetAttribute("isStunned") == true 
+        or char:GetAttribute("IsStunned") == true 
+        or char:GetAttribute("Stunned") == true 
+        or char:GetAttribute("Blinded") == true 
+        or char:GetAttribute("Stun") == true then
+        return true
+    end
+
+    -- 2. CollectionService stun tags
+    if CollectionService and (CollectionService:HasTag(char, "Stunned") or CollectionService:HasTag(char, "Stun")) then
+        return true
+    end
+
+    -- 3. Stun child marker instances
+    if char:FindFirstChild("Stunned") or char:FindFirstChild("Stun") then
+        return true
+    end
+
+    -- 4. Humanoid physical states during knockdown/stun
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum and (hum.PlatformStand or hum.Sit) then
+        return true
+    end
+
+    return false
+end
+
+-- Helper to detect if target survivor is currently parrying (ParryingDagger) or blocking (RiotShield)
+isSurvivorParryingOrShielded = function(sChar)
+    if not sChar or not sChar.Parent then return false end
+
+    if sChar:GetAttribute("isParrying") == true 
+        or sChar:GetAttribute("Parrying") == true 
+        or sChar:GetAttribute("IsParrying") == true 
+        or sChar:GetAttribute("ShieldActive") == true 
+        or sChar:GetAttribute("Blocking") == true then
+        return true
+    end
+
+    -- Check equipped parry/shield tools
+    for _, item in ipairs(sChar:GetChildren()) do
+        if item:IsA("Tool") then
+            local iName = item.Name:lower()
+            if iName:find("parry") or iName:find("dagger") or iName:find("shield") or iName:find("riot") then
+                if item:GetAttribute("Active") == true or item:GetAttribute("Blocking") == true or item:GetAttribute("Parrying") == true then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+isCharacterKiller = function(char, plr)
     local valid, hum, hrp = isValidCharacter(char)
     if not valid then return false end
     plr = plr or Players:GetPlayerFromCharacter(char)
@@ -411,12 +494,12 @@ local function isCharacterKiller(char, plr)
 
     -- If checking local player, use comprehensive killer check
     if char == player.Character then
-        return isPlayerKiller()
+        return (isPlayerKiller and isPlayerKiller()) or false
     end
 
     -- RANKED MODE & MATCH GUARANTEE:
     -- In a 1v4 match, if the local player IS the Killer, NO other character can be the Killer!
-    if isPlayerKiller() then
+    if isPlayerKiller and isPlayerKiller() then
         return false
     end
 
@@ -439,55 +522,63 @@ local function isCharacterKiller(char, plr)
         or char:GetAttribute("isHealing") == true 
         or char:GetAttribute("isDroppingPallet") == true 
         or char:GetAttribute("isUnhooking") == true 
-        or char:GetAttribute("isExiting") == true
-        or char:GetAttribute("isSliding") == true
-        or isCharacterHooked(char)
+        or char:GetAttribute("isExiting") == true 
+        or char:GetAttribute("isSliding") == true 
+        or isCharacterHooked(char) 
         or isCharacterKnocked(char) then
         return false
     end
 
-    -- 3. Player-level killer role tags assigned by server
-    if plr then
-        if plr:GetAttribute("IsKiller") == true 
-            or plr:GetAttribute("Role") == "Killer" 
-            or plr:GetAttribute("killer") == true then
-            return true
-        end
-        if CollectionService:HasTag(plr, "Killer") then
-            return true
-        end
-    end
-
-    -- 4. CollectionService "Killer" tag (Applied by server to active killer character)
-    if CollectionService:HasTag(char, "Killer") then
-        return true
-    end
-
-    -- 5. Killer-specific attributes on character instance
+    -- 3. Dedicated Killer Attributes (from the dump.lua)
     if char:GetAttribute("Butcher") == true 
-        or char:GetAttribute("IsKiller") == true 
-        or char:GetAttribute("KillerName") ~= nil 
-        or char:GetAttribute("ChainBusy") == true 
-        or char:GetAttribute("killercarry") ~= nil 
-        or char:GetAttribute("killercarryidle") ~= nil 
-        or char:GetAttribute("Hidden") == true 
-        or char:GetAttribute("Stalker") == true then
+        or char:GetAttribute("ChainBusy") ~= nil 
+        or char:GetAttribute("Frenzy") ~= nil 
+        or char:GetAttribute("Pursuit") ~= nil 
+        or char:GetAttribute("Stalker") ~= nil 
+        or char:GetAttribute("Hidden") ~= nil 
+        or char:GetAttribute("Stealth") ~= nil 
+        or char:GetAttribute("Veil") ~= nil 
+        or char:GetAttribute("isAttacking") ~= nil 
+        or char:GetAttribute("isLunging") ~= nil 
+        or char:GetAttribute("Killer") == true 
+        or char:GetAttribute("IsKiller") == true then
         return true
     end
 
-    -- 6. Active Killer combat states
-    if char:GetAttribute("isAttacking") == true 
-        or char:GetAttribute("isLunging") == true then
+    -- 4. CollectionService tags
+    if CollectionService:HasTag(char, "Killer") or CollectionService:HasTag(char, "Killers") then
+        return true
+    end
+    if plr and (CollectionService:HasTag(plr, "Killer") or CollectionService:HasTag(plr, "Killers")) then
         return true
     end
 
-    -- 7. Killer weapons / tools held (Chainsaw, Cleaver, Machete, BearTrap, KillerWeapon)
+    -- 5. Equipped weapons / tools characteristic of Killers
     for _, item in ipairs(char:GetChildren()) do
-        if item:IsA("Tool") or item:IsA("BasePart") or item:IsA("Model") then
+        if item:IsA("Tool") or item:IsA("Model") then
             local iName = item.Name:lower()
-            if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
-                or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
-                or iName:find("axe") or (iName:find("blade") and not iName:find("parry")) or iName:find("spear") then
+            if iName:find("cleaver") or iName:find("machete") or iName:find("hook") or iName:find("chainsaw") or iName:find("knife") or iName:find("weapon") or iName:find("hammer") or iName:find("axe") or iName:find("blade") then
+                return true
+            end
+        end
+    end
+
+    -- 6. Playing Killer attack animations
+    local animator = hum:FindFirstChildOfClass("Animator")
+    if animator then
+        for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+            local animName = track.Name:lower()
+            if animName:find("attack") or animName:find("slash") or animName:find("lunge") or animName:find("carry") or animName:find("hook") or animName:find("machete") or animName:find("chainsaw") then
+                return true
+            end
+        end
+    end
+
+    -- 7. Held items in hand or back
+    for _, desc in ipairs(char:GetDescendants()) do
+        if desc:IsA("BasePart") then
+            local dName = desc.Name:lower()
+            if dName == "cleaver" or dName == "machete" or dName == "chainsaw" or dName == "killerweapon" or dName:find("slasherknife") then
                 return true
             end
         end
@@ -512,8 +603,51 @@ local function isCharacterKiller(char, plr)
     return false
 end
 
+getKiller = function()
+    local myChar = player.Character
+
+    -- If local player is the Killer, return their character directly!
+    if isPlayerKiller and isPlayerKiller() then
+        return myChar
+    end
+
+    -- 1. Check all other players in Players
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and plr.Character and plr.Character ~= myChar then
+            if isCharacterKiller(plr.Character, plr) then
+                return plr.Character
+            end
+        end
+    end
+
+    -- 2. Check CollectionService "Killer" tagged objects (models in workspace)
+    local taggedKiller = nil
+    pcall(function()
+        for _, obj in ipairs(CollectionService:GetTagged("Killer")) do
+            if obj and obj:IsA("Model") and obj ~= myChar and obj:IsDescendantOf(workspace) then
+                if isCharacterKiller(obj) then
+                    taggedKiller = obj
+                    break
+                end
+            end
+        end
+    end)
+    if taggedKiller then return taggedKiller end
+
+    -- 3. Check workspace top-level models
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("Model") and obj ~= myChar and obj:IsDescendantOf(workspace) and not Players:GetPlayerFromCharacter(obj) then
+            if isCharacterKiller(obj) then
+                return obj
+            end
+        end
+    end
+
+    return nil
+end
+
 -- Authoritative survivor verification: Strictly excludes Killer, Lobby, and Spectators.
-local function isCharacterSurvivor(char, plr)
+isCharacterSurvivor = function(char, plr)
     local valid, hum, hrp = isValidCharacter(char)
     if not valid then return false end
     if char == player.Character then return false end
@@ -523,7 +657,7 @@ local function isCharacterSurvivor(char, plr)
     if isCharacterKiller(char, plr) then
         return false
     end
-    local currentKiller = getKiller()
+    local currentKiller = getKiller and getKiller()
     if currentKiller and (char == currentKiller or (plr and Players:GetPlayerFromCharacter(currentKiller) == plr)) then
         return false
     end
@@ -535,7 +669,7 @@ local function isCharacterSurvivor(char, plr)
 
     -- RANKED MODE GUARANTEE:
     -- If local player is the Killer, any other living character in workspace not in lobby IS a Survivor!
-    if isPlayerKiller() then
+    if isPlayerKiller and isPlayerKiller() then
         return true
     end
 
@@ -578,49 +712,6 @@ local function isCharacterSurvivor(char, plr)
     end
 
     return false
-end
-
-local function getKiller()
-    local myChar = player.Character
-
-    -- If local player is the Killer, return their character directly!
-    if isPlayerKiller() then
-        return myChar
-    end
-
-    -- 1. Check all other players in Players
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player and plr.Character and plr.Character ~= myChar then
-            if isCharacterKiller(plr.Character, plr) then
-                return plr.Character
-            end
-        end
-    end
-
-    -- 2. Check CollectionService "Killer" tagged objects (models in workspace)
-    local taggedKiller = nil
-    pcall(function()
-        for _, obj in ipairs(CollectionService:GetTagged("Killer")) do
-            if obj and obj:IsA("Model") and obj ~= myChar and obj:IsDescendantOf(workspace) then
-                if isCharacterKiller(obj) then
-                    taggedKiller = obj
-                    break
-                end
-            end
-        end
-    end)
-    if taggedKiller then return taggedKiller end
-
-    -- 3. Check workspace top-level models
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if obj:IsA("Model") and obj ~= myChar and obj:IsDescendantOf(workspace) and not Players:GetPlayerFromCharacter(obj) then
-            if isCharacterKiller(obj) then
-                return obj
-            end
-        end
-    end
-
-    return nil
 end
 
 -- ============================================================
@@ -4052,9 +4143,11 @@ V_CombatSection:Toggle({
 
                             -- 4. Native Keybind & Mouse Item Trigger (ParryClient listener: MouseButton2 / Item)
                             pcall(function()
-                                VirtualInputManager:SendMouseButtonEvent(0, 0, 1, true, game, 0)
-                                task.wait(0.02)
-                                VirtualInputManager:SendMouseButtonEvent(0, 0, 1, false, game, 0)
+                                if VirtualInputManager and typeof(VirtualInputManager.SendMouseButtonEvent) == "function" then
+                                    VirtualInputManager:SendMouseButtonEvent(0, 0, 1, true, game, 0)
+                                    task.wait(0.02)
+                                    VirtualInputManager:SendMouseButtonEvent(0, 0, 1, false, game, 0)
+                                end
                             end)
 
                             -- 5. Tool:Activate() call
@@ -5068,76 +5161,7 @@ local lastKillerHitTime = 0
 local currentKillerTarget = nil
 local killerAimConn = nil
 
--- Helper to detect if Killer is currently carrying a survivor on shoulder
-local function isKillerCarrying(char)
-    char = char or player.Character
-    if not char then return false end
-    return char:GetAttribute("IsCarrying") == true
-        or char:GetAttribute("isCarrying") == true
-        or char:GetAttribute("killercarry") ~= nil
-        or char:FindFirstChild("CarriedSurvivor") ~= nil
-        or char:FindFirstChild("Carry") ~= nil
-        or char:GetAttribute("BeingCarried") ~= nil
-end
-
--- Helper to detect if Killer is currently stunned, blinded, or immobilized by survivor items/pallets
-local function isKillerStunnedOrLocked(char)
-    if not char or not char.Parent then return false end
-
-    -- 1. Game attributes set by Violence District on actual stun/blind/shot
-    if char:GetAttribute("isStunned") == true 
-        or char:GetAttribute("IsStunned") == true 
-        or char:GetAttribute("Stunned") == true 
-                or char:GetAttribute("Blinded") == true 
-        or char:GetAttribute("Stun") == true then
-        return true
-    end
-
-    -- 2. CollectionService stun tags
-    if CollectionService and (CollectionService:HasTag(char, "Stunned") or CollectionService:HasTag(char, "Stun")) then
-        return true
-    end
-
-    -- 3. Stun child marker instances
-    if char:FindFirstChild("Stunned") or char:FindFirstChild("Stun") then
-        return true
-    end
-
-    -- 4. Humanoid physical states during knockdown/stun
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum and (hum.PlatformStand or hum.Sit) then
-        return true
-    end
-
-    return false
-end
-
--- Helper to detect if target survivor is currently parrying (ParryingDagger) or blocking (RiotShield)
-local function isSurvivorParryingOrShielded(sChar)
-    if not sChar or not sChar.Parent then return false end
-
-    if sChar:GetAttribute("isParrying") == true 
-        or sChar:GetAttribute("Parrying") == true 
-        or sChar:GetAttribute("IsParrying") == true 
-        or sChar:GetAttribute("ShieldActive") == true 
-        or sChar:GetAttribute("Blocking") == true then
-        return true
-    end
-
-    -- Check equipped parry/shield tools
-    for _, item in ipairs(sChar:GetChildren()) do
-        if item:IsA("Tool") then
-            local iName = item.Name:lower()
-            if iName:find("parry") or iName:find("dagger") or iName:find("shield") or iName:find("riot") then
-                if item:GetAttribute("Active") == true or item:GetAttribute("Blocking") == true or item:GetAttribute("Parrying") == true then
-                    return true
-                end
-            end
-        end
-    end
-
-    return false
-end
+-- (Helpers isKillerCarrying, isKillerStunnedOrLocked, and isSurvivorParryingOrShielded defined globally at top)
 
 -- Validates that target is an active upright Survivor (EXCLUDES Killer, Lobby players, knocked down, hooked & carried)
 local function isSurvivorValidTarget(c)
@@ -5251,9 +5275,9 @@ local function findNearestSurvivor()
         end
     end
 
-    -- 3. Check workspace subfolders (Survivors, Characters, Match, Entities)
+    -- 3. Check workspace subfolders & workspace children for bot/NPC survivors
     local searchContainers = { workspace }
-    for _, fName in ipairs({ "Survivors", "Players", "Characters", "Match", "Entities" }) do
+    for _, fName in ipairs({ "Bots", "NPCs", "Survivors", "Players", "Characters", "Match", "Entities", "Map" }) do
         local folder = workspace:FindFirstChild(fName)
         if folder and (folder:IsA("Folder") or folder:IsA("Model")) then
             table.insert(searchContainers, folder)
@@ -5265,6 +5289,18 @@ local function findNearestSurvivor()
             if obj:IsA("Model") and obj ~= myChar and not seen[obj] then
                 seen[obj] = true
                 table.insert(candidateModels, obj)
+            end
+        end
+    end
+
+    -- 4. Check CollectionService tags for survivors / bots
+    if CollectionService then
+        for _, tag in ipairs({ "Survivor", "Survivors", "Bot", "NPC", "SurvivorBot" }) do
+            for _, obj in ipairs(CollectionService:GetTagged(tag)) do
+                if obj:IsA("Model") and obj ~= myChar and not seen[obj] then
+                    seen[obj] = true
+                    table.insert(candidateModels, obj)
+                end
             end
         end
     end
@@ -5314,9 +5350,9 @@ local function findNearestDownedSurvivor()
         end
     end
 
-    -- 3. Check workspace subfolders
+    -- 3. Check workspace subfolders & workspace children for bot/NPC survivors
     local searchContainers = { workspace }
-    for _, fName in ipairs({ "Survivors", "Players", "Characters", "Match", "Entities" }) do
+    for _, fName in ipairs({ "Bots", "NPCs", "Survivors", "Players", "Characters", "Match", "Entities", "Map" }) do
         local folder = workspace:FindFirstChild(fName)
         if folder and (folder:IsA("Folder") or folder:IsA("Model")) then
             table.insert(searchContainers, folder)
@@ -5328,6 +5364,18 @@ local function findNearestDownedSurvivor()
             if obj:IsA("Model") and obj ~= myChar and not seen[obj] then
                 seen[obj] = true
                 table.insert(candidateModels, obj)
+            end
+        end
+    end
+
+    -- 4. Check CollectionService tags
+    if CollectionService then
+        for _, tag in ipairs({ "Survivor", "Survivors", "Bot", "NPC", "SurvivorBot" }) do
+            for _, obj in ipairs(CollectionService:GetTagged(tag)) do
+                if obj:IsA("Model") and obj ~= myChar and not seen[obj] then
+                    seen[obj] = true
+                    table.insert(candidateModels, obj)
+                end
             end
         end
     end
@@ -5479,8 +5527,10 @@ local function executeKillerHit(targetChar)
                             end
                             local bPos = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
                             pcall(function()
-                                VirtualInputManager:SendTouchEvent(3, 0, bPos.X, bPos.Y)
-                                VirtualInputManager:SendTouchEvent(3, 2, bPos.X, bPos.Y)
+                                if VirtualInputManager and typeof(VirtualInputManager.SendTouchEvent) == "function" then
+                                    VirtualInputManager:SendTouchEvent(3, 0, bPos.X, bPos.Y)
+                                    VirtualInputManager:SendTouchEvent(3, 2, bPos.X, bPos.Y)
+                                end
                             end)
                         end
                     end
@@ -5519,15 +5569,21 @@ local function executeKillerHit(targetChar)
         local vp = cam and cam.ViewportSize or Vector2.new(800, 600)
         local cx = vp.X / 2
         local cy = vp.Y / 2
-        VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
-        VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
-        VirtualInputManager:SendTouchEvent(3, 0, cx, cy)
-        VirtualInputManager:SendTouchEvent(3, 2, cx, cy)
+        if VirtualInputManager then
+            if typeof(VirtualInputManager.SendMouseButtonEvent) == "function" then
+                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+            end
+            if typeof(VirtualInputManager.SendTouchEvent) == "function" then
+                VirtualInputManager:SendTouchEvent(3, 0, cx, cy)
+                VirtualInputManager:SendTouchEvent(3, 2, cx, cy)
+            end
+        end
     end)
 end
 
 -- Continuous frame-locked Auto Aim for Killer (Works whether Auto Catch is ON or OFF)
-local function updateKillerAim()
+updateKillerAim = function()
     pcall(function()
         RunService:UnbindFromRenderStep("KillerAutoAim")
     end)
@@ -5539,37 +5595,39 @@ local function updateKillerAim()
     if not autoAimSurvivorEnabled then return end
 
     local function performAim()
-        if not autoAimSurvivorEnabled then return end
+        pcall(function()
+            if not autoAimSurvivorEnabled then return end
 
-        local myChar = player.Character
-        local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-        if not myHrp then return end
+            local myChar = player.Character
+            local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            if not myHrp then return end
 
-        local target = currentKillerTarget
-        if not target or not target.Parent or not isSurvivorValidTarget(target) then
-            local nearest, nDist = findNearestSurvivor()
-            if nearest then
-                target = nearest
-                currentKillerTarget = nearest
-            else
-                return
+            local target = currentKillerTarget
+            if not target or not target.Parent or not isSurvivorValidTarget(target) then
+                local nearest, nDist = findNearestSurvivor()
+                if nearest then
+                    target = nearest
+                    currentKillerTarget = nearest
+                else
+                    return
+                end
             end
-        end
 
-        local sHrp = target:FindFirstChild("HumanoidRootPart")
-        if not sHrp then return end
+            local sHrp = target:FindFirstChild("HumanoidRootPart")
+            if not sHrp then return end
 
-        local cam = workspace.CurrentCamera
-        if not cam then return end
+            local cam = workspace.CurrentCamera
+            if not cam then return end
 
-        local aimPos = sHrp.Position + Vector3.new(0, 1.2, 0)
+            local aimPos = sHrp.Position + Vector3.new(0, 1.2, 0)
 
-        -- Lock Camera directly at Survivor
-        cam.CFrame = CFrame.lookAt(cam.CFrame.Position, aimPos)
+            -- Lock Camera directly at Survivor
+            cam.CFrame = CFrame.lookAt(cam.CFrame.Position, aimPos)
 
-        -- Lock Killer body towards Survivor for server hit validation
-        local lookTarget = Vector3.new(sHrp.Position.X, myHrp.Position.Y, sHrp.Position.Z)
-        myHrp.CFrame = CFrame.lookAt(myHrp.Position, lookTarget)
+            -- Lock Killer body towards Survivor for server hit validation
+            local lookTarget = Vector3.new(sHrp.Position.X, myHrp.Position.Y, sHrp.Position.Z)
+            myHrp.CFrame = CFrame.lookAt(myHrp.Position, lookTarget)
+        end)
     end
 
     local ok = pcall(function()
@@ -5834,7 +5892,9 @@ task.spawn(function()
                                 if hookModel then
                                     for _, prompt in ipairs(hookModel:GetDescendants()) do
                                         if prompt:IsA("ProximityPrompt") then
-                                            fireproximityprompt(prompt)
+                                            if typeof(fireproximityprompt) == "function" then
+                                                pcall(function() fireproximityprompt(prompt) end)
+                                            end
                                         end
                                     end
                                 end
@@ -5886,7 +5946,9 @@ task.spawn(function()
                             pcall(function()
                                 for _, prompt in ipairs(downedSurvivor:GetDescendants()) do
                                     if prompt:IsA("ProximityPrompt") then
-                                        fireproximityprompt(prompt)
+                                        if typeof(fireproximityprompt) == "function" then
+                                            pcall(function() fireproximityprompt(prompt) end)
+                                        end
                                     end
                                 end
                             end)
@@ -5950,8 +6012,10 @@ local function getAliveSurvivorList()
                     seen[c] = true
                     local plr = Players:GetPlayerFromCharacter(c)
                     local pName = plr and (plr.DisplayName or plr.Name) or c.Name
+                    local isBot = (plr == nil)
                     local status = isCharacterKnocked(c) and " [Downed]" or (isCharacterHooked(c) and " [Hooked]" or "")
-                    local label = string.format("%s%s", pName, status)
+                    local botTag = isBot and " [Bot]" or ""
+                    local label = string.format("%s%s%s", pName, botTag, status)
                     table.insert(result, {
                         label = label,
                         player = plr,
@@ -5969,23 +6033,26 @@ local function getAliveSurvivorList()
             local c = plr.Character
             local hrp = c:FindFirstChild("HumanoidRootPart")
             if hrp and c:IsDescendantOf(workspace) and not isEntityInLobbyOrSpectating(c, plr) then
-                seen[c] = true
-                local pName = plr.DisplayName or plr.Name
-                local status = isCharacterKnocked(c) and " [Downed]" or (isCharacterHooked(c) and " [Hooked]" or "")
-                local label = string.format("%s (@%s)%s", pName, plr.Name, status)
-                table.insert(result, {
-                    label = label,
-                    player = plr,
-                    character = c,
-                    name = plr.Name
-                })
+                local isKiller = isCharacterKiller(c, plr) or (getKiller and c == getKiller())
+                if not isKiller then
+                    seen[c] = true
+                    local pName = plr.DisplayName or plr.Name
+                    local status = isCharacterKnocked(c) and " [Downed]" or (isCharacterHooked(c) and " [Hooked]" or "")
+                    local label = string.format("%s (@%s)%s", pName, plr.Name, status)
+                    table.insert(result, {
+                        label = label,
+                        player = plr,
+                        character = c,
+                        name = plr.Name
+                    })
+                end
             end
         end
     end
 
-    -- 3. Check workspace subfolders (Survivors, Players, Characters, Match, Entities)
+    -- 3. Check workspace subfolders & top-level models for bot/NPC survivors
     local searchContainers = { workspace }
-    for _, fName in ipairs({ "Survivors", "Players", "Characters", "Match", "Entities" }) do
+    for _, fName in ipairs({ "Bots", "NPCs", "Survivors", "Players", "Characters", "Match", "Entities", "Map" }) do
         local folder = workspace:FindFirstChild(fName)
         if folder and (folder:IsA("Folder") or folder:IsA("Model")) then
             table.insert(searchContainers, folder)
@@ -5996,18 +6063,54 @@ local function getAliveSurvivorList()
         for _, obj in ipairs(container:GetChildren()) do
             if obj:IsA("Model") and obj ~= myChar and not seen[obj] then
                 local hrp = obj:FindFirstChild("HumanoidRootPart")
-                if hrp and obj:IsDescendantOf(workspace) and not isEntityInLobbyOrSpectating(obj) then
-                    seen[obj] = true
+                local hum = obj:FindFirstChildOfClass("Humanoid")
+                if hrp and hum and obj:IsDescendantOf(workspace) and not isEntityInLobbyOrSpectating(obj) then
                     local plr = Players:GetPlayerFromCharacter(obj)
-                    local pName = plr and (plr.DisplayName or plr.Name) or obj.Name
-                    local status = isCharacterKnocked(obj) and " [Downed]" or (isCharacterHooked(obj) and " [Hooked]" or "")
-                    local label = string.format("%s%s", pName, status)
-                    table.insert(result, {
-                        label = label,
-                        player = plr,
-                        character = obj,
-                        name = pName
-                    })
+                    local isKiller = isCharacterKiller(obj, plr) or (getKiller and obj == getKiller())
+                    if not isKiller then
+                        seen[obj] = true
+                        local pName = plr and (plr.DisplayName or plr.Name) or obj.Name
+                        local isBot = (plr == nil)
+                        local status = isCharacterKnocked(obj) and " [Downed]" or (isCharacterHooked(obj) and " [Hooked]" or "")
+                        local botTag = isBot and " [Bot]" or ""
+                        local label = string.format("%s%s%s", pName, botTag, status)
+                        table.insert(result, {
+                            label = label,
+                            player = plr,
+                            character = obj,
+                            name = pName
+                        })
+                    end
+                end
+            end
+        end
+    end
+
+    -- 4. Check CollectionService tagged survivors/bots
+    if CollectionService then
+        for _, tag in ipairs({ "Survivor", "Survivors", "Bot", "NPC", "SurvivorBot" }) do
+            for _, obj in ipairs(CollectionService:GetTagged(tag)) do
+                if obj:IsA("Model") and obj ~= myChar and not seen[obj] then
+                    local hrp = obj:FindFirstChild("HumanoidRootPart")
+                    local hum = obj:FindFirstChildOfClass("Humanoid")
+                    if hrp and hum and obj:IsDescendantOf(workspace) and not isEntityInLobbyOrSpectating(obj) then
+                        local plr = Players:GetPlayerFromCharacter(obj)
+                        local isKiller = isCharacterKiller(obj, plr) or (getKiller and obj == getKiller())
+                        if not isKiller then
+                            seen[obj] = true
+                            local pName = plr and (plr.DisplayName or plr.Name) or obj.Name
+                            local isBot = (plr == nil)
+                            local status = isCharacterKnocked(obj) and " [Downed]" or (isCharacterHooked(obj) and " [Hooked]" or "")
+                            local botTag = isBot and " [Bot]" or ""
+                            local label = string.format("%s%s%s", pName, botTag, status)
+                            table.insert(result, {
+                                label = label,
+                                player = plr,
+                                character = obj,
+                                name = pName
+                            })
+                        end
+                    end
                 end
             end
         end
@@ -6045,16 +6148,72 @@ V_KillerSection:Button({
     Callback = function()
         local newLabels = getAliveSurvivorLabels()
         pcall(function()
-            if survivorDropdownRef and survivorDropdownRef.SetValues then
-                survivorDropdownRef:SetValues(newLabels)
-            elseif survivorDropdownRef and survivorDropdownRef.Refresh then
+            if survivorDropdownRef and survivorDropdownRef.Refresh then
                 survivorDropdownRef:Refresh(newLabels)
+            elseif survivorDropdownRef and survivorDropdownRef.SetValues then
+                survivorDropdownRef:SetValues(newLabels)
             end
         end)
         local count = (newLabels[1] == "No Survivors Found") and 0 or #newLabels
         WindUI:Notify({ Title = "Survivor List Refreshed", Content = string.format("Found %d active survivor(s).", count), Duration = 2.5 })
     end
 })
+
+-- Dynamic Auto-Refresher for Survivor Dropdown (Refreshes automatically every 1.5s during match)
+task.spawn(function()
+    while scriptRunning do
+        pcall(function()
+            if survivorDropdownRef then
+                local liveList = getAliveSurvivorList()
+                local newLabels = {}
+                for _, s in ipairs(liveList) do
+                    table.insert(newLabels, s.label)
+                end
+                if #newLabels == 0 then
+                    table.insert(newLabels, "No Survivors Found")
+                end
+
+                local currentVals = survivorDropdownRef.Values or {}
+                local changed = (#currentVals ~= #newLabels)
+                if not changed then
+                    for i, lbl in ipairs(newLabels) do
+                        local curItem = typeof(currentVals[i]) == "table" and currentVals[i].Title or currentVals[i]
+                        if curItem ~= lbl then
+                            changed = true
+                            break
+                        end
+                    end
+                end
+
+                if changed then
+                    if survivorDropdownRef.Refresh then
+                        survivorDropdownRef:Refresh(newLabels)
+                    elseif survivorDropdownRef.SetValues then
+                        survivorDropdownRef:SetValues(newLabels)
+                    end
+
+                    -- Auto-select first survivor if current selection is invalid or "No Survivors Found"
+                    local validSelection = false
+                    if selectedTeleportSurvivor and selectedTeleportSurvivor ~= "No Survivors Found" then
+                        for _, lbl in ipairs(newLabels) do
+                            if lbl == selectedTeleportSurvivor then
+                                validSelection = true
+                                break
+                            end
+                        end
+                    end
+                    if not validSelection and newLabels[1] ~= "No Survivors Found" then
+                        selectedTeleportSurvivor = newLabels[1]
+                        if survivorDropdownRef.Select then
+                            pcall(function() survivorDropdownRef:Select(newLabels[1]) end)
+                        end
+                    end
+                end
+            end
+        end)
+        task.wait(1.5)
+    end
+end)
 
 V_KillerSection:Button({
     Title = "⚡ Teleport to Chosen Survivor",
@@ -6086,7 +6245,7 @@ V_KillerSection:Button({
             local downed, dDist = findNearestDownedSurvivor()
             if downed and downed:FindFirstChild("HumanoidRootPart") then
                 table.insert(survivors, {
-                    label = downed.Name .. " (Downed)",
+                    label = downed.Name .. " [Downed]",
                     character = downed,
                     name = downed.Name
                 })
@@ -6279,7 +6438,9 @@ V_KillerSection:Toggle({
                             if hookModel then
                                 for _, prompt in ipairs(hookModel:GetDescendants()) do
                                     if prompt:IsA("ProximityPrompt") then
-                                        pcall(function() fireproximityprompt(prompt) end)
+                                        if typeof(fireproximityprompt) == "function" then
+                                            pcall(function() fireproximityprompt(prompt) end)
+                                        end
                                     end
                                 end
                             end
@@ -6353,7 +6514,9 @@ V_KillerSection:Toggle({
 
                         for _, prompt in ipairs(downedSurvivor:GetDescendants()) do
                             if prompt:IsA("ProximityPrompt") then
-                                pcall(function() fireproximityprompt(prompt) end)
+                                if typeof(fireproximityprompt) == "function" then
+                                    pcall(function() fireproximityprompt(prompt) end)
+                                end
                             end
                         end
 
