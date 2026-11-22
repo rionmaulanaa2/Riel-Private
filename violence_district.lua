@@ -67,16 +67,16 @@ task.spawn(function()
                     if currentRole == "Killer" then
                         -- Invalidate all survivor automation sessions immediately
                         repairSession = (repairSession or 0) + 1
-                        remoteGenSession = (remoteGenSession or 0) + 1
+                        ghostRepairSession = (ghostRepairSession or 0) + 1
                         saveSession = (saveSession or 0) + 1
                         palletSession = (palletSession or 0) + 1
                         parrySession = (parrySession or 0) + 1
                         dodgeSession = (dodgeSession or 0) + 1
 
                         -- Disable all survivor-only automation features
-                        if remoteGenRepairEnabled then
-                            remoteGenRepairEnabled = false
-                            if stopRemoteRepair then pcall(stopRemoteRepair) end
+                        if ghostRepairEnabled then
+                            ghostRepairEnabled = false
+                            if stopGhostRepair then pcall(stopGhostRepair) end
                         end
                         if autoRepairEnabled then
                             autoRepairEnabled = false
@@ -3419,35 +3419,38 @@ V_ObjectiveSection:Toggle({
 })
 
 -- ============================================================
--- 4.1 REMOTE GENERATOR REPAIR (CROSS-MAP AUTO FIX WITHOUT PHYSICAL PROXIMITY)
+-- 4.1 UNDERGROUND GHOST REPAIR (SUBTERRANEAN PROXIMITY AUTO REPAIR)
 -- ============================================================
-local remoteGenRepairEnabled = false
-local remoteGenRepairMode = "Pure Remote (Anywhere)"
-local remoteGenPulseInterval = 0.8
-local remoteGenSession = 0
-local currentRemoteGenPoint = nil
-local currentRemoteGenModel = nil
-local remoteOriginalCFrame = nil
+local ghostRepairEnabled = false
+local ghostDepthOffset = 7.0
+local ghostRepairPulseInterval = 0.8
+local ghostAutoReturn = true
+local ghostRepairSession = 0
+local currentGhostGenPoint = nil
+local currentGhostGenModel = nil
+local ghostOriginalCFrame = nil
 
-local function stopRemoteRepair()
+local function stopGhostRepair()
     pcall(function()
         local remotes = getVDRemotes()
-        if currentRemoteGenPoint and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
-            remotes.Generator.RepairEvent:FireServer(currentRemoteGenPoint, false, nil, HttpService:GenerateGUID(false), player.Character)
+        if currentGhostGenPoint and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
+            remotes.Generator.RepairEvent:FireServer(currentGhostGenPoint, false, nil, HttpService:GenerateGUID(false), player.Character)
         end
     end)
     pcall(function()
-        if remoteGenRepairMode == "Underground Ghost" and remoteOriginalCFrame then
+        if ghostAutoReturn and ghostOriginalCFrame then
             local myChar = player.Character
             local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
             if myHrp then
-                myHrp.CFrame = remoteOriginalCFrame
+                myHrp.CFrame = ghostOriginalCFrame
+                myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                myHrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
             end
         end
     end)
-    remoteOriginalCFrame = nil
-    currentRemoteGenPoint = nil
-    currentRemoteGenModel = nil
+    ghostOriginalCFrame = nil
+    currentGhostGenPoint = nil
+    currentGhostGenModel = nil
     pcall(function()
         if player.Character then
             player.Character:SetAttribute("isRepairing", false)
@@ -3456,7 +3459,7 @@ local function stopRemoteRepair()
     unlockCameraAndMovement()
 end
 
-local function findNextUnfinishedGeneratorRemote()
+local function findNextUnfinishedGeneratorGhost()
     local myChar = player.Character
     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
     local myPos = myHrp and myHrp.Position or Vector3.new(0, 0, 0)
@@ -3518,12 +3521,12 @@ local function findNextUnfinishedGeneratorRemote()
     return candidatePoints[1].point, candidatePoints[1].model
 end
 
-local function startRemoteRepairThread()
-    remoteGenSession = remoteGenSession + 1
-    local thisSession = remoteGenSession
+local function startGhostRepairThread()
+    ghostRepairSession = ghostRepairSession + 1
+    local thisSession = ghostRepairSession
 
     task.spawn(function()
-        while remoteGenRepairEnabled and (remoteGenSession == thisSession) and scriptRunning do
+        while ghostRepairEnabled and (ghostRepairSession == thisSession) and scriptRunning do
             local iterSuccess, iterErr = pcall(function()
                 local myChar = player.Character
                 if not myChar or not myChar:IsDescendantOf(workspace) then
@@ -3541,15 +3544,20 @@ local function startRemoteRepairThread()
                     return
                 end
 
-                local targetPoint, genModel = findNextUnfinishedGeneratorRemote()
+                local targetPoint, genModel = findNextUnfinishedGeneratorGhost()
                 if not targetPoint or not genModel then
-                    WindUI:Notify({ Title = "Remote Gen", Content = "All generators 100% completed!", Duration = 3 })
+                    WindUI:Notify({ Title = "Ghost Gen", Content = "All generators 100% completed!", Duration = 3 })
+                    if ghostAutoReturn and ghostOriginalCFrame and myHrp then
+                        myHrp.CFrame = ghostOriginalCFrame
+                        myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                        ghostOriginalCFrame = nil
+                    end
                     task.wait(2.5)
                     return
                 end
 
-                currentRemoteGenPoint = targetPoint
-                currentRemoteGenModel = genModel
+                currentGhostGenPoint = targetPoint
+                currentGhostGenModel = genModel
 
                 local remotes = getVDRemotes()
                 if not remotes.Generator or not remotes.Generator:FindFirstChild("RepairEvent") then
@@ -3560,19 +3568,22 @@ local function startRemoteRepairThread()
                 local genName = genModel.Name or "Generator"
                 local isDone, currentProg = isGeneratorCompleted(targetPoint)
                 WindUI:Notify({
-                    Title = "⚡ Remote Repair",
-                    Content = string.format("Fixing %s [%.0f%%] (%s)", genName, currentProg or 0, remoteGenRepairMode),
+                    Title = "👻 Ghost Repair",
+                    Content = string.format("Subterranean fixing %s [%.0f%%]", genName, currentProg or 0),
                     Duration = 2
                 })
 
-                -- Mode: Underground Ghost positioning
-                if remoteGenRepairMode == "Underground Ghost" then
-                    if not remoteOriginalCFrame and myHrp then
-                        remoteOriginalCFrame = myHrp.CFrame
-                    end
-                    if myHrp then
-                        myHrp.CFrame = CFrame.new(targetPoint.Position - Vector3.new(0, 7.5, 0))
-                    end
+                -- Save surface CFrame if not already captured
+                if not ghostOriginalCFrame and myHrp then
+                    ghostOriginalCFrame = myHrp.CFrame
+                end
+
+                -- Position character directly under targetPoint (bypasses server X/Z horizontal distance check invisibly)
+                local safeUndergroundCFrame = CFrame.new(targetPoint.Position - Vector3.new(0, ghostDepthOffset, 0))
+                if myHrp then
+                    myHrp.CFrame = safeUndergroundCFrame
+                    myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    myHrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                 end
 
                 local requestId = HttpService:GenerateGUID(false)
@@ -3587,7 +3598,7 @@ local function startRemoteRepairThread()
                 end)
 
                 local genTimeout = tick() + 75
-                while remoteGenRepairEnabled and (remoteGenSession == thisSession) and scriptRunning and tick() < genTimeout do
+                while ghostRepairEnabled and (ghostRepairSession == thisSession) and scriptRunning and tick() < genTimeout do
                     local doneNow, progNow = isGeneratorCompleted(targetPoint)
                     if doneNow or (progNow and progNow >= 99.5) then
                         completedGenerators[targetPoint] = true
@@ -3595,9 +3606,9 @@ local function startRemoteRepairThread()
                         pcall(function()
                             remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, requestId, myChar)
                         end)
-                        currentRemoteGenPoint = nil
-                        currentRemoteGenModel = nil
-                        WindUI:Notify({ Title = "⚡ Remote Repair", Content = "⚡ " .. genName .. " Fixed 100%! Next...", Duration = 2 })
+                        currentGhostGenPoint = nil
+                        currentGhostGenModel = nil
+                        WindUI:Notify({ Title = "👻 Ghost Repair", Content = "⚡ " .. genName .. " Fixed 100%! Next...", Duration = 2 })
                         task.wait(0.4)
                         break
                     end
@@ -3621,23 +3632,25 @@ local function startRemoteRepairThread()
                         end)
                     end
 
-                    -- In Underground Ghost mode, ensure character stays safe underground
-                    if remoteGenRepairMode == "Underground Ghost" and myHrp then
-                        local safePos = targetPoint.Position - Vector3.new(0, 7.5, 0)
-                        if (myHrp.Position - safePos).Magnitude > 3 then
-                            myHrp.CFrame = CFrame.new(safePos)
+                    -- Anchor underground and freeze physics to prevent falling into the void
+                    if myHrp then
+                        local desiredPos = targetPoint.Position - Vector3.new(0, ghostDepthOffset, 0)
+                        if (myHrp.Position - desiredPos).Magnitude > 2 then
+                            myHrp.CFrame = CFrame.new(desiredPos)
                         end
+                        myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                        myHrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                     end
 
-                    task.wait(remoteGenPulseInterval)
+                    task.wait(ghostRepairPulseInterval)
                 end
 
-                if currentRemoteGenPoint == targetPoint then
+                if currentGhostGenPoint == targetPoint then
                     pcall(function()
                         remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, requestId, myChar)
                     end)
-                    currentRemoteGenPoint = nil
-                    currentRemoteGenModel = nil
+                    currentGhostGenPoint = nil
+                    currentGhostGenModel = nil
                 end
             end)
 
@@ -3647,41 +3660,45 @@ local function startRemoteRepairThread()
             task.wait(0.2)
         end
 
-        stopRemoteRepair()
+        stopGhostRepair()
     end)
 end
 
 V_ObjectiveSection:Toggle({
-    Title = "Remote Generator Repair",
-    Description = "Repairs generators from anywhere across the map without needing to stand near or travel to them.",
+    Title = "Underground Ghost Repair",
+    Description = "Repairs generators 7 studs underground, bypassing server distance checks while 100% safe from killer.",
     Default = false,
     Callback = function(v)
-        remoteGenRepairEnabled = v
+        ghostRepairEnabled = v
         if v then
-            remoteOriginalCFrame = nil
+            ghostOriginalCFrame = nil
             completedGenerators = {}
-            startRemoteRepairThread()
-            WindUI:Notify({ Title = "Remote Gen", Content = "Remote Generator Repair enabled (" .. remoteGenRepairMode .. ")!", Duration = 2.5 })
+            startGhostRepairThread()
+            WindUI:Notify({ Title = "Ghost Gen", Content = "Underground Ghost Repair enabled!", Duration = 2.5 })
         else
-            remoteGenSession = remoteGenSession + 1
-            stopRemoteRepair()
-            WindUI:Notify({ Title = "Remote Gen", Content = "Remote Generator Repair stopped.", Duration = 2 })
+            ghostRepairSession = ghostRepairSession + 1
+            stopGhostRepair()
+            WindUI:Notify({ Title = "Ghost Gen", Content = "Underground Ghost Repair stopped.", Duration = 2 })
         end
     end
 })
 
-V_ObjectiveSection:Dropdown({
-    Title = "Remote Repair Mode",
-    Description = "Pure Remote (zero movement) or Underground Ghost (7 studs below gen floor, bypasses server distance checks)",
-    Values = { "Pure Remote (Anywhere)", "Underground Ghost" },
-    Value = "Pure Remote (Anywhere)",
+V_ObjectiveSection:Slider({
+    Title = "Ghost Depth Offset",
+    Description = "Depth in studs below generator floor (4.5 to 10.0 studs, default 7.0)",
+    Step = 0.5,
+    Value = {
+        Min = 4.5,
+        Max = 10.0,
+        Default = 7.0,
+    },
     Callback = function(v)
-        remoteGenRepairMode = v
+        ghostDepthOffset = tonumber(v) or 7.0
     end
 })
 
 V_ObjectiveSection:Slider({
-    Title = "Remote Repair Speed",
+    Title = "Ghost Repair Speed",
     Description = "Interval between skillcheck progression boosts (0.3s Fast - 2.0s Legit)",
     Step = 0.1,
     Value = {
@@ -3690,7 +3707,16 @@ V_ObjectiveSection:Slider({
         Default = 0.8,
     },
     Callback = function(v)
-        remoteGenPulseInterval = tonumber(v) or 0.8
+        ghostRepairPulseInterval = tonumber(v) or 0.8
+    end
+})
+
+V_ObjectiveSection:Toggle({
+    Title = "Auto Return to Surface",
+    Description = "Safely teleports you back to your starting spot once generators are completed or feature is turned off.",
+    Default = true,
+    Callback = function(v)
+        ghostAutoReturn = v
     end
 })
 
