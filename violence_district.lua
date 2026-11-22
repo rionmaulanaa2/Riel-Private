@@ -1678,6 +1678,86 @@ local function snapNeedleToGreatZone(needle, targetRot)
     end)
 end
 
+-- Helper to resolve the true Generator model instance expected by the server
+local function resolveGeneratorInstance(point, fallbackModel)
+    -- 1. If point is provided, inspect point's immediate hierarchy
+    if point and typeof(point) == "Instance" then
+        if point.Parent and point.Parent.Name == "Generator" then
+            return point.Parent
+        end
+        local genAncestor = point:FindFirstAncestor("Generator")
+        if genAncestor then
+            return genAncestor
+        end
+        if point.Parent then
+            local childGen = point.Parent:FindFirstChild("Generator")
+            if childGen and (childGen:IsA("Model") or childGen:IsA("Folder") or childGen:IsA("BasePart")) then
+                return childGen
+            end
+        end
+    end
+
+    -- 2. Check fallbackModel if provided
+    if fallbackModel and typeof(fallbackModel) == "Instance" then
+        if fallbackModel.Name == "Generator" then
+            return fallbackModel
+        end
+        local childGen = fallbackModel:FindFirstChild("Generator")
+        if childGen and (childGen:IsA("Model") or childGen:IsA("Folder") or childGen:IsA("BasePart")) then
+            return childGen
+        end
+    end
+
+    -- 3. Search getnilinstances() if available for an unparented/nil Generator instance
+    if typeof(getnilinstances) == "function" then
+        local success, nilList = pcall(getnilinstances)
+        if success and typeof(nilList) == "table" then
+            if point and typeof(point) == "Instance" then
+                for _, inst in ipairs(nilList) do
+                    if typeof(inst) == "Instance" and inst.Name == "Generator" then
+                        if point.Parent == inst or point:IsDescendantOf(inst) then
+                            return inst
+                        end
+                    end
+                end
+                local pPos = nil
+                pcall(function() pPos = point.Position end)
+                if pPos then
+                    local bestInst = nil
+                    local bestDist = 25
+                    for _, inst in ipairs(nilList) do
+                        if typeof(inst) == "Instance" and inst.Name == "Generator" then
+                            local body = inst:FindFirstChild("GeneratorBody") or inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart")
+                            if body and body.Position then
+                                local d = (body.Position - pPos).Magnitude
+                                if d < bestDist then
+                                    bestDist = d
+                                    bestInst = inst
+                                end
+                            end
+                        end
+                    end
+                    if bestInst then
+                        return bestInst
+                    end
+                end
+            end
+            for _, inst in ipairs(nilList) do
+                if typeof(inst) == "Instance" and inst.Name == "Generator" then
+                    return inst
+                end
+            end
+        end
+    end
+
+    -- 4. Fallback: direct parent if it's a Model
+    if point and typeof(point) == "Instance" and point.Parent and point.Parent:IsA("Model") then
+        return point.Parent
+    end
+
+    return fallbackModel or (point and point.Parent)
+end
+
 -- Helper to locate active Generator and GeneratorPoint context
 local function findActiveRepairContext()
     local myChar = player.Character
@@ -1696,10 +1776,10 @@ local function findActiveRepairContext()
             local pPos = hrp.Position
             local closestDist = 25
 
-            -- 1. Check workspace.Map.Generators
+            -- 1. Check workspace.Map.Generators and workspace.Map["new Generators"]
             pcall(function()
                 local map = workspace:FindFirstChild("Map")
-                local gens = map and map:FindFirstChild("Generators")
+                local gens = map and (map:FindFirstChild("Generators") or map:FindFirstChild("new Generators"))
                 if gens then
                     for _, gen in ipairs(gens:GetChildren()) do
                         for _, child in ipairs(gen:GetChildren()) do
@@ -1744,11 +1824,8 @@ local function findActiveRepairContext()
         end
     end
 
-    if targetPoint and not genModel then
-        genModel = targetPoint.Parent
-        if genModel and genModel.Name ~= "Generator" and genModel.Parent and genModel.Parent.Name == "Generator" then
-            genModel = genModel.Parent
-        end
+    if targetPoint then
+        genModel = resolveGeneratorInstance(targetPoint, genModel)
     end
 
     local ms = myChar:FindFirstChild("CheckInterractable") or myChar:FindFirstChild("motherscript")
@@ -1770,12 +1847,13 @@ local function fireSkillCheckSuccessRemote()
 
         if remotes.Generator and remotes.Generator:FindFirstChild("SkillCheckResultEvent") then
             local genModel, genPoint, requestId = findActiveRepairContext()
-            if genModel and genPoint then
+            local actualGenModel = resolveGeneratorInstance(genPoint, genModel)
+            if actualGenModel and genPoint then
                 pcall(function()
                     remotes.Generator.SkillCheckResultEvent:FireServer(
                         "success",
                         1,
-                        genModel,
+                        actualGenModel,
                         genPoint,
                         requestId,
                         { player.Name }
@@ -1822,11 +1900,11 @@ local function hookSkillCheckRemotes()
                         local args = { ... }
                         local parentName = self.Parent and self.Parent.Name or ""
                         if parentName == "Generator" or parentName == "Remotes" or parentName == "" then
-                            if args[3] and typeof(args[3]) == "Instance" then
-                                lastCapturedGenModel = args[3]
-                            end
                             if args[4] and typeof(args[4]) == "Instance" then
                                 lastCapturedGenPoint = args[4]
+                            end
+                            if args[3] and typeof(args[3]) == "Instance" then
+                                lastCapturedGenModel = resolveGeneratorInstance(args[4], args[3])
                             end
                             if typeof(args[5]) == "string" and args[5] ~= "" then
                                 lastCapturedRepairRequestId = args[5]
@@ -1835,12 +1913,11 @@ local function hookSkillCheckRemotes()
                             if perfectSkillcheckEnabled or noSkillCheckEnabled then
                                 args[1] = "success"
                                 args[2] = 1
-                                if not args[3] or typeof(args[3]) ~= "Instance" then
-                                    args[3] = lastCapturedGenModel
-                                end
                                 if not args[4] or typeof(args[4]) ~= "Instance" then
                                     args[4] = lastCapturedGenPoint
                                 end
+                                local resolvedGen = resolveGeneratorInstance(args[4], args[3] or lastCapturedGenModel)
+                                args[3] = resolvedGen or lastCapturedGenModel or args[3]
                                 if not args[5] or typeof(args[5]) ~= "string" or args[5] == "" then
                                     args[5] = lastCapturedRepairRequestId or HttpService:GenerateGUID(false)
                                 end
@@ -1871,9 +1948,7 @@ local function hookSkillCheckRemotes()
                         local args = { ... }
                         if args[1] and typeof(args[1]) == "Instance" then
                             lastCapturedGenPoint = args[1]
-                            if args[1].Parent then
-                                lastCapturedGenModel = args[1].Parent
-                            end
+                            lastCapturedGenModel = resolveGeneratorInstance(args[1], args[1].Parent)
                         end
                         if typeof(args[4]) == "string" and args[4] ~= "" then
                             lastCapturedRepairRequestId = args[4]
@@ -1899,11 +1974,11 @@ local function hookSkillCheckRemotes()
                 local oldFireServer
                 oldFireServer = hookfunction(remoteObj.FireServer, newc(function(self, ...)
                     local args = { ... }
-                    if args[3] and typeof(args[3]) == "Instance" then
-                        lastCapturedGenModel = args[3]
-                    end
                     if args[4] and typeof(args[4]) == "Instance" then
                         lastCapturedGenPoint = args[4]
+                    end
+                    if args[3] and typeof(args[3]) == "Instance" then
+                        lastCapturedGenModel = resolveGeneratorInstance(args[4], args[3])
                     end
                     if typeof(args[5]) == "string" and args[5] ~= "" then
                         lastCapturedRepairRequestId = args[5]
@@ -1912,12 +1987,11 @@ local function hookSkillCheckRemotes()
                     if perfectSkillcheckEnabled or noSkillCheckEnabled then
                         args[1] = "success"
                         args[2] = 1
-                        if not args[3] or typeof(args[3]) ~= "Instance" then
-                            args[3] = lastCapturedGenModel
-                        end
                         if not args[4] or typeof(args[4]) ~= "Instance" then
                             args[4] = lastCapturedGenPoint
                         end
+                        local resolvedGen = resolveGeneratorInstance(args[4], args[3] or lastCapturedGenModel)
+                        args[3] = resolvedGen or lastCapturedGenModel or args[3]
                         if not args[5] or typeof(args[5]) ~= "string" or args[5] == "" then
                             args[5] = lastCapturedRepairRequestId or HttpService:GenerateGUID(false)
                         end
@@ -1936,9 +2010,7 @@ local function hookSkillCheckRemotes()
                     local args = { ... }
                     if args[1] and typeof(args[1]) == "Instance" then
                         lastCapturedGenPoint = args[1]
-                        if args[1].Parent then
-                            lastCapturedGenModel = args[1].Parent
-                        end
+                        lastCapturedGenModel = resolveGeneratorInstance(args[1], args[1].Parent)
                     end
                     if typeof(args[4]) == "string" and args[4] ~= "" then
                         lastCapturedRepairRequestId = args[4]
@@ -3361,6 +3433,10 @@ V_ObjectiveSection:Toggle({
                     if targetPoint and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") and checkRepairActive() then
                         currentRepairPoint = targetPoint
                         local guid = HttpService:GenerateGUID(false)
+                        local actualGenModel = resolveGeneratorInstance(targetPoint, getGeneratorModel(targetPoint))
+                        lastCapturedGenModel = actualGenModel
+                        lastCapturedGenPoint = targetPoint
+                        lastCapturedRepairRequestId = guid
                         remotes.Generator.RepairEvent:FireServer(targetPoint, true, nil, guid, myChar)
 
                         local repairTimeout = tick() + 60
@@ -3487,7 +3563,8 @@ local function findNextUnfinishedGeneratorGhost()
     end)
 
     pcall(function()
-        local mapGens = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("Generators")
+        local map = workspace:FindFirstChild("Map")
+        local mapGens = map and (map:FindFirstChild("Generators") or map:FindFirstChild("new Generators"))
         if mapGens then
             for _, gen in ipairs(mapGens:GetChildren()) do
                 for _, desc in ipairs(gen:GetDescendants()) do
@@ -3587,7 +3664,8 @@ local function startGhostRepairThread()
                 end
 
                 local requestId = HttpService:GenerateGUID(false)
-                lastCapturedGenModel = genModel
+                local actualGenModel = resolveGeneratorInstance(targetPoint, genModel)
+                lastCapturedGenModel = actualGenModel
                 lastCapturedGenPoint = targetPoint
                 lastCapturedRepairRequestId = requestId
 
@@ -3620,11 +3698,12 @@ local function startGhostRepairThread()
 
                     -- Send Great Skill Check Progression Boost (+1% per pulse directly with { player.Name })
                     if remotes.Generator:FindFirstChild("SkillCheckResultEvent") then
+                        local sendGenModel = resolveGeneratorInstance(targetPoint, actualGenModel or genModel)
                         pcall(function()
                             remotes.Generator.SkillCheckResultEvent:FireServer(
                                 "success",
                                 1,
-                                genModel,
+                                sendGenModel,
                                 targetPoint,
                                 requestId,
                                 { player.Name }
