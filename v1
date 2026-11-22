@@ -2158,8 +2158,19 @@ local function isCharacterKnocked(char)
     if CollectionService and CollectionService:HasTag(char, "Knocked") then return true end
     if char:FindFirstChild("downed") or char:FindFirstChild("Knocked") then return true end
     local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum and hum.Health > 0 and hum.Health < 30 then
-        return true
+    if hum then
+        -- In Violence District, dying/downed survivors drop to Health <= 0 while crawling on ground
+        if hum.Health <= 0 and char:FindFirstChild("HumanoidRootPart") then
+            if not char:GetAttribute("IsDead") and not char:GetAttribute("Sacrificed") and not char:GetAttribute("Escaped") and not char:GetAttribute("HasEscaped") then
+                return true
+            end
+        end
+        if hum.Health < 30 then
+            return true
+        end
+        if hum.PlatformStand then
+            return true
+        end
     end
     return false
 end
@@ -2170,8 +2181,21 @@ end
 local isPlayerKiller
 
 local function checkPlayerKillerStatus()
+    -- If user has enabled any killer automation feature, they are intentionally playing the Killer
+    if autoCatchEnabled or autoAimSurvivorEnabled or autoHitSurvivorEnabled or autoHookSurvivorEnabled then
+        return true
+    end
+
     local myChar = player.Character
     if not myChar then return false end
+
+    -- Authoritative SelectedKiller attributes from game dump
+    if player:GetAttribute("SelectedKiller") ~= nil or myChar:GetAttribute("SelectedKiller") ~= nil
+        or player:GetAttribute("Killer") ~= nil or myChar:GetAttribute("Killer") ~= nil
+        or player:GetAttribute("IsKiller") == true or player:GetAttribute("Role") == "Killer"
+        or player:GetAttribute("killer") == true or myChar:GetAttribute("IsKiller") == true then
+        return true
+    end
 
     -- 1. Explicit Team verification (Authoritative in Violence District)
     if player.Team then
@@ -6921,6 +6945,18 @@ local lastKillerHitTime = 0
 local currentKillerTarget = nil
 local killerAimConn = nil
 
+-- Helper to detect if Killer is currently carrying a survivor on shoulder
+local function isKillerCarrying(char)
+    char = char or player.Character
+    if not char then return false end
+    return char:GetAttribute("IsCarrying") == true
+        or char:GetAttribute("isCarrying") == true
+        or char:GetAttribute("killercarry") ~= nil
+        or char:FindFirstChild("CarriedSurvivor") ~= nil
+        or char:FindFirstChild("Carry") ~= nil
+        or char:GetAttribute("BeingCarried") ~= nil
+end
+
 -- Helper to detect if Killer is currently stunned, blinded, or immobilized by survivor items/pallets
 local function isKillerStunnedOrLocked(char)
     if not char or not char.Parent then return false end
@@ -6985,12 +7021,20 @@ local function isSurvivorValidTarget(c)
     if not c or not c.Parent then return false end
     if c == player.Character then return false end
     
-    local hum = c:FindFirstChildOfClass("Humanoid")
     local hrp = c:FindFirstChild("HumanoidRootPart")
-    if not hum or not hrp or hum.Health <= 0 then return false end
+    if not hrp then return false end
+
+    -- Exclude Dead, Sacrificed, Escaped
+    if c:GetAttribute("IsDead") == true or c:GetAttribute("Sacrificed") == true or c:GetAttribute("Escaped") == true or c:GetAttribute("HasEscaped") == true then
+        return false
+    end
+    local plr = Players:GetPlayerFromCharacter(c)
+    if plr and (plr:GetAttribute("IsDead") == true or plr:GetAttribute("Sacrificed") == true or plr:GetAttribute("Escaped") == true or plr:GetAttribute("HasEscaped") == true) then
+        return false
+    end
 
     -- Exclude Lobby/Spectating
-    if isEntityInLobbyOrSpectating(c) then
+    if isEntityInLobbyOrSpectating(c, plr) then
         return false
     end
 
@@ -7007,13 +7051,13 @@ local function isSurvivorValidTarget(c)
         or c:FindFirstChild("Carried") ~= nil
     if isCarried then return false end
 
-    -- In 1v4 match: if local player is Killer, every other upright alive player character in match is a Survivor!
-    if isPlayerKiller() then
+    -- In 1v4 match: if local player is Killer or killer automation is active, every other upright alive character is a Survivor!
+    if isPlayerKiller() or autoCatchEnabled or autoAimSurvivorEnabled or autoHitSurvivorEnabled or autoHookSurvivorEnabled then
         return true
     end
 
-    if not isCharacterSurvivor(c) then return false end
-    if isCharacterKiller(c) or c == getKiller() then return false end
+    if not isCharacterSurvivor(c, plr) then return false end
+    if isCharacterKiller(c, plr) or c == getKiller() then return false end
 
     return true
 end
@@ -7023,12 +7067,20 @@ local function isSurvivorDowned(c)
     if not c or not c.Parent then return false end
     if c == player.Character then return false end
     
-    local hum = c:FindFirstChildOfClass("Humanoid")
     local hrp = c:FindFirstChild("HumanoidRootPart")
-    if not hum or not hrp or hum.Health <= 0 then return false end
+    if not hrp then return false end
+
+    -- Exclude Dead, Sacrificed, Escaped
+    if c:GetAttribute("IsDead") == true or c:GetAttribute("Sacrificed") == true or c:GetAttribute("Escaped") == true or c:GetAttribute("HasEscaped") == true then
+        return false
+    end
+    local plr = Players:GetPlayerFromCharacter(c)
+    if plr and (plr:GetAttribute("IsDead") == true or plr:GetAttribute("Sacrificed") == true or plr:GetAttribute("Escaped") == true or plr:GetAttribute("HasEscaped") == true) then
+        return false
+    end
 
     -- Exclude Lobby/Spectating
-    if isEntityInLobbyOrSpectating(c) then return false end
+    if isEntityInLobbyOrSpectating(c, plr) then return false end
 
     -- Exclude Hooked survivors
     if isCharacterHooked(c) then return false end
@@ -7040,12 +7092,10 @@ local function isSurvivorDowned(c)
         or c:FindFirstChild("Carried") ~= nil
     if isCarried then return false end
 
-    if isPlayerKiller() then
-        return isCharacterKnocked(c)
+    -- Exclude Killer
+    if not (isPlayerKiller() or autoCatchEnabled or autoAimSurvivorEnabled or autoHitSurvivorEnabled or autoHookSurvivorEnabled) then
+        if isCharacterKiller(c, plr) or c == getKiller() then return false end
     end
-
-    if not isCharacterSurvivor(c) then return false end
-    if isCharacterKiller(c) or c == getKiller() then return false end
 
     return isCharacterKnocked(c)
 end
@@ -7253,7 +7303,7 @@ local function executeKillerHit(targetChar)
 
     local remotes = getVDRemotes()
 
-    -- 3. Fire Official Violence District Attack Remotes with exact target parameters
+    -- 3. Fire Official Violence District Attack Remotes
     if remotes.Attacks then
         if remotes.Attacks:FindFirstChild("BasicAttack") then
             pcall(function() remotes.Attacks.BasicAttack:FireServer() end)
@@ -7261,13 +7311,9 @@ local function executeKillerHit(targetChar)
         if remotes.Attacks:FindFirstChild("Lunge") then
             pcall(function() remotes.Attacks.Lunge:FireServer() end)
         end
-        if remotes.Attacks:FindFirstChild("LungeDetect") and sHrp then
-            pcall(function() remotes.Attacks.LungeDetect:FireServer(sHrp, sHrp.Position) end)
-            pcall(function() remotes.Attacks.LungeDetect:FireServer(targetChar.PrimaryPart or sHrp, sHrp.Position) end)
-        end
     end
 
-    -- 4. Fire Mobile Attack GUI Button (Slasher-mob / Slasher / Killer Controls)
+    -- 4. Fire Mobile Attack GUI Button (Slasher-mob / Slasher / Controls.attack)
     pcall(function()
         local pg = player:FindFirstChild("PlayerGui")
         if pg then
@@ -7279,6 +7325,7 @@ local function executeKillerHit(targetChar)
                             if typeof(firesignal) == "function" then
                                 pcall(firesignal, btn.MouseButton1Down)
                                 pcall(firesignal, btn.Activated)
+                                pcall(firesignal, btn.MouseButton1Up)
                                 pcall(firesignal, btn.MouseButton1Click)
                             end
                             local bPos = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
@@ -7329,8 +7376,12 @@ local function executeKillerHit(targetChar)
         VirtualInputManager:SendTouchEvent(3, 2, cx, cy)
     end)
 end
+
 -- Continuous frame-locked Auto Aim for Killer (Works whether Auto Catch is ON or OFF)
 local function updateKillerAim()
+    pcall(function()
+        RunService:UnbindFromRenderStep("KillerAutoAim")
+    end)
     if killerAimConn then
         pcall(function() killerAimConn:Disconnect() end)
         killerAimConn = nil
@@ -7338,38 +7389,38 @@ local function updateKillerAim()
 
     if not autoAimSurvivorEnabled then return end
 
-    killerAimConn = RunService.RenderStepped:Connect(function()
+    RunService:BindToRenderStep("KillerAutoAim", Enum.RenderPriority.Camera.Value + 1, function()
         if not autoAimSurvivorEnabled then return end
 
-        pcall(function()
-            local myChar = player.Character
-            local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-            if not myHrp then return end
+        local myChar = player.Character
+        local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if not myHrp then return end
 
-            local target = currentKillerTarget
-            if not target or not target.Parent or not isSurvivorValidTarget(target) then
-                local nearest, nDist = findNearestSurvivor()
-                if nearest then
-                    target = nearest
-                    currentKillerTarget = nearest
-                else
-                    return
-                end
+        local target = currentKillerTarget
+        if not target or not target.Parent or not isSurvivorValidTarget(target) then
+            local nearest, nDist = findNearestSurvivor()
+            if nearest then
+                target = nearest
+                currentKillerTarget = nearest
+            else
+                return
             end
+        end
 
-            local sHrp = target:FindFirstChild("HumanoidRootPart")
-            if not sHrp then return end
+        local sHrp = target:FindFirstChild("HumanoidRootPart")
+        if not sHrp then return end
 
-            local cam = workspace.CurrentCamera
-            local aimPos = sHrp.Position + Vector3.new(0, 1.2, 0)
+        local cam = workspace.CurrentCamera
+        if not cam then return end
 
-            -- Lock Camera smoothly directly at Survivor
-            cam.CFrame = CFrame.lookAt(cam.CFrame.Position, aimPos)
+        local aimPos = sHrp.Position + Vector3.new(0, 1.2, 0)
 
-            -- Lock Killer body towards Survivor for server hit validation
-            local lookTarget = Vector3.new(sHrp.Position.X, myHrp.Position.Y, sHrp.Position.Z)
-            myHrp.CFrame = CFrame.lookAt(myHrp.Position, lookTarget)
-        end)
+        -- Lock Camera directly at Survivor (runs AFTER CameraModule, so it is never overwritten)
+        cam.CFrame = CFrame.lookAt(cam.CFrame.Position, aimPos)
+
+        -- Lock Killer body towards Survivor for server hit validation
+        local lookTarget = Vector3.new(sHrp.Position.X, myHrp.Position.Y, sHrp.Position.Z)
+        myHrp.CFrame = CFrame.lookAt(myHrp.Position, lookTarget)
     end)
 end
 
@@ -7378,7 +7429,7 @@ task.spawn(function()
     while scriptRunning do
         pcall(function()
             if not scriptRunning then return end
-            if (autoAimSurvivorEnabled or autoHitSurvivorEnabled) then
+            if (autoAimSurvivorEnabled or autoHitSurvivorEnabled) and not autoCatchEnabled then
                 local myChar = player.Character
                 local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
                 if myHrp then
@@ -7394,9 +7445,7 @@ task.spawn(function()
                             end
                         end
                     else
-                        if not autoCatchEnabled then
-                            currentKillerTarget = nil
-                        end
+                        currentKillerTarget = nil
                     end
                 end
             end
@@ -7585,16 +7634,14 @@ task.spawn(function()
     while scriptRunning do
         pcall(function()
             if not scriptRunning then return end
-            if autoHookSurvivorEnabled and isPlayerKiller() and not isHookActionActive then
+            if autoHookSurvivorEnabled and not autoCatchEnabled and not isHookActionActive then
                 local myChar = player.Character
                 local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
                 if not myHrp then return end
 
-                local isCarrying = myChar:GetAttribute("IsCarrying") == true
-                    or myChar:FindFirstChild("CarriedSurvivor") ~= nil
-                    or myChar:GetAttribute("BeingCarried") ~= nil
+                local carrying = isKillerCarrying(myChar)
 
-                if isCarrying then
+                if carrying then
                     -- --------------------------------------------------------
                     -- STAGE 2: CARRYING SURVIVOR -> TRANSPORT TO NEAREST HOOK
                     -- --------------------------------------------------------
@@ -7603,9 +7650,9 @@ task.spawn(function()
                         isHookActionActive = true
 
                         -- Move to hook if not in reach
-                        if hookDist > 6 then
-                            travelToTargetLocation(hookPart.Position, 5, function()
-                                return autoHookSurvivorEnabled and (myChar:GetAttribute("IsCarrying") == true)
+                        if hookDist > 4.5 then
+                            travelToTargetLocation(hookPart.Position, 4.0, function()
+                                return autoHookSurvivorEnabled and not autoCatchEnabled and isKillerCarrying(myChar)
                             end)
                         end
 
@@ -7614,20 +7661,15 @@ task.spawn(function()
                         if currentDist <= 8.5 then
                             local lookTarget = Vector3.new(hookPart.Position.X, myHrp.Position.Y, hookPart.Position.Z)
                             myHrp.CFrame = CFrame.lookAt(myHrp.Position, lookTarget)
-                            myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                            myHrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                            myHrp.AssemblyLinearVelocity = Vector3.zero
+                            myHrp.AssemblyAngularVelocity = Vector3.zero
 
                             local reqId = HttpService:GenerateGUID(false)
                             local remotes = getVDRemotes()
 
-                            -- Fire Hook remotes from the dump.lua
-                            if remotes.Carry then
-                                if remotes.Carry:FindFirstChild("HookEvent") then
-                                    pcall(function() remotes.Carry.HookEvent:FireServer(hookPart, reqId, myChar) end)
-                                end
-                                if remotes.Carry:FindFirstChild("HookCommit") then
-                                    pcall(function() remotes.Carry.HookCommit:FireServer(hookPart, reqId, myChar) end)
-                                end
+                            -- Fire Hook remote (HookEvent is Client -> Server)
+                            if remotes.Carry and remotes.Carry:FindFirstChild("HookEvent") then
+                                pcall(function() remotes.Carry.HookEvent:FireServer(hookPart, reqId, myChar) end)
                             end
 
                             -- Fire ProximityPrompts on the hook
@@ -7644,10 +7686,12 @@ task.spawn(function()
 
                             -- Wait for hook animation/server sync
                             local waitTimeout = tick() + 2.5
-                            while tick() < waitTimeout and (myChar:GetAttribute("IsCarrying") == true) do
+                            while tick() < waitTimeout and isKillerCarrying(myChar) do
                                 task.wait(0.1)
                             end
-                            WindUI:Notify({ Title = "🪝 Survivor Hooked!", Content = "Target successfully hung on hook.", Duration = 2.5 })
+                            if not isKillerCarrying(myChar) then
+                                WindUI:Notify({ Title = "🪝 Survivor Hooked!", Content = "Target successfully hung on hook.", Duration = 2.5 })
+                            end
                         end
 
                         isHookActionActive = false
@@ -7663,9 +7707,9 @@ task.spawn(function()
                         local dHrp = downedSurvivor.HumanoidRootPart
 
                         -- Move to downed survivor if not in reach
-                        if downedDist > 6 then
-                            travelToTargetLocation(dHrp.Position, 5, function()
-                                return autoHookSurvivorEnabled and not (myChar:GetAttribute("IsCarrying") == true) and isSurvivorDowned(downedSurvivor)
+                        if downedDist > 4.5 then
+                            travelToTargetLocation(dHrp.Position, 4.0, function()
+                                return autoHookSurvivorEnabled and not autoCatchEnabled and not isKillerCarrying(myChar) and isSurvivorDowned(downedSurvivor)
                             end)
                         end
 
@@ -7693,10 +7737,10 @@ task.spawn(function()
 
                             -- Wait briefly for pickup to register
                             local waitTimeout = tick() + 2.0
-                            while tick() < waitTimeout and not (myChar:GetAttribute("IsCarrying") == true) do
+                            while tick() < waitTimeout and not isKillerCarrying(myChar) do
                                 task.wait(0.1)
                             end
-                            if myChar:GetAttribute("IsCarrying") == true then
+                            if isKillerCarrying(myChar) then
                                 WindUI:Notify({ Title = "🎒 Survivor Picked Up", Content = "Carrying survivor to nearest hook...", Duration = 2 })
                             end
                         end
@@ -7959,13 +8003,8 @@ V_KillerSection:Toggle({
                     -- ====================================================
                     -- CHECK 1: CARRYING SURVIVOR -> TRANSPORT TO HOOK & HANG
                     -- ====================================================
-                    local isCarrying = myChar:GetAttribute("IsCarrying") == true
-                        or myChar:FindFirstChild("CarriedSurvivor") ~= nil
-                        or myChar:GetAttribute("BeingCarried") ~= nil
-                        or myChar:FindFirstChild("Carry") ~= nil
-                        or myChar:GetAttribute("killercarry") ~= nil
-
-                    if isCarrying then
+                    local carrying = isKillerCarrying(myChar)
+                    if carrying then
                         local hookPart, hookDist = findNearestAvailableHook()
                         if hookPart then
                             local hookPos = hookPart.Position
@@ -7979,13 +8018,8 @@ V_KillerSection:Toggle({
 
                             local reqId = HttpService:GenerateGUID(false)
                             local remotes = getVDRemotes()
-                            if remotes.Carry then
-                                if remotes.Carry:FindFirstChild("HookEvent") then
-                                    pcall(function() remotes.Carry.HookEvent:FireServer(hookPart, reqId, myChar) end)
-                                end
-                                if remotes.Carry:FindFirstChild("HookCommit") then
-                                    pcall(function() remotes.Carry.HookCommit:FireServer(hookPart, reqId, myChar) end)
-                                end
+                            if remotes.Carry and remotes.Carry:FindFirstChild("HookEvent") then
+                                pcall(function() remotes.Carry.HookEvent:FireServer(hookPart, reqId, myChar) end)
                             end
 
                             local hookModel = hookPart:FindFirstAncestorOfClass("Model") or hookPart.Parent
@@ -7998,7 +8032,7 @@ V_KillerSection:Toggle({
                             end
 
                             local hookWaitTimeout = tick() + 1.2
-                            while tick() < hookWaitTimeout and (myChar:GetAttribute("IsCarrying") == true) and checkCatchActive() do
+                            while tick() < hookWaitTimeout and isKillerCarrying(myChar) and checkCatchActive() do
                                 task.wait(0.05)
                             end
                             WindUI:Notify({ Title = "🪝 Survivor Hooked!", Content = "Target successfully hung on hook.", Duration = 2.0 })
@@ -8032,8 +8066,10 @@ V_KillerSection:Toggle({
                         end
 
                         -- Execute attack
-                        executeKillerHit(unknockedSurvivor)
-                        lastKillerHitTime = tick()
+                        if (tick() - lastKillerHitTime) >= 0.25 then
+                            executeKillerHit(unknockedSurvivor)
+                            lastKillerHitTime = tick()
+                        end
                         return
                     end
 
@@ -8069,10 +8105,10 @@ V_KillerSection:Toggle({
                         end
 
                         local pickupTimeout = tick() + 1.0
-                        while tick() < pickupTimeout and not (myChar:GetAttribute("IsCarrying") == true) and checkCatchActive() do
+                        while tick() < pickupTimeout and not isKillerCarrying(myChar) and checkCatchActive() do
                             task.wait(0.05)
                         end
-                        if myChar:GetAttribute("IsCarrying") == true then
+                        if isKillerCarrying(myChar) then
                             WindUI:Notify({ Title = "🎒 Survivor Picked Up", Content = "Transporting survivor to hook...", Duration = 1.5 })
                         end
                         return
