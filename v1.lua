@@ -6605,6 +6605,16 @@ local function updateNoClip(state)
     end)
 end
 
+V_ObjectiveSection:Toggle({
+    Title = "NoClip (Pass Through Walls)",
+    Description = "Phases through all map walls, obstacles & doors",
+    Default = false,
+    Callback = function(v)
+        updateNoClip(v)
+        WindUI:Notify({ Title = "NoClip", Content = v and "NoClip enabled!" or "NoClip disabled.", Duration = 2 })
+    end
+})
+
 -- ============================================================
 -- SERVER REMOTES & ATTRIBUTE EXPLOITS (MECHANICS & COLLISION)
 -- ============================================================
@@ -6990,7 +7000,8 @@ end
 
 do
 V_KillerSection = ViolenceTab:Section({
-    Title = "Killer Automation (Catch, Hit & Hook)"
+    Title = "Killer Automation (Catch, Hit & Hook)",
+    Opened = true
 })
 
 -- Unified Killer Automation states (referencing top-level variables)
@@ -7815,16 +7826,6 @@ task.spawn(function()
         task.wait(0.1)
     end
 end)
-
-V_ObjectiveSection:Toggle({
-    Title = "NoClip (Pass Through Walls)",
-    Description = "Phases through all map walls, obstacles & doors",
-    Default = false,
-    Callback = function(v)
-        updateNoClip(v)
-        WindUI:Notify({ Title = "NoClip", Content = v and "NoClip enabled!" or "NoClip disabled.", Duration = 2 })
-    end
-})
 
 V_KillerSection:Dropdown({
     Title = "Killer Travel Mode",

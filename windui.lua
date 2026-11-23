@@ -10767,6 +10767,19 @@ end
 at:Destroy()
 end
 
+local function calculateSectionTargetHeight()
+local headerH = math.max(an.HeaderSize or 48, (at.Outline.Top.AbsoluteSize.Y/am.UIScale))
+local contentH = math.max(at.Outline.Content.AbsoluteSize.Y, at.Outline.Content.UIListLayout.AbsoluteContentSize.Y)/am.UIScale
+local childrenH = 0
+for _, child in ipairs(at.Outline.Content:GetChildren()) do
+if child:IsA("GuiObject") and child.Visible then
+childrenH = childrenH + (child.AbsoluteSize.Y / am.UIScale) + (am.Tab.Gap or 8)
+end
+end
+contentH = math.max(contentH, childrenH)
+return math.ceil(headerH + contentH + 20)
+end
+
 function an.Open(av,aw)
 if an.Expandable then
 an.Opened=true
@@ -10774,9 +10787,7 @@ at.Outline.Content.Visible=true
 at.AutomaticSize="None"
 at.Outline.Top.Size=UDim2.new(1,0,0,(not as and an.HeaderSize or 0))
 at.Outline.Top.AutomaticSize=(not an.Expandable or as)and"Y"or"None"
-local headerH = math.max(an.HeaderSize or 48, (at.Outline.Top.AbsoluteSize.Y/am.UIScale))
-local contentH = math.max(at.Outline.Content.AbsoluteSize.Y, at.Outline.Content.UIListLayout.AbsoluteContentSize.Y)/am.UIScale
-local targetH = headerH + contentH + 10
+local targetH = calculateSectionTargetHeight()
 if aw then
 at.Size=UDim2.new(
 at.Size.X.Scale,
@@ -10784,16 +10795,27 @@ at.Size.X.Offset,
 0,
 targetH
 )
+at.Outline.ClipsDescendants = false
 ap.ImageLabel.Rotation=180
 else
-ai(at,0.33,{
+local openTween = ai(at,0.33,{
 Size=UDim2.new(
 at.Size.X.Scale,
 at.Size.X.Offset,
 0,
 targetH
 ),
-},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
+},Enum.EasingStyle.Quint,Enum.EasingDirection.Out)
+openTween:Play()
+openTween.Completed:Connect(function()
+if an.Opened then
+at.Outline.ClipsDescendants = false
+local finalH = calculateSectionTargetHeight()
+if finalH > at.Size.Y.Offset then
+at.Size = UDim2.new(at.Size.X.Scale, at.Size.X.Offset, 0, finalH)
+end
+end
+end)
 
 ai(
 ap.ImageLabel,
@@ -10808,6 +10830,7 @@ end
 function an.Close(av,aw)
 if an.Expandable then
 an.Opened=false
+at.Outline.ClipsDescendants = true
 local headerH = math.max(an.HeaderSize or 48, (at.Outline.Top.AbsoluteSize.Y/am.UIScale))
 local targetH = headerH
 if aw then
@@ -10861,8 +10884,24 @@ end)
 
 aa.AddSignal(at.Outline.Content.UIListLayout:GetPropertyChangedSignal"AbsoluteContentSize",function()
 if an.Opened then
-an:Open(true)
+local targetH = calculateSectionTargetHeight()
+at.Size = UDim2.new(at.Size.X.Scale, at.Size.X.Offset, 0, targetH)
+at.Outline.ClipsDescendants = false
 end
+end)
+
+pcall(function()
+aa.AddSignal(at.Outline.Content.ChildAdded, function()
+if an.Opened then
+task.defer(function()
+if an.Opened then
+local targetH = calculateSectionTargetHeight()
+at.Size = UDim2.new(at.Size.X.Scale, at.Size.X.Offset, 0, targetH)
+at.Outline.ClipsDescendants = false
+end
+end)
+end
+end)
 end)
 
 task.defer(function()
