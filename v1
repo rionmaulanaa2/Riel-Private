@@ -1858,6 +1858,26 @@ local V_RoleSection = nil
 local V_ServerRemotesSection = nil
 local V_KillerSection = nil
 
+-- Shared Cross-Block Entity Detection, Roles & Navigation State
+local trackedSurvivors = {}
+local isEntityInLobbyOrSpectating = nil
+local isCharacterKnocked = nil
+local isCharacterHooked = nil
+local isCharacterSurvivor = nil
+local isCharacterKiller = nil
+local getKiller = nil
+local isPlayerKiller = nil
+local isKillerCarrying = nil
+local isKillerStunnedOrLocked = nil
+local isSurvivorParryingOrShielded = nil
+local updateKillerAim = nil
+local cleanSurvivorESP = nil
+local isValidCharacter = nil
+local checkWallCollision = nil
+local startTravelNoClip = nil
+local stopTravelNoClip = nil
+local computeSmartWaypoints = nil
+
 do
 ViolenceTab = Window:Tab({
     Title = "Violence District",
@@ -1887,14 +1907,7 @@ V_RoleSection = ViolenceTab:Section({
 -- ============================================================
 -- AUTHORITATIVE ROLE IDENTIFICATION (KILLER & SURVIVOR)
 -- ============================================================
-isPlayerKiller = nil
-local getKiller = nil
-local isCharacterKiller = nil
-local isCharacterSurvivor = nil
-local isKillerStunnedOrLocked = nil
-local isKillerCarrying = nil
-local isSurvivorParryingOrShielded = nil
-local updateKillerAim = nil
+-- Authoritative role identification variables initialized at top level
 
 local function checkPlayerKillerStatus()
     -- If user has enabled any killer automation feature, they are intentionally playing the Killer
@@ -2160,7 +2173,7 @@ end
 -- Unified authoritative system ensuring 100% accurate role, team,
 -- and entity detection across rounds, respawns, and lobby transitions.
 
-local function isValidCharacter(char)
+isValidCharacter = function(char)
     if not char or not char.Parent then return false end
     if not char:IsDescendantOf(workspace) then return false end
     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -2169,7 +2182,7 @@ local function isValidCharacter(char)
     return true, hum, hrp
 end
 
-local function isEntityInLobbyOrSpectating(char, plr)
+isEntityInLobbyOrSpectating = function(char, plr)
     if not char and not plr then return true end
     plr = plr or (char and Players:GetPlayerFromCharacter(char))
 
@@ -2196,7 +2209,7 @@ local function isEntityInLobbyOrSpectating(char, plr)
 end
 local isSurvivorInLobby = isEntityInLobbyOrSpectating
 
-local function isCharacterHooked(char)
+isCharacterHooked = function(char)
     if not char or not char.Parent then return false end
 
     -- Direct attributes
@@ -2237,7 +2250,7 @@ local function isCharacterHooked(char)
     return false
 end
 
-local function isCharacterKnocked(char)
+isCharacterKnocked = function(char)
     if not char or not char.Parent then return false end
     -- Authoritative game attributes and tags set by server on downed crawling survivors
     if char:GetAttribute("Knocked") == true or char:GetAttribute("isKnocked") == true
@@ -2565,9 +2578,8 @@ end
 -- BillboardGuis and Highlights across the entire workspace to prevent
 -- old roles from lingering into subsequent games.
 
-local trackedSurvivors = {}
+-- trackedSurvivors and cleanSurvivorESP initialized at top level
 local cleanKillerESP = nil
-local cleanSurvivorESP = nil
 local cleanGenESP = nil
 local lastCapturedRepairRequestId = nil
 local lastCapturedGenModel = nil
@@ -2937,7 +2949,6 @@ V_ESPSection:Toggle({
 -- ============================================================
 local survivorESPEnabled = false
 local survivorESPObjects = {}
-trackedSurvivors = {}
 
 cleanSurvivorESP = function()
     for _, item in ipairs(survivorESPObjects) do
@@ -2947,11 +2958,10 @@ cleanSurvivorESP = function()
     if trackedSurvivors then
         for c, data in pairs(trackedSurvivors) do
             if data then
-                if data.hl then pcall(function() data.hl:Destroy() end) end
-                if data.bb then pcall(function() data.bb:Destroy() end) end
+                if data.hl then pcall(function() data.hl:Destroy() end) data.hl = nil end
+                if data.bb then pcall(function() data.bb:Destroy() end) data.bb = nil end
             end
         end
-        trackedSurvivors = {}
     end
     pcall(function()
         for _, obj in ipairs(workspace:GetDescendants()) do
@@ -2977,135 +2987,159 @@ V_ESPSection:Toggle({
     end
 })
 
--- Permanent Autonomous Background Supervisor (Never crashes, automatically re-attaches across new matches)
+-- Permanent Autonomous Background Supervisor (Always tracks all players & bots; renders ESP when enabled)
 task.spawn(function()
     while scriptRunning do
-        if survivorESPEnabled then
-            pcall(function()
-                local myChar = player.Character
-                local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-                local isKiller = isPlayerKiller and isPlayerKiller()
-                local killerChar = isKiller and myChar or getKiller()
+        pcall(function()
+            local myChar = player.Character
+            local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            local isKiller = isPlayerKiller and isPlayerKiller()
+            local killerChar = isKiller and myChar or (getKiller and getKiller())
 
-                -- Force-clean any stray survivor ESP objects attached to the Killer
-                if killerChar then
-                    local badHl = killerChar:FindFirstChild("SurvivorESPHighlight")
-                    if badHl then pcall(function() badHl:Destroy() end) end
-                    local badBb = killerChar:FindFirstChild("SurvivorESPBillboard", true)
-                    if badBb then pcall(function() badBb:Destroy() end) end
-                    if trackedSurvivors[killerChar] then
-                        pcall(function() if trackedSurvivors[killerChar].hl then trackedSurvivors[killerChar].hl:Destroy() end end)
-                        pcall(function() if trackedSurvivors[killerChar].bb then trackedSurvivors[killerChar].bb:Destroy() end end)
-                        trackedSurvivors[killerChar] = nil
-                    end
+            -- Force-clean any stray survivor ESP objects attached to the Killer
+            if killerChar then
+                local badHl = killerChar:FindFirstChild("SurvivorESPHighlight")
+                if badHl then pcall(function() badHl:Destroy() end) end
+                local badBb = killerChar:FindFirstChild("SurvivorESPBillboard", true)
+                if badBb then pcall(function() badBb:Destroy() end) end
+                if trackedSurvivors[killerChar] then
+                    pcall(function() if trackedSurvivors[killerChar].hl then trackedSurvivors[killerChar].hl:Destroy() end end)
+                    pcall(function() if trackedSurvivors[killerChar].bb then trackedSurvivors[killerChar].bb:Destroy() end end)
+                    trackedSurvivors[killerChar] = nil
                 end
+            end
 
-                local currentSurvivors = {}
-                for _, plr in ipairs(Players:GetPlayers()) do
-                    if plr ~= player and plr.Character and plr.Character ~= myChar and plr.Character ~= killerChar then
-                        if isKiller then
-                            local valid, hum, hrp = isValidCharacter(plr.Character)
-                            if valid and not isEntityInLobbyOrSpectating(plr.Character, plr) then
-                                table.insert(currentSurvivors, { char = plr.Character, name = plr.DisplayName or plr.Name, plr = plr })
-                            end
-                        else
-                            if isCharacterSurvivor(plr.Character, plr) and not isCharacterKiller(plr.Character, plr) then
-                                table.insert(currentSurvivors, { char = plr.Character, name = plr.DisplayName or plr.Name, plr = plr })
-                            end
+            local currentSurvivors = {}
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= player and plr.Character and plr.Character ~= myChar and plr.Character ~= killerChar then
+                    if isKiller then
+                        local valid, hum, hrp = isValidCharacter(plr.Character)
+                        if valid and not isEntityInLobbyOrSpectating(plr.Character, plr) then
+                            table.insert(currentSurvivors, { char = plr.Character, name = plr.DisplayName or plr.Name, plr = plr })
+                        end
+                    else
+                        if isCharacterSurvivor(plr.Character, plr) and not isCharacterKiller(plr.Character, plr) then
+                            table.insert(currentSurvivors, { char = plr.Character, name = plr.DisplayName or plr.Name, plr = plr })
                         end
                     end
                 end
+            end
 
-                -- Also search potential survivor containers in workspace
-                local searchContainers = { workspace }
-                for _, fName in ipairs({ "Survivors", "Players", "Characters", "Match", "Entities" }) do
-                    local folder = workspace:FindFirstChild(fName)
-                    if folder and (folder:IsA("Folder") or folder:IsA("Model")) then
-                        table.insert(searchContainers, folder)
-                    end
+            -- Also search potential survivor containers in workspace for bots / NPCs
+            local searchContainers = { workspace }
+            for _, fName in ipairs({ "Bots", "NPCs", "Survivors", "Players", "Characters", "Match", "Entities", "Map" }) do
+                local folder = workspace:FindFirstChild(fName)
+                if folder and (folder:IsA("Folder") or folder:IsA("Model")) then
+                    table.insert(searchContainers, folder)
                 end
+            end
 
-                for _, container in ipairs(searchContainers) do
-                    for _, obj in ipairs(container:GetChildren()) do
-                        if obj:IsA("Model") and obj ~= myChar and obj ~= killerChar and not Players:GetPlayerFromCharacter(obj) then
-                            local valid, hum, hrp = isValidCharacter(obj)
-                            if valid then
-                                local isSurv = isKiller and not isEntityInLobbyOrSpectating(obj) or (isCharacterSurvivor(obj) and not isCharacterKiller(obj))
-                                if isSurv then
-                                    local alreadyAdded = false
-                                    for _, c in ipairs(currentSurvivors) do
-                                        if c.char == obj then alreadyAdded = true break end
-                                    end
-                                    if not alreadyAdded then
-                                        table.insert(currentSurvivors, { char = obj, name = obj.Name, plr = nil })
-                                    end
+            for _, container in ipairs(searchContainers) do
+                for _, obj in ipairs(container:GetChildren()) do
+                    if obj:IsA("Model") and obj ~= myChar and obj ~= killerChar and not Players:GetPlayerFromCharacter(obj) then
+                        local valid, hum, hrp = isValidCharacter(obj)
+                        if valid then
+                            local isSurv = isKiller and not isEntityInLobbyOrSpectating(obj) or (isCharacterSurvivor(obj) and not isCharacterKiller(obj))
+                            if isSurv then
+                                local alreadyAdded = false
+                                for _, c in ipairs(currentSurvivors) do
+                                    if c.char == obj then alreadyAdded = true break end
+                                end
+                                if not alreadyAdded then
+                                    table.insert(currentSurvivors, { char = obj, name = obj.Name, plr = nil })
                                 end
                             end
                         end
                     end
                 end
+            end
 
-                local activeSet = {}
-                for _, item in ipairs(currentSurvivors) do
-                    if not survivorESPEnabled then break end
-                    local c = item.char
-                    local hum = c:FindFirstChildOfClass("Humanoid")
-                    local hrp = c:FindFirstChild("HumanoidRootPart")
-
-                    if hum and hrp and hum.Health > 0 and myHrp and c:IsDescendantOf(workspace) and c ~= killerChar then
-                        activeSet[c] = true
-                        local dist = (myHrp.Position - hrp.Position).Magnitude
-
-                        -- Determine detailed status & color
-                        local status = "HEALTHY"
-                        local fillColor = Color3.fromRGB(50, 255, 50)
-
-                        local isHooked = isCharacterHooked(c)
-                        local isKnocked = isCharacterKnocked(c)
-                        local isCarried = c:GetAttribute("IsCarrying") == true or c:GetAttribute("isCarried") == true or c:GetAttribute("BeingCarried") == true or c:FindFirstChild("Carried") ~= nil
-                        local isRep = c:GetAttribute("isRepairing") == true
-                        local isHeal = c:GetAttribute("isHealing") == true
-                        local isVault = c:GetAttribute("isVaulting") == true or c:GetAttribute("isSliding") == true
-                        local isUnhook = c:GetAttribute("isUnhooking") == true
-
-                        if isHooked then
-                            local phase = c:GetAttribute("HookPhase") or c:GetAttribute("HookCount")
-                            if phase then
-                                status = string.format("HOOKED (STAGE %s)", tostring(phase))
-                            else
-                                status = "HOOKED"
+            -- Also search CollectionService tagged survivors / bots
+            if CollectionService then
+                for _, tag in ipairs({ "Survivor", "Survivors", "Bot", "NPC", "SurvivorBot" }) do
+                    for _, obj in ipairs(CollectionService:GetTagged(tag)) do
+                        if obj:IsA("Model") and obj ~= myChar and obj ~= killerChar and not Players:GetPlayerFromCharacter(obj) then
+                            local valid, hum, hrp = isValidCharacter(obj)
+                            if valid and not isEntityInLobbyOrSpectating(obj) then
+                                local alreadyAdded = false
+                                for _, c in ipairs(currentSurvivors) do
+                                    if c.char == obj then alreadyAdded = true break end
+                                end
+                                if not alreadyAdded then
+                                    table.insert(currentSurvivors, { char = obj, name = obj.Name, plr = nil })
+                                end
                             end
-                            fillColor = Color3.fromRGB(180, 50, 255)
-                        elseif isCarried then
-                            status = "BEING CARRIED"
-                            fillColor = Color3.fromRGB(255, 120, 0)
-                        elseif isKnocked then
-                            status = "KNOCKED DOWN"
-                            fillColor = Color3.fromRGB(255, 40, 40)
-                        elseif isRep then
-                            status = "REPAIRING GEN"
-                            fillColor = Color3.fromRGB(0, 200, 255)
-                        elseif isHeal then
-                            status = "HEALING"
-                            fillColor = Color3.fromRGB(0, 255, 180)
-                        elseif isUnhook then
-                            status = "UNHOOKING"
-                            fillColor = Color3.fromRGB(255, 200, 0)
-                        elseif hum.Health < hum.MaxHealth then
-                            status = string.format("INJURED (%.0f HP)", hum.Health)
-                            fillColor = Color3.fromRGB(255, 200, 30)
-                        else
-                            status = string.format("HEALTHY (%.0f HP)", hum.Health)
-                            fillColor = Color3.fromRGB(50, 255, 50)
                         end
+                    end
+                end
+            end
 
-                        local record = trackedSurvivors[c]
-                        if not record or not record.hl or record.hl.Parent ~= c or not record.bb or record.bb.Parent ~= hrp then
-                            -- Clean old if broken
-                            if record then
-                                if record.hl then pcall(function() record.hl:Destroy() end) end
-                                if record.bb then pcall(function() record.bb:Destroy() end) end
-                            end
+            local activeSet = {}
+            for _, item in ipairs(currentSurvivors) do
+                local c = item.char
+                local hum = c:FindFirstChildOfClass("Humanoid")
+                local hrp = c:FindFirstChild("HumanoidRootPart")
+
+                if hum and hrp and hum.Health > 0 and c:IsDescendantOf(workspace) and c ~= killerChar then
+                    activeSet[c] = true
+                    local dist = myHrp and (myHrp.Position - hrp.Position).Magnitude or 0
+
+                    -- Determine detailed status & color
+                    local status = "HEALTHY"
+                    local fillColor = Color3.fromRGB(50, 255, 50)
+
+                    local isHooked = isCharacterHooked(c)
+                    local isKnocked = isCharacterKnocked(c)
+                    local isCarried = c:GetAttribute("IsCarrying") == true or c:GetAttribute("isCarried") == true or c:GetAttribute("BeingCarried") == true or c:FindFirstChild("Carried") ~= nil
+                    local isRep = c:GetAttribute("isRepairing") == true
+                    local isHeal = c:GetAttribute("isHealing") == true
+                    local isVault = c:GetAttribute("isVaulting") == true or c:GetAttribute("isSliding") == true
+                    local isUnhook = c:GetAttribute("isUnhooking") == true
+
+                    if isHooked then
+                        local phase = c:GetAttribute("HookPhase") or c:GetAttribute("HookCount")
+                        status = phase and string.format("HOOKED (STAGE %s)", tostring(phase)) or "HOOKED"
+                        fillColor = Color3.fromRGB(180, 50, 255)
+                    elseif isCarried then
+                        status = "BEING CARRIED"
+                        fillColor = Color3.fromRGB(255, 120, 0)
+                    elseif isKnocked then
+                        status = "KNOCKED DOWN"
+                        fillColor = Color3.fromRGB(255, 40, 40)
+                    elseif isRep then
+                        status = "REPAIRING GEN"
+                        fillColor = Color3.fromRGB(0, 200, 255)
+                    elseif isHeal then
+                        status = "HEALING"
+                        fillColor = Color3.fromRGB(0, 255, 180)
+                    elseif isUnhook then
+                        status = "UNHOOKING"
+                        fillColor = Color3.fromRGB(255, 200, 0)
+                    elseif hum.Health < hum.MaxHealth then
+                        status = string.format("INJURED (%.0f HP)", hum.Health)
+                        fillColor = Color3.fromRGB(255, 200, 30)
+                    else
+                        status = string.format("HEALTHY (%.0f HP)", hum.Health)
+                        fillColor = Color3.fromRGB(50, 255, 50)
+                    end
+
+                    local record = trackedSurvivors[c]
+                    if not record then
+                        record = { character = c, name = item.name, player = item.plr, status = status, dist = dist }
+                        trackedSurvivors[c] = record
+                    else
+                        record.character = c
+                        record.name = item.name
+                        record.player = item.plr
+                        record.status = status
+                        record.dist = dist
+                    end
+
+                    -- Handle Visual ESP (only when survivorESPEnabled is true)
+                    if survivorESPEnabled then
+                        if not record.hl or record.hl.Parent ~= c or not record.bb or record.bb.Parent ~= hrp then
+                            if record.hl then pcall(function() record.hl:Destroy() end) end
+                            if record.bb then pcall(function() record.bb:Destroy() end) end
 
                             local hl = Instance.new("Highlight")
                             hl.Name = "SurvivorESPHighlight"
@@ -3135,29 +3169,34 @@ task.spawn(function()
                             lbl.Parent = bb
                             bb.Parent = hrp
 
-                            trackedSurvivors[c] = { hl = hl, bb = bb, lbl = lbl }
+                            record.hl = hl
+                            record.bb = bb
+                            record.lbl = lbl
                         else
-                            -- Smooth in-place update! Zero flicker!
                             record.hl.FillColor = fillColor
-                            record.lbl.TextColor3 = fillColor
-                            record.lbl.Text = string.format("👤 %s\n[%s] - %.0f studs", item.name, status, dist)
+                            if record.lbl then
+                                record.lbl.TextColor3 = fillColor
+                                record.lbl.Text = string.format("👤 %s\n[%s] - %.0f studs", item.name, status, dist)
+                            end
                         end
+                    else
+                        -- ESP visuals disabled: destroy visual instances if they exist, but preserve tracking record!
+                        if record.hl then pcall(function() record.hl:Destroy() end) record.hl = nil end
+                        if record.bb then pcall(function() record.bb:Destroy() end) record.bb = nil end
                     end
                 end
+            end
 
-                -- Remove dead / despawned / invalid survivors from trackedSurvivors
-                for c, data in pairs(trackedSurvivors) do
-                    if not activeSet[c] then
-                        if data.hl then pcall(function() data.hl:Destroy() end) end
-                        if data.bb then pcall(function() data.bb:Destroy() end) end
-                        trackedSurvivors[c] = nil
-                    end
+            -- Remove dead / despawned / invalid survivors from trackedSurvivors
+            for c, data in pairs(trackedSurvivors) do
+                if not activeSet[c] then
+                    if data.hl then pcall(function() data.hl:Destroy() end) end
+                    if data.bb then pcall(function() data.bb:Destroy() end) end
+                    trackedSurvivors[c] = nil
                 end
-            end)
-        else
-            cleanSurvivorESP()
-        end
-        task.wait(0.25)
+            end
+        end)
+        task.wait(0.3)
     end
 end)
 -- ============================================================
@@ -4631,7 +4670,7 @@ end
 
 local hasHookedTeammates = hasTeammatesNeedingRescue
 
-local function checkWallCollision(fromPos, toPos, ignoreModel)
+checkWallCollision = function(fromPos, toPos, ignoreModel)
     local raycastParams = RaycastParams.new()
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
     local filterList = {}
@@ -4750,7 +4789,7 @@ end
 
 -- Active travel noclip manager: Directly bypasses the game's resolveBodyStep & worldSafe anti-noclip blockcast
 local travelNoClipConn = nil
-local function startTravelNoClip()
+startTravelNoClip = function()
     local char = player.Character
     if char then
         pcall(function()
@@ -4784,7 +4823,7 @@ local function startTravelNoClip()
     end)
 end
 
-local function stopTravelNoClip()
+stopTravelNoClip = function()
     if travelNoClipConn then
         pcall(function() travelNoClipConn:Disconnect() end)
         travelNoClipConn = nil
@@ -4819,7 +4858,7 @@ local function stopTravelNoClip()
 end
 
 -- High-intelligence path calculator with doorway sizing, Killer danger-zone avoidance, and 3D Flying support
-local function computeSmartWaypoints(startPos, endPos, targetPart, avoidKillerPos, killerSafeDist)
+computeSmartWaypoints = function(startPos, endPos, targetPart, avoidKillerPos, killerSafeDist)
     local hasWallDirect, hitPart, hitPos, hitNormal = checkWallCollision(startPos, endPos, player.Character)
 
     -- If no wall is blocking direct line of sight, return direct path
@@ -7848,17 +7887,17 @@ local function getAliveSurvivorList()
     local myChar = player.Character
     local seen = {}
 
-    -- 1. Check all survivors currently detected & tracked by ESP!
+    -- 1. Check all survivors currently detected & tracked by autonomous supervisor!
     if trackedSurvivors then
-        for c, _ in pairs(trackedSurvivors) do
+        for c, data in pairs(trackedSurvivors) do
             if c and c.Parent and c ~= myChar and not seen[c] then
                 local hrp = c:FindFirstChild("HumanoidRootPart")
                 if hrp and c:IsDescendantOf(workspace) then
                     seen[c] = true
-                    local plr = Players:GetPlayerFromCharacter(c)
-                    local pName = plr and (plr.DisplayName or plr.Name) or c.Name
+                    local plr = (typeof(data) == "table" and data.player) or Players:GetPlayerFromCharacter(c)
+                    local pName = (typeof(data) == "table" and data.name) or (plr and (plr.DisplayName or plr.Name)) or c.Name
                     local isBot = (plr == nil)
-                    local status = isCharacterKnocked(c) and " [Downed]" or (isCharacterHooked(c) and " [Hooked]" or "")
+                    local status = (isCharacterKnocked and isCharacterKnocked(c)) and " [Downed]" or ((isCharacterHooked and isCharacterHooked(c)) and " [Hooked]" or "")
                     local botTag = isBot and " [Bot]" or ""
                     local label = string.format("%s%s%s", pName, botTag, status)
                     table.insert(result, {
@@ -7998,6 +8037,9 @@ V_KillerSection:Button({
             elseif survivorDropdownRef and survivorDropdownRef.SetValues then
                 survivorDropdownRef:SetValues(newLabels)
             end
+            if survivorDropdownRef then
+                survivorDropdownRef.Values = newLabels
+            end
         end)
         local count = (newLabels[1] == "No Survivors Found") and 0 or #newLabels
         WindUI:Notify({ Title = "Survivor List Refreshed", Content = string.format("Found %d active survivor(s).", count), Duration = 2.5 })
@@ -8036,6 +8078,7 @@ task.spawn(function()
                     elseif survivorDropdownRef.SetValues then
                         survivorDropdownRef:SetValues(newLabels)
                     end
+                    survivorDropdownRef.Values = newLabels
 
                     -- Auto-select first survivor if current selection is invalid or "No Survivors Found"
                     local validSelection = false
