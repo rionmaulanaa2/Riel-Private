@@ -79,8 +79,8 @@ All game communication takes place through designated remote folders under `Repl
 |---|---|---|---|---|
 | `CarrySurvivorEvent` | RemoteEvent | Client $\to$ Server | `(downedSurvivorChar: Model)` | Killer picks up a dying (`Knocked = true`) survivor onto their shoulder. |
 | `DropSurvivorEvent` | RemoteEvent | Client $\to$ Server | `()` | Killer drops the carried survivor back to the ground. |
-| `HookEvent` | RemoteEvent | Client $\to$ Server | `(hookPart: BasePart, requestId: string, killerChar: Model)` | Killer hooks the carried survivor onto a meat hook. |
-| `HookCommit` | RemoteEvent | Server $\to$ Client | `(requestId)` | Server confirms hook placement. |
+| `HookEvent` | RemoteEvent | Client $\to$ Server | `(hookPart: BasePart, requestId: string, killerChar: Model)` | Killer initiates hooking carried survivor onto a meat hook. |
+| `HookCommit` | RemoteEvent | Client $\to$ Server / Bi-directional | `(hookPart: BasePart, requestId: string, killerChar: Model)` | Client commits/finalizes hook placement; server confirms hook placement. |
 | `HookReject` | RemoteEvent | Server $\to$ Client | `(requestId)` | Server rejects hook placement. |
 | `HookPhase` | RemoteEvent | Server $\to$ Client | `(survivorChar: Model, phase: number)` | Updates survivor hook stage: 1 (normal), 2 (struggle skillchecks), 3 (sacrifice/death). |
 | `UnHookEvent` | RemoteEvent | Client $\to$ Server | `(hookedSurvivorChar: Model)` | Another survivor unhooks a teammate (takes ~1.5s). |

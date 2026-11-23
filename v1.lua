@@ -2272,12 +2272,24 @@ end
 isKillerCarrying = function(char)
     char = char or player.Character
     if not char then return false end
-    return char:GetAttribute("IsCarrying") == true
+    if char:GetAttribute("IsCarrying") == true
         or char:GetAttribute("isCarrying") == true
         or char:GetAttribute("killercarry") ~= nil
         or char:FindFirstChild("CarriedSurvivor") ~= nil
         or char:FindFirstChild("Carry") ~= nil
-        or char:GetAttribute("BeingCarried") ~= nil
+        or char:GetAttribute("BeingCarried") ~= nil then
+        return true
+    end
+
+    if trackedSurvivors then
+        for sChar, _ in pairs(trackedSurvivors) do
+            if sChar and sChar.Parent and sChar:GetAttribute("IsCarried") == true then
+                return true
+            end
+        end
+    end
+
+    return false
 end
 
 -- Helper to detect if Killer is currently stunned, blinded, or immobilized by survivor items/pallets
@@ -7300,8 +7312,21 @@ local function findNearestAvailableHook()
     local bestDist = math.huge
     local candidates = {}
 
-    -- 1. CollectionService tagged HookPoint (from the dump.lua)
-    if CollectionService then
+    -- 1. Direct authoritative check in workspace.Map.Hooks (as verified in Cobalt network captures)
+    local mapFolder = workspace:FindFirstChild("Map") or workspace:FindFirstChild("map")
+    local hooksFolder = mapFolder and (mapFolder:FindFirstChild("Hooks") or mapFolder:FindFirstChild("hooks"))
+        or workspace:FindFirstChild("Hooks") or workspace:FindFirstChild("hooks")
+    if hooksFolder then
+        for _, hookModel in ipairs(hooksFolder:GetChildren()) do
+            local hp = hookModel:FindFirstChild("HookPoint") or hookModel:FindFirstChildWhichIsA("BasePart")
+            if hp and hp:IsA("BasePart") then
+                table.insert(candidates, hp)
+            end
+        end
+    end
+
+    -- 2. CollectionService tagged HookPoint (from the dump.lua)
+    if #candidates == 0 and CollectionService then
         for _, p in ipairs(CollectionService:GetTagged("HookPoint")) do
             if p:IsA("BasePart") then
                 table.insert(candidates, p)
@@ -7309,7 +7334,7 @@ local function findNearestAvailableHook()
         end
     end
 
-    -- 2. Fallback search by object name in workspace
+    -- 3. Fallback search by object name in workspace
     if #candidates == 0 then
         for _, obj in ipairs(workspace:GetDescendants()) do
             if obj:IsA("BasePart") and (obj.Name == "HookPoint" or (obj.Name:lower():find("hook") and obj.Name:lower():find("point"))) then
@@ -7318,7 +7343,7 @@ local function findNearestAvailableHook()
         end
     end
 
-    -- 3. Additional fallback: Hook models HitBox/PrimaryPart
+    -- 4. Additional fallback: Hook models HitBox/PrimaryPart
     if #candidates == 0 then
         for _, obj in ipairs(workspace:GetDescendants()) do
             if obj:IsA("Model") and obj.Name:lower():find("hook") then
@@ -7335,23 +7360,24 @@ local function findNearestAvailableHook()
             local isOccupied = false
 
             -- Check if hook is tagged or attributed as occupied
-            if CollectionService and CollectionService:HasTag(hookPart, "doing action") then
+            if CollectionService and (CollectionService:HasTag(hookPart, "doing action") or CollectionService:HasTag(hookPart, "Occupied")) then
                 isOccupied = true
             end
             if hookPart:GetAttribute("Occupied") == true or (hookPart.Parent and hookPart.Parent:GetAttribute("Occupied") == true) then
                 isOccupied = true
             end
+            if hookPart:GetAttribute("IsHooked") == true or (hookPart.Parent and hookPart.Parent:GetAttribute("IsHooked") == true) then
+                isOccupied = true
+            end
 
-            -- Check if any survivor is currently attached to this hook (within 5.5 studs)
+            -- Check if any survivor (player or bot) is currently attached to this hook (within 5.5 studs)
             if not isOccupied then
-                for _, plr in ipairs(Players:GetPlayers()) do
-                    if plr.Character and plr.Character ~= myChar then
-                        local sHrp = plr.Character:FindFirstChild("HumanoidRootPart")
+                for _, sChar in ipairs(workspace:GetDescendants()) do
+                    if sChar:IsA("Model") and sChar ~= myChar and (isCharacterHooked and isCharacterHooked(sChar)) then
+                        local sHrp = sChar:FindFirstChild("HumanoidRootPart")
                         if sHrp and (sHrp.Position - hookPart.Position).Magnitude <= 5.5 then
-                            if plr.Character:GetAttribute("IsHooked") or plr.Character:GetAttribute("HookPhase") ~= nil or plr.Character:FindFirstChild("Hooked") ~= nil then
-                                isOccupied = true
-                                break
-                            end
+                            isOccupied = true
+                            break
                         end
                     end
                 end
@@ -7368,6 +7394,34 @@ local function findNearestAvailableHook()
     end
 
     return bestHook, bestDist
+end
+
+-- Calculates authoritative ground-level CFrame facing the hook
+local function getHookStandCFrame(hookPart)
+    local hookModel = hookPart:FindFirstAncestorOfClass("Model") or hookPart.Parent
+    local baseCF = hookPart.CFrame
+    if hookModel and hookModel.PrimaryPart then
+        baseCF = hookModel.PrimaryPart.CFrame
+    end
+
+    -- Determine ground level below hookPart via raycast
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    local filterList = { hookModel }
+    if player.Character then table.insert(filterList, player.Character) end
+    rayParams.FilterDescendantsInstances = filterList
+
+    local groundHit = workspace:Raycast(hookPart.Position, Vector3.new(0, -25, 0), rayParams)
+    local groundY = groundHit and groundHit.Position.Y or (hookPart.Position.Y - 5.5)
+
+    -- Stand on ground 2.2 studs in front of hook facing it
+    local forwardDir = baseCF.LookVector
+    if forwardDir.Magnitude < 0.1 then
+        forwardDir = Vector3.new(0, 0, 1)
+    end
+    local standPos = Vector3.new(hookPart.Position.X, groundY + 3.0, hookPart.Position.Z) + (forwardDir * 2.2)
+    local lookTarget = Vector3.new(hookPart.Position.X, standPos.Y, hookPart.Position.Z)
+    return CFrame.lookAt(standPos, lookTarget)
 end
 
 -- Comprehensive Auto Hit execution across Android executors and PC (Guaranteed Hit Delivery)
@@ -7767,20 +7821,20 @@ task.spawn(function()
                         -- When at hook (<= 8.5 studs): execute hang
                         local currentDist = (myHrp.Position - hookPart.Position).Magnitude
                         if currentDist <= 8.5 then
-                            local lookTarget = Vector3.new(hookPart.Position.X, myHrp.Position.Y, hookPart.Position.Z)
-                            myHrp.CFrame = CFrame.lookAt(myHrp.Position, lookTarget)
+                            local standCF = getHookStandCFrame(hookPart)
+                            myHrp.CFrame = standCF
                             myHrp.AssemblyLinearVelocity = Vector3.zero
                             myHrp.AssemblyAngularVelocity = Vector3.zero
 
                             local reqId = HttpService:GenerateGUID(false)
                             local remotes = getVDRemotes()
 
-                            -- Fire Hook remote (HookEvent is Client -> Server)
+                            -- 1. Fire HookEvent (Client -> Server initiation)
                             if remotes.Carry and remotes.Carry:FindFirstChild("HookEvent") then
                                 pcall(function() remotes.Carry.HookEvent:FireServer(hookPart, reqId, myChar) end)
                             end
 
-                            -- Fire ProximityPrompts on the hook
+                            -- 2. Fire ProximityPrompts on the hook
                             pcall(function()
                                 local hookModel = hookPart:FindFirstAncestorOfClass("Model") or hookPart.Parent
                                 if hookModel then
@@ -7794,10 +7848,21 @@ task.spawn(function()
                                 end
                             end)
 
-                            -- Wait for hook animation/server sync
+                            -- 3. Small delay matching native game interaction cycle before HookCommit
+                            task.wait(0.08)
+
+                            -- 4. Fire HookCommit (Client -> Server confirmation)
+                            if remotes.Carry and remotes.Carry:FindFirstChild("HookCommit") then
+                                pcall(function() remotes.Carry.HookCommit:FireServer(hookPart, reqId, myChar) end)
+                            end
+
+                            -- Wait for hook animation/server sync with fallback re-commit
                             local waitTimeout = tick() + 2.5
                             while tick() < waitTimeout and isKillerCarrying(myChar) do
                                 task.wait(0.1)
+                                if isKillerCarrying(myChar) and remotes.Carry and remotes.Carry:FindFirstChild("HookCommit") then
+                                    pcall(function() remotes.Carry.HookCommit:FireServer(hookPart, reqId, myChar) end)
+                                end
                             end
                             if not isKillerCarrying(myChar) then
                                 WindUI:Notify({ Title = "🪝 Survivor Hooked!", Content = "Target successfully hung on hook.", Duration = 2.5 })
@@ -8307,10 +8372,9 @@ V_KillerSection:Toggle({
                     if carrying then
                         local hookPart, hookDist = findNearestAvailableHook()
                         if hookPart then
-                            local hookPos = hookPart.Position
-                            local hookCF = CFrame.lookAt(hookPos + Vector3.new(0, 0.5, 2.2), hookPos)
+                            local standCF = getHookStandCFrame(hookPart)
                             for attempt = 1, 3 do
-                                myHrp.CFrame = hookCF
+                                myHrp.CFrame = standCF
                                 myHrp.AssemblyLinearVelocity = Vector3.zero
                                 myHrp.AssemblyAngularVelocity = Vector3.zero
                                 task.wait(0.015)
@@ -8318,10 +8382,13 @@ V_KillerSection:Toggle({
 
                             local reqId = HttpService:GenerateGUID(false)
                             local remotes = getVDRemotes()
+
+                            -- 1. Fire HookEvent (Client -> Server initiation)
                             if remotes.Carry and remotes.Carry:FindFirstChild("HookEvent") then
                                 pcall(function() remotes.Carry.HookEvent:FireServer(hookPart, reqId, myChar) end)
                             end
 
+                            -- 2. Fire ProximityPrompts on the hook
                             local hookModel = hookPart:FindFirstAncestorOfClass("Model") or hookPart.Parent
                             if hookModel then
                                 for _, prompt in ipairs(hookModel:GetDescendants()) do
@@ -8333,11 +8400,25 @@ V_KillerSection:Toggle({
                                 end
                             end
 
-                            local hookWaitTimeout = tick() + 1.2
-                            while tick() < hookWaitTimeout and isKillerCarrying(myChar) and checkCatchActive() do
-                                task.wait(0.05)
+                            -- 3. Small delay matching native game interaction cycle before HookCommit
+                            task.wait(0.08)
+
+                            -- 4. Fire HookCommit (Client -> Server confirmation)
+                            if remotes.Carry and remotes.Carry:FindFirstChild("HookCommit") then
+                                pcall(function() remotes.Carry.HookCommit:FireServer(hookPart, reqId, myChar) end)
                             end
-                            WindUI:Notify({ Title = "🪝 Survivor Hooked!", Content = "Target successfully hung on hook.", Duration = 2.0 })
+
+                            -- Wait for hook animation/server sync with fallback re-commit
+                            local hookWaitTimeout = tick() + 1.8
+                            while tick() < hookWaitTimeout and isKillerCarrying(myChar) and checkCatchActive() do
+                                task.wait(0.08)
+                                if isKillerCarrying(myChar) and remotes.Carry and remotes.Carry:FindFirstChild("HookCommit") then
+                                    pcall(function() remotes.Carry.HookCommit:FireServer(hookPart, reqId, myChar) end)
+                                end
+                            end
+                            if not isKillerCarrying(myChar) then
+                                WindUI:Notify({ Title = "🪝 Survivor Hooked!", Content = "Target successfully hung on hook.", Duration = 2.0 })
+                            end
                         end
                         return
                     end
