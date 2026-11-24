@@ -1,11 +1,14 @@
 -- ============================================================
 -- RIEL PRIVATE: OFFICIALLY RESTORED WINDUI ARCHITECTURE (MONTH 10)
+-- Version: 1.00
 -- 100% Pure Lua 5.1 & Delta Executor Android Compatibility
 -- ============================================================
 
+local RIEL_VERSION = "1.00"
+
 print("==================================================")
-print("🛡️ [Riel Private] Initializing Script on Delta Executor...")
-print("🛡️ [Riel Private] Place ID: " .. tostring(game.PlaceId))
+print("🛡️ [Riel Private v" .. RIEL_VERSION .. "] Initializing Script on Delta Executor...")
+print("🛡️ [Riel Private v" .. RIEL_VERSION .. "] Place ID: " .. tostring(game.PlaceId))
 print("==================================================")
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -389,7 +392,7 @@ WindUI.Window = nil
 -- ============================================================
 local winOk, winResult = pcall(function()
     return WindUI:CreateWindow({
-        Title = " Riel Private",
+        Title = " Riel Private v" .. RIEL_VERSION,
         Icon = "shield",
         Size = UDim2.fromOffset(500, 450),
         Transparent = false,
@@ -398,7 +401,7 @@ local winOk, winResult = pcall(function()
         OpenButton = {
             Enabled = true,
             OnlyMobile = false,
-            Title = "Riel Private",
+            Title = "Riel Private v" .. RIEL_VERSION,
             Icon = "shield",
             Position = UDim2.new(0, 20, 0.45, 0),
             Draggable = true,
@@ -412,7 +415,7 @@ if not winOk or type(winResult) ~= "table" then
     -- Fallback simple window
     winOk, winResult = pcall(function()
         return WindUI:CreateWindow({
-            Title = " Riel Private",
+            Title = " Riel Private v" .. RIEL_VERSION,
             Size = UDim2.fromOffset(500, 450),
             Transparent = false,
             Theme = "Dark"
@@ -446,7 +449,7 @@ if not winOk or type(winResult) ~= "table" then
     if WindUI and type(WindUI.CreateWindow) == "function" then
         winOk, winResult = pcall(function()
             return WindUI:CreateWindow({
-                Title = " Riel Private",
+                Title = " Riel Private v" .. RIEL_VERSION,
                 Size = UDim2.fromOffset(500, 450),
                 Transparent = false,
                 Theme = "Dark"
@@ -505,7 +508,7 @@ end)
 
 WindUI:Notify({
     Title = "Script Loaded",
-    Content = "Riel Private by Noirrr!",
+    Content = "Riel Private v" .. RIEL_VERSION .. " by Noirrr!",
     Duration = 5
 })
 
@@ -8748,8 +8751,8 @@ end)
 
 
 print("==================================================")
-print("✅ [Riel Private] All tabs and automations loaded successfully!")
-print("✅ [Riel Private] UI is active and ready.")
+print("✅ [Riel Private v" .. RIEL_VERSION .. "] All tabs and automations loaded successfully!")
+print("✅ [Riel Private v" .. RIEL_VERSION .. "] UI is active and ready.")
 print("==================================================")
 
 end

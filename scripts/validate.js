@@ -121,6 +121,27 @@ const foreignPatterns = [
     });
 });
 
+// 4b. Riel-Private Version Tracking Audit
+if (fs.existsSync('v1') && fs.existsSync('AGENTS.md')) {
+    const v1Text = fs.readFileSync('v1', 'utf8');
+    const agentsText = fs.readFileSync('AGENTS.md', 'utf8');
+    const vMatch = v1Text.match(/local\s+RIEL_VERSION\s*=\s*"(\d+\.\d{2})"/);
+    const aMatch = agentsText.match(/\*\*Current Version\*\*:\s*`(\d+\.\d{2})`/);
+
+    if (!vMatch) {
+        console.error('  ❌ [VERSION AUDIT] Missing local RIEL_VERSION = "X.XX" in v1');
+        totalErrors++;
+    } else if (!aMatch) {
+        console.error('  ❌ [VERSION AUDIT] Missing **Current Version**: `X.XX` in AGENTS.md');
+        totalErrors++;
+    } else if (vMatch[1] !== aMatch[1]) {
+        console.error(`  ❌ [VERSION AUDIT] Version mismatch: v1 has v${vMatch[1]}, AGENTS.md has v${aMatch[1]}`);
+        totalErrors++;
+    } else {
+        console.log(`  ✓ [VERSION AUDIT] Riel Private v${vMatch[1]} synchronized across v1, v1.lua, and AGENTS.md`);
+    }
+}
+
 console.log('====================================================');
 if (totalErrors === 0) {
     console.log('✅ ALL CHECKS PASSED: 0 ERRORS DETECTED.');

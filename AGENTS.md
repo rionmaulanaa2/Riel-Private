@@ -7,6 +7,15 @@
 ## Riel-Private Lua Script Code Updates
 - **Instant Direct File Updates & GitHub Push**: For any requested changes, additions, features, or fixes for the Riel-Private Lua script, ALWAYS directly write and apply all changes immediately to the target script file (`v1` in `c:\Users\Admin\Downloads\rielv2\v1` or the active `Riel-Private` repository), and ALWAYS immediately stage, commit, and push the changes directly to GitHub (`git push origin main`) so that the remote GitHub repository is always updated instantly. Never output code solely as chat snippets without applying it to the file and pushing to GitHub.
 
+## Riel-Private Versioning & Tracking Rule
+- **Current Version**: `1.00`
+- **Baseline & Persistent Memory**: Riel-Private versioning strictly starts at `1.00`. Always persist and remember the current version number both here (`Current Version` in workspace `c:\Users\Admin\Downloads\rielv2\AGENTS.md` and global `C:\Users\Admin\.gemini\config\AGENTS.md`) and inside `v1` / `v1.lua` (`local RIEL_VERSION = "1.00"`).
+- **Mandatory `+0.01` Increment on Every Update**: On EVERY update, feature addition, bugfix, or script modification to Riel-Private (`v1`, `v1.lua`, or `violence_district.lua`), you MUST:
+  1. Read the current version number from `local RIEL_VERSION` in `v1` and `Current Version` above.
+  2. Increment it strictly by `+0.01` formatted to two decimal places (`1.00` -> `1.01` -> `1.02` -> ... -> `1.09` -> `1.10`).
+  3. Update `-- Version:` and `local RIEL_VERSION` in `v1` (synchronized identically to `v1.lua`), update `Current Version` in BOTH `c:\Users\Admin\Downloads\rielv2\AGENTS.md` and `C:\Users\Admin\.gemini\config\AGENTS.md` (or run `node scripts/bump_version.js` to bump all 4 files automatically), verify with `node scripts/validate.js`, and include `[vX.XX]` in the Git commit message before pushing to GitHub.
+- **Consistent Version Display on Riel**: Always render `"v" .. RIEL_VERSION` in `WindUI:CreateWindow` `Title` (`" Riel Private v" .. RIEL_VERSION`), `OpenButton.Title` (`"Riel Private v" .. RIEL_VERSION`), the startup `WindUI:Notify` message, and startup/loaded console `print` logs.
+
 ## Violence District Master Reference & Dump Anti-Reread Rule
 - **Mandatory Master Reference (`VIOLENCE_DISTRICT_REFERENCE.md`)**: All AI assistants working on *Violence District* (Roblox Place ID: `93978595733734`) features, auto-farms, ESP, combat, killer automation, or skillcheck MUST consult and reference [VIOLENCE_DISTRICT_REFERENCE.md](file:///c:/Users/Admin/Downloads/rielv2/VIOLENCE_DISTRICT_REFERENCE.md) as the authoritative, comprehensive single source of truth for all game architecture:
   - **Generator Remotes**: `ReplicatedStorage.Remotes.Generator` (`RepairEvent`, `RepairAnim`, `RepairVFX`, `BreakGenEvent`, `BreakGenAnim`, `BreakGenCommit`, `BreakGenMarker`, `BreakGenReject`, `SkillCheckFailEvent`, `Escapetime`).
