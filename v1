@@ -2212,42 +2212,34 @@ local isSurvivorInLobby = isEntityInLobbyOrSpectating
 isCharacterHooked = function(char)
     if not char or not char.Parent then return false end
 
-    -- Direct attributes
-    if char:GetAttribute("isHooked") == true or char:GetAttribute("Hooked") == true or char:GetAttribute("IsHooked") == true then
-        return true
-    end
-    local phase = char:GetAttribute("HookPhase")
-    if phase ~= nil and tonumber(phase) ~= nil and tonumber(phase) > 0 then
-        return true
-    end
-    local hookedProg = char:GetAttribute("HookedProgress")
-    if hookedProg ~= nil and tonumber(hookedProg) ~= nil and tonumber(hookedProg) >= 2 then
+    -- 1. Direct authoritative game attribute set by server when survivor is hung on a hook
+    if char:GetAttribute("IsHooked") == true or char:GetAttribute("isHooked") == true or char:GetAttribute("Hooked") == true then
         return true
     end
 
-    -- Child marker objects
-    if char:FindFirstChild("Hooked") or char:FindFirstChild("HookPhase") or char:FindFirstChild("HookWeld") then
-        return true
-    end
-
-    -- Model parent or ancestry
-    local pName = char.Parent.Name:lower()
-    if pName:find("hook") or pName:find("meathook") then
-        return true
-    end
-
-    -- Joints/Welds connecting HumanoidRootPart to MeatHooks
+    -- 2. Physical MeatHook Weld verification:
+    -- HumanoidRootPart welded to a HookPoint inside workspace.Map.Hooks
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if hrp then
         for _, joint in ipairs(hrp:GetJoints()) do
             local other = (joint.Part0 == hrp) and joint.Part1 or joint.Part0
-            if other and other.Parent then
-                local oName = other.Name:lower()
-                local opName = other.Parent.Name:lower()
-                if oName:find("hook") or opName:find("hook") then
-                    return true
+            if other and other:IsA("BasePart") then
+                local hookModel = other:FindFirstAncestorOfClass("Model")
+                if hookModel and (hookModel.Name:lower():find("hook") or (hookModel.Parent and hookModel.Parent.Name:lower() == "hooks")) then
+                    if (hrp.Position - other.Position).Magnitude <= 5.0 then
+                        return true
+                    end
                 end
             end
+        end
+    end
+
+    -- 3. Model parented directly inside a Hook model in Map.Hooks
+    local p = char.Parent
+    if p and p:IsA("Model") and p.Name:lower():find("hook") then
+        local grandParent = p.Parent
+        if grandParent and grandParent.Name:lower() == "hooks" then
+            return true
         end
     end
 
@@ -2256,28 +2248,39 @@ end
 
 isCharacterKnocked = function(char)
     if not char or not char.Parent then return false end
-    -- Authoritative game attributes and tags set by server on downed crawling survivors
+
+    -- 1. Direct authoritative game attributes set by server on downed crawling survivors
     if char:GetAttribute("Knocked") == true or char:GetAttribute("isKnocked") == true
         or char:GetAttribute("Downed") == true or char:GetAttribute("isDowned") == true
         or char:GetAttribute("Down") == true or char:GetAttribute("Crawling") == true
         or char:GetAttribute("BleedingOut") == true then
         return true
     end
+
+    -- 2. CollectionService tags
     if CollectionService and (CollectionService:HasTag(char, "Knocked") or CollectionService:HasTag(char, "Downed")) then
         return true
     end
-    if char:FindFirstChild("downed") or char:FindFirstChild("Knocked") or char:FindFirstChild("Downed") then
-        return true
+
+    -- 3. ValueObject children (strictly verify BoolValue.Value == true)
+    local kChild = char:FindFirstChild("Knocked") or char:FindFirstChild("Downed") or char:FindFirstChild("downed")
+    if kChild then
+        if kChild:IsA("BoolValue") then
+            if kChild.Value == true then return true end
+        end
     end
-    -- Health threshold from game dump v2 (SURVIVOR_HEALTH_THRESHOLD = 20)
+
+    -- 4. Health threshold from game dump v2 (SURVIVOR_HEALTH_THRESHOLD = 20)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if hum and hum.Health > 0 and hum.Health <= 20 then
         return true
     end
-    -- PlatformStand / Physics state when ragdolled or crawling on floor
-    if hum and (hum.PlatformStand or hum:GetState() == Enum.HumanoidStateType.Physics) and hum.Health > 0 then
+
+    -- 5. PlatformStand / Physics state when ragdolled or crawling on floor (only if damaged)
+    if hum and hum.Health > 0 and hum.Health <= 50 and (hum.PlatformStand or hum:GetState() == Enum.HumanoidStateType.Physics) then
         return true
     end
+
     return false
 end
 
@@ -7385,12 +7388,26 @@ local function findNearestAvailableHook()
 
             -- Check if any survivor (player or bot) is currently attached to this hook (within 5.5 studs)
             if not isOccupied then
-                for _, sChar in ipairs(workspace:GetDescendants()) do
-                    if sChar:IsA("Model") and sChar ~= myChar and (isCharacterHooked and isCharacterHooked(sChar)) then
-                        local sHrp = sChar:FindFirstChild("HumanoidRootPart")
-                        if sHrp and (sHrp.Position - hookPart.Position).Magnitude <= 5.5 then
-                            isOccupied = true
-                            break
+                if trackedSurvivors then
+                    for sChar, _ in pairs(trackedSurvivors) do
+                        if sChar and sChar.Parent and sChar ~= myChar and isCharacterHooked(sChar) then
+                            local sHrp = sChar:FindFirstChild("HumanoidRootPart")
+                            if sHrp and (sHrp.Position - hookPart.Position).Magnitude <= 5.5 then
+                                isOccupied = true
+                                break
+                            end
+                        end
+                    end
+                end
+                if not isOccupied then
+                    for _, plr in ipairs(Players:GetPlayers()) do
+                        local sChar = plr.Character
+                        if sChar and sChar ~= myChar and isCharacterHooked(sChar) then
+                            local sHrp = sChar:FindFirstChild("HumanoidRootPart")
+                            if sHrp and (sHrp.Position - hookPart.Position).Magnitude <= 5.5 then
+                                isOccupied = true
+                                break
+                            end
                         end
                     end
                 end
