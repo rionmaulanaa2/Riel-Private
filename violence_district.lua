@@ -3679,6 +3679,11 @@ local function stopGhostRepair()
     pcall(function()
         if player.Character then
             player.Character:SetAttribute("isRepairing", false)
+            for _, part in ipairs(player.Character:GetDescendants()) do
+                if part:IsA("BasePart") and (part.Name == "HumanoidRootPart" or part.Name == "Torso" or part.Name == "UpperTorso" or part.Name == "LowerTorso" or part.Name == "Head") then
+                    part.CanCollide = true
+                end
+            end
         end
     end)
     unlockCameraAndMovement()
@@ -3751,6 +3756,43 @@ local function startGhostRepairThread()
     ghostRepairSession = ghostRepairSession + 1
     local thisSession = ghostRepairSession
 
+    -- Capture surface original CFrame immediately before going underground
+    local initialChar = player.Character
+    local initialHrp = initialChar and initialChar:FindFirstChild("HumanoidRootPart")
+    if not ghostOriginalCFrame and initialHrp then
+        ghostOriginalCFrame = initialHrp.CFrame
+    end
+
+    -- 1. High-frequency dedicated subterranean position lock thread:
+    -- Constantly spam-enforces the teleport to designated target underground every 0.1s
+    task.spawn(function()
+        while ghostRepairEnabled and (ghostRepairSession == thisSession) and scriptRunning do
+            pcall(function()
+                local c = player.Character
+                local hrp = c and c:FindFirstChild("HumanoidRootPart")
+                local hum = c and c:FindFirstChildOfClass("Humanoid")
+                if hrp and hum and hum.Health > 0 and not isCharacterHooked(c) and not isCharacterKnocked(c) then
+                    local pt = currentGhostGenPoint
+                    if pt and pt.Parent and pt:IsA("BasePart") then
+                        local desiredPos = pt.Position - Vector3.new(0, ghostDepthOffset, 0)
+                        hrp.CFrame = CFrame.new(desiredPos)
+                        hrp.AssemblyLinearVelocity = Vector3.zero
+                        hrp.AssemblyAngularVelocity = Vector3.zero
+
+                        -- Disable collisions on character parts so terrain/floor geometry cannot pop body above ground
+                        for _, part in ipairs(c:GetDescendants()) do
+                            if part:IsA("BasePart") and part.CanCollide then
+                                part.CanCollide = false
+                            end
+                        end
+                    end
+                end
+            end)
+            task.wait(0.1)
+        end
+    end)
+
+    -- 2. Main Ghost Repair orchestration thread
     task.spawn(function()
         while ghostRepairEnabled and (ghostRepairSession == thisSession) and scriptRunning do
             local iterSuccess, iterErr = pcall(function()
@@ -3775,7 +3817,7 @@ local function startGhostRepairThread()
                     WindUI:Notify({ Title = "Ghost Gen", Content = "All generators 100% completed!", Duration = 3 })
                     if ghostAutoReturn and ghostOriginalCFrame and myHrp then
                         myHrp.CFrame = ghostOriginalCFrame
-                        myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                        myHrp.AssemblyLinearVelocity = Vector3.zero
                         ghostOriginalCFrame = nil
                     end
                     task.wait(2.5)
@@ -3808,8 +3850,8 @@ local function startGhostRepairThread()
                 local safeUndergroundCFrame = CFrame.new(targetPoint.Position - Vector3.new(0, ghostDepthOffset, 0))
                 if myHrp then
                     myHrp.CFrame = safeUndergroundCFrame
-                    myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                    myHrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                    myHrp.AssemblyLinearVelocity = Vector3.zero
+                    myHrp.AssemblyAngularVelocity = Vector3.zero
                 end
 
                 local requestId = HttpService:GenerateGUID(false)
@@ -3860,14 +3902,12 @@ local function startGhostRepairThread()
                         end)
                     end
 
-                    -- Anchor underground and freeze physics to prevent falling into the void
+                    -- Constantly anchor underground and freeze physics to prevent falling into the void
                     if myHrp then
                         local desiredPos = targetPoint.Position - Vector3.new(0, ghostDepthOffset, 0)
-                        if (myHrp.Position - desiredPos).Magnitude > 2 then
-                            myHrp.CFrame = CFrame.new(desiredPos)
-                        end
-                        myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                        myHrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                        myHrp.CFrame = CFrame.new(desiredPos)
+                        myHrp.AssemblyLinearVelocity = Vector3.zero
+                        myHrp.AssemblyAngularVelocity = Vector3.zero
                     end
 
                     task.wait(ghostRepairPulseInterval)
