@@ -5278,6 +5278,7 @@ local hitReachDistance = 10
 local lastKillerHitTime = 0
 local currentKillerTarget = nil
 local killerAimConn = nil
+local catchBotsIgnoredActive = false
 
 -- (Helpers isKillerCarrying, isKillerStunnedOrLocked, and isSurvivorParryingOrShielded defined globally at top)
 
@@ -5365,31 +5366,56 @@ local function isSurvivorDowned(c)
     return isCharacterKnocked(c)
 end
 
-local function findNearestSurvivor()
-    local myChar = player.Character
-    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    if not myHrp then return nil end
+-- Detects whether a character model is an AI bot / NPC / dummy / clone rather than a human player
+local function isSurvivorBot(c)
+    if not c or not c.Parent then return false end
+    local plr = Players:GetPlayerFromCharacter(c)
+    if not plr then
+        return true
+    end
+    if c:GetAttribute("IsBot") == true
+        or c:GetAttribute("isBot") == true
+        or c:GetAttribute("Bot") == true
+        or c:GetAttribute("IsNPC") == true
+        or c:GetAttribute("IsClone") == true
+        or c:GetAttribute("Clone") == true
+        or plr:GetAttribute("IsBot") == true
+        or plr:GetAttribute("Bot") == true then
+        return true
+    end
+    if CollectionService then
+        for _, tag in ipairs({ "Bot", "NPC", "SurvivorBot", "CarryTestDummy", "ShadowClone", "Clone" }) do
+            if CollectionService:HasTag(c, tag) then
+                return true
+            end
+        end
+    end
+    return false
+end
 
-    local bestTarget = nil
-    local bestDist = math.huge
+-- Collects all unique candidate character models across ESP tracker, Players, workspace, and tags
+local function collectSurvivorCandidateModels(myChar)
     local candidateModels = {}
     local seen = {}
 
-    -- 1. Check all survivors currently tracked by ESP!
+    local function tryAdd(obj)
+        if obj and obj.Parent and obj:IsA("Model") and obj ~= myChar and not seen[obj] then
+            seen[obj] = true
+            table.insert(candidateModels, obj)
+        end
+    end
+
+    -- 1. Check all survivors currently tracked by ESP
     if trackedSurvivors then
         for c, _ in pairs(trackedSurvivors) do
-            if c and c.Parent and c ~= myChar and not seen[c] then
-                seen[c] = true
-                table.insert(candidateModels, c)
-            end
+            tryAdd(c)
         end
     end
 
     -- 2. Check Players
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player and plr.Character and plr.Character ~= myChar and not seen[plr.Character] then
-            seen[plr.Character] = true
-            table.insert(candidateModels, plr.Character)
+        if plr ~= player and plr.Character then
+            tryAdd(plr.Character)
         end
     end
 
@@ -5404,9 +5430,8 @@ local function findNearestSurvivor()
 
     for _, container in ipairs(searchContainers) do
         for _, obj in ipairs(container:GetChildren()) do
-            if obj:IsA("Model") and obj ~= myChar and not seen[obj] then
-                seen[obj] = true
-                table.insert(candidateModels, obj)
+            if obj:IsA("Model") then
+                tryAdd(obj)
             end
         end
     end
@@ -5415,16 +5440,53 @@ local function findNearestSurvivor()
     if CollectionService then
         for _, tag in ipairs({ "Survivor", "Survivors", "Bot", "NPC", "SurvivorBot", "CarryTestDummy" }) do
             for _, obj in ipairs(CollectionService:GetTagged(tag)) do
-                if obj:IsA("Model") and obj ~= myChar and not seen[obj] then
-                    seen[obj] = true
-                    table.insert(candidateModels, obj)
+                tryAdd(obj)
+            end
+        end
+    end
+
+    return candidateModels
+end
+
+-- Checks if Auto Catch detects >= 5 active match targets where at least one is a bot (and real players exist)
+local function evaluateCatchBotIgnore(myChar)
+    local totalCount = 0
+    local botCount = 0
+    local humanCount = 0
+    local killerChar = (not (isPlayerKiller and isPlayerKiller())) and (getKiller and getKiller()) or nil
+
+    for _, c in ipairs(collectSurvivorCandidateModels(myChar)) do
+        if c ~= myChar and c ~= killerChar then
+            local hrp = c:FindFirstChild("HumanoidRootPart")
+            local hum = c:FindFirstChildOfClass("Humanoid")
+            if hrp and hum and hum.Health > 0 then
+                local plr = Players:GetPlayerFromCharacter(c)
+                if not isEntityInLobbyOrSpectating(c, plr) then
+                    totalCount = totalCount + 1
+                    if isSurvivorBot(c) then
+                        botCount = botCount + 1
+                    else
+                        humanCount = humanCount + 1
+                    end
                 end
             end
         end
     end
 
-    for _, c in ipairs(candidateModels) do
-        if isSurvivorValidTarget(c) then
+    local shouldIgnore = (totalCount >= 5) and (botCount >= 1) and (humanCount >= 1)
+    return shouldIgnore, totalCount, botCount, humanCount
+end
+
+local function findNearestSurvivor(ignoreBots)
+    local myChar = player.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHrp then return nil end
+
+    local bestTarget = nil
+    local bestDist = math.huge
+
+    for _, c in ipairs(collectSurvivorCandidateModels(myChar)) do
+        if not (ignoreBots and isSurvivorBot(c)) and isSurvivorValidTarget(c) then
             local hrp = c:FindFirstChild("HumanoidRootPart")
             if hrp then
                 local dist = (myHrp.Position - hrp.Position).Magnitude
@@ -5440,66 +5502,16 @@ local function findNearestSurvivor()
 end
 
 -- Locates nearest downed/knocked survivor awaiting carry/hook
-local function findNearestDownedSurvivor()
+local function findNearestDownedSurvivor(ignoreBots)
     local myChar = player.Character
     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
     if not myHrp then return nil end
 
     local bestDowned = nil
     local bestDist = math.huge
-    local candidateModels = {}
-    local seen = {}
 
-    -- 1. Check all survivors currently tracked by ESP!
-    if trackedSurvivors then
-        for c, _ in pairs(trackedSurvivors) do
-            if c and c.Parent and c ~= myChar and not seen[c] then
-                seen[c] = true
-                table.insert(candidateModels, c)
-            end
-        end
-    end
-
-    -- 2. Check Players
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player and plr.Character and plr.Character ~= myChar and not seen[plr.Character] then
-            seen[plr.Character] = true
-            table.insert(candidateModels, plr.Character)
-        end
-    end
-
-    -- 3. Check workspace subfolders & workspace children for bot/NPC survivors
-    local searchContainers = { workspace }
-    for _, fName in ipairs({ "Bots", "NPCs", "Survivors", "Players", "Characters", "Match", "Entities", "Map" }) do
-        local folder = workspace:FindFirstChild(fName)
-        if folder and (folder:IsA("Folder") or folder:IsA("Model")) then
-            table.insert(searchContainers, folder)
-        end
-    end
-
-    for _, container in ipairs(searchContainers) do
-        for _, obj in ipairs(container:GetChildren()) do
-            if obj:IsA("Model") and obj ~= myChar and not seen[obj] then
-                seen[obj] = true
-                table.insert(candidateModels, obj)
-            end
-        end
-    end
-
-    -- 4. Check CollectionService tags
-    if CollectionService then
-        for _, tag in ipairs({ "Survivor", "Survivors", "Bot", "NPC", "SurvivorBot", "CarryTestDummy" }) do
-            for _, obj in ipairs(CollectionService:GetTagged(tag)) do
-                if obj:IsA("Model") and obj ~= myChar and not seen[obj] then
-                    seen[obj] = true
-                    table.insert(candidateModels, obj)
-                end
-            end
-        end
-    end
-
-    for _, c in ipairs(candidateModels) do
-        if isSurvivorDowned(c) then
+    for _, c in ipairs(collectSurvivorCandidateModels(myChar)) do
+        if not (ignoreBots and isSurvivorBot(c)) and isSurvivorDowned(c) then
             local hrp = c:FindFirstChild("HumanoidRootPart")
             if hrp then
                 local dist = (myHrp.Position - hrp.Position).Magnitude
@@ -5796,9 +5808,13 @@ updateKillerAim = function()
             local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
             if not myHrp then return end
 
+            local ignoreBots = autoCatchEnabled and catchBotsIgnoredActive
             local target = currentKillerTarget
+            if target and ignoreBots and isSurvivorBot(target) then
+                target = nil
+            end
             if not target or not target.Parent or not isSurvivorValidTarget(target) then
-                local nearest, nDist = findNearestSurvivor()
+                local nearest, nDist = findNearestSurvivor(ignoreBots)
                 if nearest then
                     target = nearest
                     currentKillerTarget = nearest
@@ -6574,6 +6590,7 @@ V_KillerSection:Toggle({
 
         if not v then
             currentKillerTarget = nil
+            catchBotsIgnoredActive = false
             if not standaloneAimUserSetting then
                 autoAimSurvivorEnabled = false
                 updateKillerAim()
@@ -6601,6 +6618,9 @@ V_KillerSection:Toggle({
             local pickupAttempts = 0
             local hookAttempts = 0
             local lastNotificationPhase = nil
+            local trackedCatchChar = nil
+            local botsIgnoredThisRound = false
+            local lastBotCheckTime = 0
 
             while checkCatchActive() do
                 local ok, err = pcall(function()
@@ -6608,11 +6628,40 @@ V_KillerSection:Toggle({
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
                     if not myHrp then task.wait(0.1) return end
 
+                    -- Reset per-round bot-ignore latch whenever Killer character respawns / changes match
+                    if trackedCatchChar ~= myChar then
+                        trackedCatchChar = myChar
+                        botsIgnoredThisRound = false
+                        catchBotsIgnoredActive = false
+                        lastBotCheckTime = 0
+                    end
+
+                    -- Check if 5+ targets are detected with at least one bot (if so, ignore all bots this round)
+                    if not botsIgnoredThisRound and (tick() - lastBotCheckTime) >= 0.25 then
+                        lastBotCheckTime = tick()
+                        local shouldIgnore, totalCount, botCount = evaluateCatchBotIgnore(myChar)
+                        if shouldIgnore then
+                            botsIgnoredThisRound = true
+                            catchBotsIgnoredActive = true
+                            if lockedCatchSurvivor and isSurvivorBot(lockedCatchSurvivor) then
+                                lockedCatchSurvivor = nil
+                            end
+                            if currentCarryTarget and isSurvivorBot(currentCarryTarget) then
+                                currentCarryTarget = nil
+                            end
+                            WindUI:Notify({
+                                Title = "🤖 Bot Ignored",
+                                Content = string.format("Detected %d targets (%d bot) — focusing real players only.", totalCount, botCount),
+                                Duration = 2.5
+                            })
+                        end
+                    end
+
                     -- ====================================================
                     -- PRIORITY 1: KNOCK DOWN ALL SURVIVORS FIRST
                     -- (Continuous check: if ANY survivor is upright/revived/unhooked)
                     -- ====================================================
-                    local uprightSurvivor = findNearestSurvivor()
+                    local uprightSurvivor = findNearestSurvivor(botsIgnoredThisRound)
                     if uprightSurvivor then
                         -- Revived / active survivor detected! Prioritize knocking down all survivors first.
                         -- If killer is currently carrying, handle carry drop or rapid hook if already adjacent
@@ -6654,8 +6703,8 @@ V_KillerSection:Toggle({
                             myChar:SetAttribute("AC_ServerAnchor", false)
                         end)
 
-                        -- Retain lock on target until they are knocked down
-                        if not lockedCatchSurvivor or not isSurvivorValidTarget(lockedCatchSurvivor) then
+                        -- Retain lock on target until they are knocked down (skipping ignored bots)
+                        if not lockedCatchSurvivor or (botsIgnoredThisRound and isSurvivorBot(lockedCatchSurvivor)) or not isSurvivorValidTarget(lockedCatchSurvivor) then
                             lockedCatchSurvivor = uprightSurvivor
                         end
 
@@ -6754,7 +6803,7 @@ V_KillerSection:Toggle({
                             local hookWaitTimeout = tick() + 0.45
                             while tick() < hookWaitTimeout and isKillerCarrying(myChar) and checkCatchActive() do
                                 -- Interruption check: did any survivor revive while hooking?
-                                if findNearestSurvivor() ~= nil then
+                                if findNearestSurvivor(botsIgnoredThisRound) ~= nil then
                                     break
                                 end
                                 task.wait(0.01)
@@ -6784,8 +6833,8 @@ V_KillerSection:Toggle({
                     -- ----------------------------------------------------
                     -- STEP B: NOT CARRYING -> PICK UP KNOCKED SURVIVOR WITH STATUS CHECK
                     -- ----------------------------------------------------
-                    if not currentCarryTarget or not isSurvivorDowned(currentCarryTarget) then
-                        currentCarryTarget = findNearestDownedSurvivor()
+                    if not currentCarryTarget or (botsIgnoredThisRound and isSurvivorBot(currentCarryTarget)) or not isSurvivorDowned(currentCarryTarget) then
+                        currentCarryTarget = findNearestDownedSurvivor(botsIgnoredThisRound)
                     end
 
                     if currentCarryTarget and currentCarryTarget:FindFirstChild("HumanoidRootPart") then
@@ -6839,7 +6888,7 @@ V_KillerSection:Toggle({
                         local pickupWaitTimeout = tick() + 0.25
                         while tick() < pickupWaitTimeout and not isKillerCarrying(myChar) and checkCatchActive() do
                             -- Interruption check: did any survivor revive while picking up?
-                            if findNearestSurvivor() ~= nil then
+                            if findNearestSurvivor(botsIgnoredThisRound) ~= nil then
                                 break
                             end
                             task.wait(0.001)
@@ -6879,6 +6928,7 @@ V_KillerSection:Toggle({
             currentKillerTarget = nil
             lockedCatchSurvivor = nil
             currentCarryTarget = nil
+            catchBotsIgnoredActive = false
         end)
     end
 })
