@@ -6537,6 +6537,10 @@ V_KillerSection:Toggle({
 
         task.spawn(function()
             local lockedCatchSurvivor = nil
+            local currentCarryTarget = nil
+            local pickupAttempts = 0
+            local hookAttempts = 0
+            local lastNotificationPhase = nil
 
             while checkCatchActive() do
                 local ok, err = pcall(function()
@@ -6545,13 +6549,108 @@ V_KillerSection:Toggle({
                     if not myHrp then task.wait(0.3) return end
 
                     -- ====================================================
-                    -- STEP 1: CARRYING SURVIVOR -> TRANSPORT TO HOOK & HANG
+                    -- PRIORITY 1: KNOCK DOWN ALL SURVIVORS FIRST
+                    -- (Continuous check: if ANY survivor is upright/revived/unhooked)
                     -- ====================================================
+                    local uprightSurvivor = findNearestSurvivor()
+                    if uprightSurvivor then
+                        -- Revived / active survivor detected! Prioritize knocking down all survivors first.
+                        -- If killer is currently carrying, handle carry drop or rapid hook if already adjacent
+                        if isKillerCarrying(myChar) then
+                            local hookPart, hookDist = findNearestAvailableHook()
+                            if hookPart and hookDist <= 5.5 then
+                                -- Already right in front of the hook! Quick hang to not waste carry
+                                local standCF = getHookStandCFrame(hookPart)
+                                myHrp.CFrame = standCF
+                                local reqId = HttpService:GenerateGUID(false)
+                                local remotes = getVDRemotes()
+                                if remotes.Carry and remotes.Carry:FindFirstChild("HookEvent") then
+                                    pcall(function() remotes.Carry.HookEvent:FireServer(hookPart, reqId, myChar) end)
+                                end
+                                task.wait(0.08)
+                                if remotes.Carry and remotes.Carry:FindFirstChild("HookCommit") then
+                                    pcall(function() remotes.Carry.HookCommit:FireServer(hookPart, reqId, myChar) end)
+                                end
+                            else
+                                -- Drop survivor immediately so killer moves at full speed and can attack!
+                                local remotes = getVDRemotes()
+                                if remotes.Carry and remotes.Carry:FindFirstChild("DropSurvivorEvent") then
+                                    pcall(function() remotes.Carry.DropSurvivorEvent:FireServer() end)
+                                end
+                                task.wait(0.05)
+                            end
+                        end
+
+                        currentCarryTarget = nil
+                        pickupAttempts = 0
+                        hookAttempts = 0
+
+                        -- Unfreeze movement if anchored or immobile during hunting
+                        if myHrp.Anchored then
+                            pcall(function() myHrp.Anchored = false end)
+                        end
+                        pcall(function()
+                            myChar:SetAttribute("Immobile", false)
+                            myChar:SetAttribute("AC_ServerAnchor", false)
+                        end)
+
+                        -- Retain lock on target until they are knocked down
+                        if not lockedCatchSurvivor or not isSurvivorValidTarget(lockedCatchSurvivor) then
+                            lockedCatchSurvivor = uprightSurvivor
+                        end
+
+                        if lockedCatchSurvivor and lockedCatchSurvivor:FindFirstChild("HumanoidRootPart") then
+                            if lastNotificationPhase ~= "hunting" then
+                                lastNotificationPhase = "hunting"
+                                WindUI:Notify({ Title = "⚔️ Knocking Down Survivors", Content = "Hunting upright survivors until all are downed...", Duration = 1.8 })
+                            end
+
+                            currentKillerTarget = lockedCatchSurvivor
+                            local sHrp = lockedCatchSurvivor.HumanoidRootPart
+
+                            -- Spam teleport directly behind survivor (1.8 studs behind, facing back)
+                            local behindPos = sHrp.Position - (sHrp.CFrame.LookVector * 1.8) + Vector3.new(0, 0.2, 0)
+                            local behindCF = CFrame.lookAt(behindPos, sHrp.Position)
+                            for attempt = 1, 2 do
+                                myHrp.CFrame = behindCF
+                                myHrp.AssemblyLinearVelocity = Vector3.zero
+                                myHrp.AssemblyAngularVelocity = Vector3.zero
+                                task.wait(0.015)
+                            end
+
+                            -- Lock camera at survivor
+                            local cam = workspace.CurrentCamera
+                            if cam then
+                                cam.CFrame = CFrame.lookAt(cam.CFrame.Position, sHrp.Position + Vector3.new(0, 1.2, 0))
+                            end
+
+                            -- Execute attack
+                            if (tick() - lastKillerHitTime) >= 0.20 then
+                                executeKillerHit(lockedCatchSurvivor)
+                                lastKillerHitTime = tick()
+                            end
+                            return
+                        end
+                    end
+
+                    -- ====================================================
+                    -- PRIORITY 2: ALL SURVIVORS ARE KNOCKED DOWN (0 UPRIGHT)
+                    -- SEQUENTIAL PICKUP & HOOK PIPELINE WITH STATUS VERIFICATION
+                    -- ====================================================
+                    lockedCatchSurvivor = nil
+
+                    -- ----------------------------------------------------
+                    -- STEP A: IF CARRYING SURVIVOR -> TRANSPORT TO HOOK & HANG
+                    -- ----------------------------------------------------
                     local carrying = isKillerCarrying(myChar)
                     if carrying then
-                        lockedCatchSurvivor = nil
                         local hookPart, hookDist = findNearestAvailableHook()
                         if hookPart then
+                            if lastNotificationPhase ~= "hooking" then
+                                lastNotificationPhase = "hooking"
+                                WindUI:Notify({ Title = "🪝 Hooking Survivor", Content = "Transporting carried survivor to hook...", Duration = 1.5 })
+                            end
+
                             local standCF = getHookStandCFrame(hookPart)
                             for attempt = 1, 3 do
                                 myHrp.CFrame = standCF
@@ -6572,15 +6671,13 @@ V_KillerSection:Toggle({
                             local hookModel = hookPart:FindFirstAncestorOfClass("Model") or hookPart.Parent
                             if hookModel then
                                 for _, prompt in ipairs(hookModel:GetDescendants()) do
-                                    if prompt:IsA("ProximityPrompt") then
-                                        if typeof(fireproximityprompt) == "function" then
-                                            pcall(function() fireproximityprompt(prompt) end)
-                                        end
+                                    if prompt:IsA("ProximityPrompt") and typeof(fireproximityprompt) == "function" then
+                                        pcall(function() fireproximityprompt(prompt) end)
                                     end
                                 end
                             end
 
-                            -- 3. Small delay matching native game interaction cycle before HookCommit
+                            -- 3. Delay matching native game interaction cycle before HookCommit
                             task.wait(0.08)
 
                             -- 4. Fire HookCommit (Client -> Server confirmation)
@@ -6588,44 +6685,57 @@ V_KillerSection:Toggle({
                                 pcall(function() remotes.Carry.HookCommit:FireServer(hookPart, reqId, myChar) end)
                             end
 
-                            -- Wait for hook animation/server sync with fallback re-commit
-                            local hookWaitTimeout = tick() + 2.0
+                            -- Status verification: wait and check if target survivor is successfully hooked
+                            local hookWaitTimeout = tick() + 0.6
                             while tick() < hookWaitTimeout and isKillerCarrying(myChar) and checkCatchActive() do
-                                task.wait(0.08)
+                                -- Interruption check: did any survivor revive while hooking?
+                                if findNearestSurvivor() ~= nil then
+                                    break
+                                end
+                                task.wait(0.06)
                                 if isKillerCarrying(myChar) and remotes.Carry and remotes.Carry:FindFirstChild("HookCommit") then
                                     pcall(function() remotes.Carry.HookCommit:FireServer(hookPart, reqId, myChar) end)
                                 end
                             end
-                            if not isKillerCarrying(myChar) then
-                                WindUI:Notify({ Title = "🪝 Survivor Hooked!", Content = "Target successfully hung on hook.", Duration = 2.0 })
+
+                            local isHooked = false
+                            if currentCarryTarget and isCharacterHooked(currentCarryTarget) then
+                                isHooked = true
+                            elseif not isKillerCarrying(myChar) then
+                                isHooked = true
+                            end
+
+                            if isHooked then
+                                WindUI:Notify({ Title = "🪝 Survivor Hooked!", Content = "Target successfully hung. Moving to next knocked survivor...", Duration = 1.8 })
+                                currentCarryTarget = nil
+                                hookAttempts = 0
+                            else
+                                hookAttempts = hookAttempts + 1
                             end
                         end
                         return
                     end
 
-                    -- ====================================================
-                    -- STEP 2: KNOCKED / DOWNED SURVIVOR -> TAKE THE BODY (PICK UP)
-                    -- ====================================================
-                    -- Prioritize taking the body of the locked target if downed, OR any downed survivor awaiting hook!
-                    local targetToCarry = nil
-                    if lockedCatchSurvivor and isSurvivorDowned(lockedCatchSurvivor) then
-                        targetToCarry = lockedCatchSurvivor
-                    else
-                        local downedSurvivor = findNearestDownedSurvivor()
-                        if downedSurvivor then
-                            targetToCarry = downedSurvivor
-                        end
+                    -- ----------------------------------------------------
+                    -- STEP B: NOT CARRYING -> PICK UP KNOCKED SURVIVOR WITH STATUS CHECK
+                    -- ----------------------------------------------------
+                    if not currentCarryTarget or not isSurvivorDowned(currentCarryTarget) then
+                        currentCarryTarget = findNearestDownedSurvivor()
                     end
 
-                    if targetToCarry and targetToCarry:FindFirstChild("HumanoidRootPart") then
-                        currentKillerTarget = targetToCarry
-                        lockedCatchSurvivor = targetToCarry
-                        local dHrp = targetToCarry.HumanoidRootPart
+                    if currentCarryTarget and currentCarryTarget:FindFirstChild("HumanoidRootPart") then
+                        currentKillerTarget = currentCarryTarget
+                        local dHrp = currentCarryTarget.HumanoidRootPart
+
+                        if lastNotificationPhase ~= "pickup" then
+                            lastNotificationPhase = "pickup"
+                            WindUI:Notify({ Title = "🎒 Picking Up Survivor", Content = "Approaching knocked body to carry...", Duration = 1.5 })
+                        end
 
                         -- Calculate floor stand position directly over / adjacent to downed body
                         local rayParams = RaycastParams.new()
                         rayParams.FilterType = Enum.RaycastFilterType.Exclude
-                        local filterList = { targetToCarry }
+                        local filterList = { currentCarryTarget }
                         if myChar then table.insert(filterList, myChar) end
                         rayParams.FilterDescendantsInstances = filterList
 
@@ -6650,80 +6760,51 @@ V_KillerSection:Toggle({
                         -- Execute Carry / Pick Up via Remote
                         local remotes = getVDRemotes()
                         if remotes.Carry and remotes.Carry:FindFirstChild("CarrySurvivorEvent") then
-                            pcall(function() remotes.Carry.CarrySurvivorEvent:FireServer(targetToCarry) end)
+                            pcall(function() remotes.Carry.CarrySurvivorEvent:FireServer(currentCarryTarget) end)
                         end
 
                         -- Trigger any ProximityPrompts on the survivor
-                        for _, prompt in ipairs(targetToCarry:GetDescendants()) do
-                            if prompt:IsA("ProximityPrompt") then
-                                if typeof(fireproximityprompt) == "function" then
-                                    pcall(function() fireproximityprompt(prompt) end)
-                                end
+                        for _, prompt in ipairs(currentCarryTarget:GetDescendants()) do
+                            if prompt:IsA("ProximityPrompt") and typeof(fireproximityprompt) == "function" then
+                                pcall(function() fireproximityprompt(prompt) end)
                             end
                         end
 
-                        -- Wait briefly for pickup to register
+                        -- Status verification: wait and check if target survivor is already picked up
                         local pickupWaitTimeout = tick() + 0.35
                         while tick() < pickupWaitTimeout and not isKillerCarrying(myChar) and checkCatchActive() do
+                            -- Interruption check: did any survivor revive while picking up?
+                            if findNearestSurvivor() ~= nil then
+                                break
+                            end
                             task.wait(0.04)
                         end
 
-                        if isKillerCarrying(myChar) then
-                            WindUI:Notify({ Title = "🎒 Body Picked Up!", Content = "Taking survivor to hook...", Duration = 1.5 })
-                            lockedCatchSurvivor = nil
+                        local isPickedUp = isKillerCarrying(myChar)
+                            or (currentCarryTarget:GetAttribute("IsCarried") == true)
+                            or (currentCarryTarget:GetAttribute("isCarried") == true)
+                            or (currentCarryTarget:GetAttribute("BeingCarried") == true)
+
+                        if isPickedUp then
+                            WindUI:Notify({ Title = "🎒 Body Picked Up!", Content = "Confirmed! Transporting to nearest hook...", Duration = 1.5 })
+                            pickupAttempts = 0
+                        else
+                            pickupAttempts = pickupAttempts + 1
                         end
                         return
                     end
 
-                    -- ====================================================
-                    -- STEP 3: LOCK ON UPRIGHT SURVIVOR & SPAM TELEPORT + HIT
-                    -- ====================================================
-                    -- Unfreeze movement if anchored or immobile during hunting
-                    if myHrp.Anchored then
-                        pcall(function() myHrp.Anchored = false end)
-                    end
-                    pcall(function()
-                        myChar:SetAttribute("Immobile", false)
-                        myChar:SetAttribute("AC_ServerAnchor", false)
-                    end)
-
-                    -- Retain lock on target until they are knocked down
-                    if not lockedCatchSurvivor or not isSurvivorValidTarget(lockedCatchSurvivor) then
-                        lockedCatchSurvivor = findNearestSurvivor()
-                    end
-
-                    if lockedCatchSurvivor and lockedCatchSurvivor:FindFirstChild("HumanoidRootPart") then
-                        currentKillerTarget = lockedCatchSurvivor
-                        local sHrp = lockedCatchSurvivor.HumanoidRootPart
-
-                        -- Spam teleport directly behind survivor (1.8 studs behind, facing back)
-                        local behindPos = sHrp.Position - (sHrp.CFrame.LookVector * 1.8) + Vector3.new(0, 0.2, 0)
-                        local behindCF = CFrame.lookAt(behindPos, sHrp.Position)
-                        for attempt = 1, 2 do
-                            myHrp.CFrame = behindCF
-                            myHrp.AssemblyLinearVelocity = Vector3.zero
-                            myHrp.AssemblyAngularVelocity = Vector3.zero
-                            task.wait(0.015)
-                        end
-
-                        -- Lock camera at survivor
-                        local cam = workspace.CurrentCamera
-                        if cam then
-                            cam.CFrame = CFrame.lookAt(cam.CFrame.Position, sHrp.Position + Vector3.new(0, 1.2, 0))
-                        end
-
-                        -- Execute attack
-                        if (tick() - lastKillerHitTime) >= 0.20 then
-                            executeKillerHit(lockedCatchSurvivor)
-                            lastKillerHitTime = tick()
-                        end
-                        return
-                    end
-
-                    -- If no upright and no downed survivors (all hooked or escaped)
+                    -- ----------------------------------------------------
+                    -- ALL SURVIVORS HOOKED / DEAD / ESCAPED
+                    -- ----------------------------------------------------
                     currentKillerTarget = nil
                     lockedCatchSurvivor = nil
-                    task.wait(0.15)
+                    currentCarryTarget = nil
+                    if lastNotificationPhase ~= "complete" then
+                        lastNotificationPhase = "complete"
+                        WindUI:Notify({ Title = "✅ All Survivors Secured", Content = "All survivors knocked down & hooked! Monitoring for revives...", Duration = 2.5 })
+                    end
+                    task.wait(0.2)
                 end)
                 if not ok then
                     task.wait(0.1)
@@ -6732,6 +6813,7 @@ V_KillerSection:Toggle({
             end
             currentKillerTarget = nil
             lockedCatchSurvivor = nil
+            currentCarryTarget = nil
         end)
     end
 })
