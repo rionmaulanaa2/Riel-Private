@@ -5651,6 +5651,11 @@ local function getHookStandCFrame(hookPart)
 end
 
 -- Comprehensive Auto Hit execution across Android executors and PC (Guaranteed Hit Delivery)
+local lastGuiInputHitTime = 0
+local cachedHitChar = nil
+local cachedWeaponParts = {}
+local lastWeaponScanTime = 0
+
 local function executeKillerHit(targetChar)
     local myChar = player.Character
     if not myChar then return end
@@ -5674,7 +5679,7 @@ local function executeKillerHit(targetChar)
 
     local remotes = getVDRemotes()
 
-    -- 3. Fire Official Violence District Attack Remotes
+    -- 3. Fire Official Violence District Attack Remotes (instant 0.001s-ready)
     if remotes.Attacks then
         if remotes.Attacks:FindFirstChild("BasicAttack") then
             pcall(function() remotes.Attacks.BasicAttack:FireServer() end)
@@ -5684,48 +5689,32 @@ local function executeKillerHit(targetChar)
         end
     end
 
-    -- 4. Fire Mobile Attack GUI Button (Slasher-mob / Slasher / Controls.attack)
-    pcall(function()
-        local pg = player:FindFirstChild("PlayerGui")
-        if pg then
-            for _, guiName in ipairs({"Slasher-mob", "Slasher", "Slasher-con", "Killer-mob", "KillerGui", "MobileGui"}) do
-                local g = pg:FindFirstChild(guiName)
-                if g then
-                    for _, btn in ipairs(g:GetDescendants()) do
-                        if btn:IsA("GuiButton") and (btn.Name:lower() == "attack" or btn.Name:lower():find("slash") or btn.Name:lower():find("punch") or btn.Name:lower():find("hit")) then
-                            if typeof(firesignal) == "function" then
-                                pcall(firesignal, btn.MouseButton1Down)
-                                pcall(firesignal, btn.Activated)
-                                pcall(firesignal, btn.MouseButton1Up)
-                                pcall(firesignal, btn.MouseButton1Click)
-                            end
-                            local bPos = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
-                            pcall(function()
-                                if VirtualInputManager and typeof(VirtualInputManager.SendTouchEvent) == "function" then
-                                    VirtualInputManager:SendTouchEvent(3, 0, bPos.X, bPos.Y)
-                                    VirtualInputManager:SendTouchEvent(3, 2, bPos.X, bPos.Y)
-                                end
-                            end)
+    -- 5. Physical Weapon & Arm Hitbox Collision Simulation (cached for zero-lag 0.001s spam)
+    if typeof(firetouchinterest) == "function" and sHrp then
+        pcall(function()
+            local now = tick()
+            if cachedHitChar ~= myChar or (now - lastWeaponScanTime) >= 1.0 then
+                cachedHitChar = myChar
+                lastWeaponScanTime = now
+                cachedWeaponParts = {}
+                local rightArm = myChar:FindFirstChild("Right Arm") or myChar:FindFirstChild("RightHand")
+                if rightArm and rightArm:IsA("BasePart") then
+                    table.insert(cachedWeaponParts, rightArm)
+                end
+                for _, part in ipairs(myChar:GetDescendants()) do
+                    if part:IsA("BasePart") and part ~= rightArm then
+                        local pLower = part.Name:lower()
+                        if pLower:find("weapon") or pLower:find("blade") or pLower:find("knife") or pLower:find("machete") or pLower:find("axe") or pLower:find("cleaver") then
+                            table.insert(cachedWeaponParts, part)
                         end
                     end
                 end
             end
-        end
-    end)
-
-    -- 5. Physical Weapon & Arm Hitbox Collision Simulation (firetouchinterest)
-    if typeof(firetouchinterest) == "function" and sHrp then
-        pcall(function()
-            local rightArm = myChar:FindFirstChild("Right Arm") or myChar:FindFirstChild("RightHand")
-            for _, part in ipairs(myChar:GetDescendants()) do
-                if part:IsA("BasePart") and (part.Name:lower():find("weapon") or part.Name:lower():find("blade") or part.Name:lower():find("knife") or part.Name:lower():find("machete") or part.Name:lower():find("axe") or part.Name:lower():find("cleaver") or part == rightArm) then
+            for _, part in ipairs(cachedWeaponParts) do
+                if part and part.Parent then
                     firetouchinterest(part, sHrp, 0)
                     firetouchinterest(part, sHrp, 1)
                 end
-            end
-            if rightArm then
-                firetouchinterest(rightArm, sHrp, 0)
-                firetouchinterest(rightArm, sHrp, 1)
             end
         end)
     end
@@ -5737,23 +5726,54 @@ local function executeKillerHit(targetChar)
         end
     end
 
-    -- 7. PC/Mobile Screen Center Click/Tap (Triggers viewport melee raycast in game)
-    pcall(function()
-        local cam = workspace.CurrentCamera
-        local vp = cam and cam.ViewportSize or Vector2.new(800, 600)
-        local cx = vp.X / 2
-        local cy = vp.Y / 2
-        if VirtualInputManager then
-            if typeof(VirtualInputManager.SendMouseButtonEvent) == "function" then
-                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
-                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+    -- 4 & 7. Mobile Attack GUI Button + Center Tap (throttled to 0.12s to prevent Android touch queue lockup)
+    if (tick() - lastGuiInputHitTime) >= 0.12 then
+        lastGuiInputHitTime = tick()
+        pcall(function()
+            local pg = player:FindFirstChild("PlayerGui")
+            if pg then
+                for _, guiName in ipairs({"Slasher-mob", "Slasher", "Slasher-con", "Killer-mob", "KillerGui", "MobileGui"}) do
+                    local g = pg:FindFirstChild(guiName)
+                    if g then
+                        for _, btn in ipairs(g:GetDescendants()) do
+                            if btn:IsA("GuiButton") and (btn.Name:lower() == "attack" or btn.Name:lower():find("slash") or btn.Name:lower():find("punch") or btn.Name:lower():find("hit")) then
+                                if typeof(firesignal) == "function" then
+                                    pcall(firesignal, btn.MouseButton1Down)
+                                    pcall(firesignal, btn.Activated)
+                                    pcall(firesignal, btn.MouseButton1Up)
+                                    pcall(firesignal, btn.MouseButton1Click)
+                                end
+                                local bPos = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
+                                pcall(function()
+                                    if VirtualInputManager and typeof(VirtualInputManager.SendTouchEvent) == "function" then
+                                        VirtualInputManager:SendTouchEvent(3, 0, bPos.X, bPos.Y)
+                                        VirtualInputManager:SendTouchEvent(3, 2, bPos.X, bPos.Y)
+                                    end
+                                end)
+                            end
+                        end
+                    end
+                end
             end
-            if typeof(VirtualInputManager.SendTouchEvent) == "function" then
-                VirtualInputManager:SendTouchEvent(3, 0, cx, cy)
-                VirtualInputManager:SendTouchEvent(3, 2, cx, cy)
+        end)
+
+        pcall(function()
+            local cam = workspace.CurrentCamera
+            local vp = cam and cam.ViewportSize or Vector2.new(800, 600)
+            local cx = vp.X / 2
+            local cy = vp.Y / 2
+            if VirtualInputManager then
+                if typeof(VirtualInputManager.SendMouseButtonEvent) == "function" then
+                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                end
+                if typeof(VirtualInputManager.SendTouchEvent) == "function" then
+                    VirtualInputManager:SendTouchEvent(3, 0, cx, cy)
+                    VirtualInputManager:SendTouchEvent(3, 2, cx, cy)
+                end
             end
-        end
-    end)
+        end)
+    end
 end
 
 -- Continuous frame-locked Auto Aim for Killer (Works whether Auto Catch is ON or OFF)
@@ -5827,7 +5847,7 @@ task.spawn(function()
 
                         -- Auto Hit trigger when within hit reach distance (slider: 6 - 20 studs, default 10)
                         if autoHitSurvivorEnabled and dist <= hitReachDistance then
-                            if (tick() - lastKillerHitTime) >= 0.35 then
+                            if (tick() - lastKillerHitTime) >= 0.08 then
                                 lastKillerHitTime = tick()
                                 executeKillerHit(targetSurvivor)
                             end
@@ -5838,7 +5858,7 @@ task.spawn(function()
                 end
             end
         end)
-        task.wait(0.03)
+        task.wait(0.001)
     end
 end)
 
@@ -5870,7 +5890,7 @@ local function travelToTargetLocation(targetPos, stopReach, activeCheck)
             myHrp.CFrame = targetCF
             myHrp.AssemblyLinearVelocity = Vector3.zero
             myHrp.AssemblyAngularVelocity = Vector3.zero
-            task.wait(0.04)
+            task.wait(0.001)
             if (myHrp.Position - targetPos).Magnitude <= (reach + 1.5) then
                 break
             end
@@ -5996,7 +6016,7 @@ local function travelToSurvivor(targetChar)
         myHrp.CFrame = behindCF
         myHrp.AssemblyLinearVelocity = Vector3.zero
         myHrp.AssemblyAngularVelocity = Vector3.zero
-        task.wait(0.03)
+        task.wait(0.001)
         return (myHrp.Position - targetPos).Magnitude <= 3.8
 
     -- 2. SAFE TELEPORT (WAYPOINTS CLOSING IN TO 2.8 STUDS)
@@ -6479,7 +6499,7 @@ V_KillerSection:Button({
             myHrp.CFrame = behindCF
             myHrp.AssemblyLinearVelocity = Vector3.zero
             myHrp.AssemblyAngularVelocity = Vector3.zero
-            task.wait(0.02)
+            task.wait(0.001)
         end
 
         currentKillerTarget = tChar
@@ -6586,7 +6606,7 @@ V_KillerSection:Toggle({
                 local ok, err = pcall(function()
                     local myChar = player.Character
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-                    if not myHrp then task.wait(0.3) return end
+                    if not myHrp then task.wait(0.1) return end
 
                     -- ====================================================
                     -- PRIORITY 1: KNOCK DOWN ALL SURVIVORS FIRST
@@ -6607,7 +6627,7 @@ V_KillerSection:Toggle({
                                 if remotes.Carry and remotes.Carry:FindFirstChild("HookEvent") then
                                     pcall(function() remotes.Carry.HookEvent:FireServer(hookPart, reqId, myChar) end)
                                 end
-                                task.wait(0.08)
+                                task.wait(0.05)
                                 if remotes.Carry and remotes.Carry:FindFirstChild("HookCommit") then
                                     pcall(function() remotes.Carry.HookCommit:FireServer(hookPart, reqId, myChar) end)
                                 end
@@ -6617,7 +6637,7 @@ V_KillerSection:Toggle({
                                 if remotes.Carry and remotes.Carry:FindFirstChild("DropSurvivorEvent") then
                                     pcall(function() remotes.Carry.DropSurvivorEvent:FireServer() end)
                                 end
-                                task.wait(0.05)
+                                task.wait(0.01)
                             end
                         end
 
@@ -6648,24 +6668,29 @@ V_KillerSection:Toggle({
                             currentKillerTarget = lockedCatchSurvivor
                             local sHrp = lockedCatchSurvivor.HumanoidRootPart
 
-                            -- Spam teleport directly behind survivor (1.8 studs behind, facing back)
+                            -- Ultra-fast 0.001s instant teleport directly behind survivor (1.8 studs behind, facing back)
                             local behindPos = sHrp.Position - (sHrp.CFrame.LookVector * 1.8) + Vector3.new(0, 0.2, 0)
                             local behindCF = CFrame.lookAt(behindPos, sHrp.Position)
-                            for attempt = 1, 2 do
+                            myHrp.CFrame = behindCF
+                            myHrp.AssemblyLinearVelocity = Vector3.zero
+                            myHrp.AssemblyAngularVelocity = Vector3.zero
+                            task.wait(0.001)
+                            if sHrp and sHrp.Parent then
+                                local refreshBehindPos = sHrp.Position - (sHrp.CFrame.LookVector * 1.8) + Vector3.new(0, 0.2, 0)
+                                behindCF = CFrame.lookAt(refreshBehindPos, sHrp.Position)
                                 myHrp.CFrame = behindCF
                                 myHrp.AssemblyLinearVelocity = Vector3.zero
                                 myHrp.AssemblyAngularVelocity = Vector3.zero
-                                task.wait(0.015)
                             end
 
                             -- Lock camera at survivor
                             local cam = workspace.CurrentCamera
-                            if cam then
+                            if cam and sHrp and sHrp.Parent then
                                 cam.CFrame = CFrame.lookAt(cam.CFrame.Position, sHrp.Position + Vector3.new(0, 1.2, 0))
                             end
 
-                            -- Execute attack
-                            if (tick() - lastKillerHitTime) >= 0.20 then
+                            -- Execute attack at ultra-fast 0.001s cycle
+                            if (tick() - lastKillerHitTime) >= 0.001 then
                                 executeKillerHit(lockedCatchSurvivor)
                                 lastKillerHitTime = tick()
                             end
@@ -6692,11 +6717,11 @@ V_KillerSection:Toggle({
                             end
 
                             local standCF = getHookStandCFrame(hookPart)
-                            for attempt = 1, 3 do
+                            for attempt = 1, 2 do
                                 myHrp.CFrame = standCF
                                 myHrp.AssemblyLinearVelocity = Vector3.zero
                                 myHrp.AssemblyAngularVelocity = Vector3.zero
-                                task.wait(0.015)
+                                task.wait(0.001)
                             end
 
                             local reqId = HttpService:GenerateGUID(false)
@@ -6718,7 +6743,7 @@ V_KillerSection:Toggle({
                             end
 
                             -- 3. Delay matching native game interaction cycle before HookCommit
-                            task.wait(0.08)
+                            task.wait(0.05)
 
                             -- 4. Fire HookCommit (Client -> Server confirmation)
                             if remotes.Carry and remotes.Carry:FindFirstChild("HookCommit") then
@@ -6726,13 +6751,13 @@ V_KillerSection:Toggle({
                             end
 
                             -- Status verification: wait and check if target survivor is successfully hooked
-                            local hookWaitTimeout = tick() + 0.6
+                            local hookWaitTimeout = tick() + 0.45
                             while tick() < hookWaitTimeout and isKillerCarrying(myChar) and checkCatchActive() do
                                 -- Interruption check: did any survivor revive while hooking?
                                 if findNearestSurvivor() ~= nil then
                                     break
                                 end
-                                task.wait(0.06)
+                                task.wait(0.01)
                                 if isKillerCarrying(myChar) and remotes.Carry and remotes.Carry:FindFirstChild("HookCommit") then
                                     pcall(function() remotes.Carry.HookCommit:FireServer(hookPart, reqId, myChar) end)
                                 end
@@ -6788,7 +6813,7 @@ V_KillerSection:Toggle({
                             myHrp.CFrame = targetCF
                             myHrp.AssemblyLinearVelocity = Vector3.zero
                             myHrp.AssemblyAngularVelocity = Vector3.zero
-                            task.wait(0.015)
+                            task.wait(0.001)
                         end
 
                         -- Lock camera at the downed body
@@ -6810,14 +6835,14 @@ V_KillerSection:Toggle({
                             end
                         end
 
-                        -- Status verification: wait and check if target survivor is already picked up
-                        local pickupWaitTimeout = tick() + 0.35
+                        -- Status verification: 0.001s polling check if target survivor is picked up
+                        local pickupWaitTimeout = tick() + 0.25
                         while tick() < pickupWaitTimeout and not isKillerCarrying(myChar) and checkCatchActive() do
                             -- Interruption check: did any survivor revive while picking up?
                             if findNearestSurvivor() ~= nil then
                                 break
                             end
-                            task.wait(0.04)
+                            task.wait(0.001)
                         end
 
                         local isPickedUp = isKillerCarrying(myChar)
@@ -6844,12 +6869,12 @@ V_KillerSection:Toggle({
                         lastNotificationPhase = "complete"
                         WindUI:Notify({ Title = "✅ All Survivors Secured", Content = "All survivors knocked down & hooked! Monitoring for revives...", Duration = 2.5 })
                     end
-                    task.wait(0.2)
+                    task.wait(0.05)
                 end)
                 if not ok then
-                    task.wait(0.1)
+                    task.wait(0.01)
                 end
-                task.wait(0.03)
+                task.wait(0.001)
             end
             currentKillerTarget = nil
             lockedCatchSurvivor = nil
