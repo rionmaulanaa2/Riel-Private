@@ -1,10 +1,10 @@
 -- ============================================================
 -- RIEL PRIVATE: OFFICIALLY RESTORED WINDUI ARCHITECTURE (MONTH 10)
--- Version: 1.08
+-- Version: 1.09
 -- 100% Pure Lua 5.1 & Delta Executor Android Compatibility
 -- ============================================================
 
-local RIEL_VERSION = "1.08"
+local RIEL_VERSION = "1.09"
 
 print("==================================================")
 print("🛡️ [Riel Private v" .. RIEL_VERSION .. "] Initializing Script on Delta Executor...")
@@ -1881,8 +1881,10 @@ local startTravelNoClip = nil
 local stopTravelNoClip = nil
 local computeSmartWaypoints = nil
 local autoCatchEXEnabled = false
-local exFailPauseDuration = 3
+local exFailPauseDuration = 2
 local exFailPauseActive = false
+local exPostKnockWaitDuration = 3
+local exPostKnockPauseActive = false
 
 do
 ViolenceTab = Window:Tab({
@@ -7920,7 +7922,7 @@ updateKillerAim = function()
     local function performAim()
         pcall(function()
             if not autoAimSurvivorEnabled then return end
-            if autoCatchEXEnabled and exFailPauseActive then return end
+            if autoCatchEXEnabled and (exFailPauseActive or exPostKnockPauseActive) then return end
 
             local myChar = player.Character
             local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -8824,6 +8826,10 @@ local function runAutoCatchEXSession(thisSession)
         local trackedCatchChar = nil
         local botsIgnoredThisRound = false
         local lastBotCheckTime = 0
+        local exSawUprightThisWave = false
+        local exPostKnockPauseDone = false
+        local exPostKnockPauseStart = 0
+        local exPostKnockPauseUntil = 0
 
         -- EX Heartbeat Velocity-Intercept & Carry/Hook Tracking State
         local exHeartbeatConn = nil
@@ -8953,6 +8959,11 @@ local function runAutoCatchEXSession(thisSession)
             exFailPauseActive = false
             exFailPauseUntil = 0
             exTargetFailHits = 0
+            exPostKnockPauseActive = false
+            exPostKnockPauseStart = 0
+            exPostKnockPauseUntil = 0
+            exPostKnockPauseDone = false
+            exSawUprightThisWave = false
             if player.Character then
                 setKillerChaseCollision(player.Character, true)
             end
@@ -8998,8 +9009,8 @@ local function runAutoCatchEXSession(thisSession)
                 return
             end
 
-            -- 0. EX Failed-Hit Cooldown Pause: disable teleport & chase lock while waiting out cooldown
-            if exFailPauseActive then
+            -- 0. EX Cooldown Pauses: disable teleport & chase lock while waiting out fail or post-knockdown cooldown
+            if exFailPauseActive or exPostKnockPauseActive then
                 exGluedStartTime = 0
                 exLastSamplePos = nil
                 exMeasuredFrameVel = nil
@@ -9103,6 +9114,11 @@ local function runAutoCatchEXSession(thisSession)
                     lockedHookPart = nil
                     lockedHookCF = nil
                     currentCarryTarget = nil
+                    exSawUprightThisWave = false
+                    exPostKnockPauseDone = false
+                    exPostKnockPauseActive = false
+                    exPostKnockPauseStart = 0
+                    exPostKnockPauseUntil = 0
                 end
 
                 -- Check if 5+ targets are detected with at least one bot (if so, ignore all bots this round)
@@ -9152,6 +9168,11 @@ local function runAutoCatchEXSession(thisSession)
                 end
 
                 if lockedCatchSurvivor and lockedCatchSurvivor:FindFirstChild("HumanoidRootPart") then
+                    exSawUprightThisWave = true
+                    exPostKnockPauseDone = false
+                    exPostKnockPauseActive = false
+                    exPostKnockPauseStart = 0
+                    exPostKnockPauseUntil = 0
                     exHoldHookPart = nil
                     exHoldBodyChar = nil
 
@@ -9342,6 +9363,34 @@ local function runAutoCatchEXSession(thisSession)
                 exActiveTarget = nil
                 exGluedStartTime = 0
                 setKillerChaseCollision(myChar, true)
+
+                -- Post-All-Knockdown Stop (0 - 6s configurable via slider, default 3s) before picking up & hooking
+                if exSawUprightThisWave and not exPostKnockPauseDone then
+                    local liveDur = math.clamp(tonumber(exPostKnockWaitDuration) or 0, 0, 6)
+                    local hasTargetToHook = isKillerCarrying(myChar) or (findNearestDownedSurvivor(botsIgnoredThisRound) ~= nil)
+                    if liveDur > 0 and hasTargetToHook then
+                        local now = tick()
+                        if not exPostKnockPauseActive then
+                            exPostKnockPauseActive = true
+                            exPostKnockPauseStart = now
+                            exPostKnockPauseUntil = now + liveDur
+                            WindUI:Notify({
+                                Title = "⏸️ All Survivors Knocked",
+                                Content = string.format("Stopping %.1fs before picking up & hooking survivors...", liveDur),
+                                Duration = math.clamp(liveDur, 1.2, 3.0)
+                            })
+                        end
+                        local effectiveUntil = math.min(exPostKnockPauseUntil, exPostKnockPauseStart + liveDur)
+                        if now < effectiveUntil then
+                            task.wait(0.01)
+                            return
+                        end
+                    end
+                    exPostKnockPauseActive = false
+                    exPostKnockPauseDone = true
+                    exPostKnockPauseStart = 0
+                    exPostKnockPauseUntil = 0
+                end
 
                 -- ----------------------------------------------------
                 -- STEP A: IF CARRYING SURVIVOR -> TRANSPORT TO LOCKED HOOK & HANG
@@ -9581,6 +9630,11 @@ local function runAutoCatchEXSession(thisSession)
                 lockedHookPart = nil
                 lockedHookCF = nil
                 currentCarryTarget = nil
+                exSawUprightThisWave = false
+                exPostKnockPauseDone = false
+                exPostKnockPauseActive = false
+                exPostKnockPauseStart = 0
+                exPostKnockPauseUntil = 0
                 if lastNotificationPhase ~= "complete" then
                     lastNotificationPhase = "complete"
                     WindUI:Notify({ Title = "✅ All Survivors Secured", Content = "All survivors knocked down & hooked! Monitoring for revives...", Duration = 2.5 })
@@ -9615,6 +9669,7 @@ V_KillerSection:Toggle({
         if v then
             autoCatchEXEnabled = false
             exFailPauseActive = false
+            exPostKnockPauseActive = false
         end
         catchSession = catchSession + 1
         local thisSession = catchSession
@@ -9975,6 +10030,7 @@ V_KillerSection:Toggle({
     Callback = function(v)
         autoCatchEXEnabled = v
         exFailPauseActive = false
+        exPostKnockPauseActive = false
         if v then
             autoCatchEnabled = false
         end
@@ -9983,6 +10039,7 @@ V_KillerSection:Toggle({
 
         if not v then
             exFailPauseActive = false
+            exPostKnockPauseActive = false
             if not autoCatchEnabled then
                 currentKillerTarget = nil
                 catchBotsIgnoredActive = false
@@ -10009,15 +10066,29 @@ V_KillerSection:Toggle({
 
 V_KillerSection:Slider({
     Title = "EX Fail Hit Cooldown (s)",
-    Description = "Pause teleport & auto hit (seconds) after 3 hits fail to knock current target (0 - 3s)",
+    Description = "Pause teleport & auto hit (seconds) after 3 hits fail to knock current target (0 - 3s, default 2s)",
     Step = 0.1,
     Value = {
         Min = 0,
         Max = 3,
+        Default = 2,
+    },
+    Callback = function(val)
+        exFailPauseDuration = math.clamp(tonumber(val) or 2, 0, 3)
+    end
+})
+
+V_KillerSection:Slider({
+    Title = "EX Post-Knockdown Delay (s)",
+    Description = "Stop after knocking down all survivors before picking up & hooking (0 - 6s, default 3s)",
+    Step = 0.1,
+    Value = {
+        Min = 0,
+        Max = 6,
         Default = 3,
     },
     Callback = function(val)
-        exFailPauseDuration = math.clamp(tonumber(val) or 3, 0, 3)
+        exPostKnockWaitDuration = math.clamp(tonumber(val) or 3, 0, 6)
     end
 })
 
