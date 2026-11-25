@@ -1,10 +1,10 @@
 -- ============================================================
 -- RIEL PRIVATE: OFFICIALLY RESTORED WINDUI ARCHITECTURE (MONTH 10)
--- Version: 1.04
+-- Version: 1.05
 -- 100% Pure Lua 5.1 & Delta Executor Android Compatibility
 -- ============================================================
 
-local RIEL_VERSION = "1.04"
+local RIEL_VERSION = "1.05"
 
 print("==================================================")
 print("🛡️ [Riel Private v" .. RIEL_VERSION .. "] Initializing Script on Delta Executor...")
@@ -7565,8 +7565,76 @@ local function setKillerChaseCollision(myChar, enabled)
     end)
 end
 
--- Calculates velocity-predicted intercept CFrame so moving targets run directly into the Killer's strike zone
-local function computeInterceptCFrame(sHrp, frameVel)
+-- Cached unobstructed stand offset for stationary survivors (eliminates wall/generator occlusion misses)
+local cachedClearTarget = nil
+local cachedClearPos = nil
+local cachedClearAngleIdx = -1
+local cachedClearOffset = nil
+
+local function getClearStationaryOffset(myChar, targetChar, sHrp, angleIdx)
+    local idx = tonumber(angleIdx) or 0
+    if cachedClearTarget == targetChar
+        and cachedClearAngleIdx == idx
+        and cachedClearPos
+        and (sHrp.Position - cachedClearPos).Magnitude <= 0.35
+        and cachedClearOffset then
+        return cachedClearOffset
+    end
+
+    local back = -Vector3.new(sHrp.CFrame.LookVector.X, 0, sHrp.CFrame.LookVector.Z)
+    if back.Magnitude < 0.1 then back = Vector3.new(0, 0, -1) else back = back.Unit end
+    local right = Vector3.new(-back.Z, 0, back.X)
+
+    local dirs = {
+        back,
+        right,
+        -right,
+        -back,
+        (back + right).Unit,
+        (back - right).Unit,
+        (-back + right).Unit,
+        (-back - right).Unit
+    }
+
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    rayParams.RespectCanCollide = true
+    local filterList = {}
+    if targetChar then table.insert(filterList, targetChar) end
+    if myChar then table.insert(filterList, myChar) end
+    rayParams.FilterDescendantsInstances = filterList
+
+    -- Rotate radius slightly closer on retries to break stubborn prop occlusion
+    local radius = (idx >= 4) and 0.72 or ((idx >= 1) and 0.90 or 1.05)
+    local chosenOffset = dirs[1] * radius
+
+    for step = 0, #dirs - 1 do
+        local d = dirs[((idx + step) % #dirs) + 1]
+        local obsHit = workspace:Raycast(sHrp.Position, d * (radius + 0.55), rayParams)
+        if not obsHit then
+            local candPos = sHrp.Position + (d * radius)
+            local floorHit = workspace:Raycast(candPos + Vector3.new(0, 0.5, 0), Vector3.new(0, -10, 0), rayParams)
+            if floorHit then
+                chosenOffset = d * radius
+                break
+            end
+        end
+    end
+
+    -- Fallback: ultra-close 0.55 stud overlap if boxed tightly in a corner
+    if idx > 0 and workspace:Raycast(sHrp.Position, chosenOffset.Unit * (chosenOffset.Magnitude + 0.3), rayParams) then
+        chosenOffset = dirs[(idx % #dirs) + 1] * 0.55
+    end
+
+    cachedClearTarget = targetChar
+    cachedClearPos = sHrp.Position
+    cachedClearAngleIdx = idx
+    cachedClearOffset = chosenOffset
+    return chosenOffset
+end
+
+-- Calculates velocity-predicted intercept CFrame (moving) or obstacle-clear sweet-spot CFrame (stationary)
+local function computeInterceptCFrame(sHrp, frameVel, targetChar, stationaryAngleIdx)
     local rawVel = sHrp.AssemblyLinearVelocity
     local horizRaw = Vector3.new(rawVel.X, 0, rawVel.Z)
     local horizVel = horizRaw
@@ -7583,10 +7651,11 @@ local function computeInterceptCFrame(sHrp, frameVel)
         local leadDist = math.clamp(speed * 0.11, 0.9, 2.6)
         interceptPos = sHrp.Position + (moveDir * leadDist) + Vector3.new(0, 0.1, 0)
     else
-        interceptPos = sHrp.Position - (sHrp.CFrame.LookVector * 1.35) + Vector3.new(0, 0.1, 0)
+        local offset = getClearStationaryOffset(player.Character, targetChar, sHrp, stationaryAngleIdx or 0)
+        interceptPos = sHrp.Position + offset + Vector3.new(0, 0.05, 0)
     end
     local lookTarget = Vector3.new(sHrp.Position.X, interceptPos.Y, sHrp.Position.Z)
-    return CFrame.lookAt(interceptPos, lookTarget)
+    return CFrame.lookAt(interceptPos, lookTarget), speed
 end
 
 -- Comprehensive Auto Hit execution across Android executors and PC (Shared core for Standard & EX)
@@ -7617,7 +7686,7 @@ local function refreshCachedWeaponParts(myChar)
     end
 end
 
-local function executeKillerHitCore(targetChar, useIntercept, fireSwingRemotes, frameVel)
+local function executeKillerHitCore(targetChar, useIntercept, fireSwingRemotes, frameVel, stationaryAngleIdx, includeLunge)
     local myChar = player.Character
     if not myChar then return end
 
@@ -7627,7 +7696,8 @@ local function executeKillerHitCore(targetChar, useIntercept, fireSwingRemotes, 
     local sHrp = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
     if sHrp then
         if useIntercept then
-            myHrp.CFrame = computeInterceptCFrame(sHrp, frameVel)
+            local targetCF = computeInterceptCFrame(sHrp, frameVel, targetChar, stationaryAngleIdx)
+            myHrp.CFrame = targetCF
             myHrp.AssemblyLinearVelocity = Vector3.zero
             myHrp.AssemblyAngularVelocity = Vector3.zero
         else
@@ -7651,20 +7721,26 @@ local function executeKillerHitCore(targetChar, useIntercept, fireSwingRemotes, 
         if remotes.Attacks:FindFirstChild("BasicAttack") then
             pcall(function() remotes.Attacks.BasicAttack:FireServer() end)
         end
-        if remotes.Attacks:FindFirstChild("Lunge") then
+        if includeLunge ~= false and remotes.Attacks:FindFirstChild("Lunge") then
             pcall(function() remotes.Attacks.Lunge:FireServer() end)
         end
     end
 
-    -- Multi-limb target parts (HumanoidRootPart + Torso) for LungeDetect & firetouchinterest
+    -- Multi-limb target parts (HumanoidRootPart + Torso + Head) for LungeDetect & firetouchinterest
     local hitParts = {}
     if sHrp then table.insert(hitParts, sHrp) end
     local torsoPart = targetChar and (targetChar:FindFirstChild("UpperTorso") or targetChar:FindFirstChild("Torso"))
     if torsoPart and torsoPart:IsA("BasePart") then
         table.insert(hitParts, torsoPart)
     end
+    if useIntercept then
+        local headPart = targetChar and targetChar:FindFirstChild("Head")
+        if headPart and headPart:IsA("BasePart") then
+            table.insert(hitParts, headPart)
+        end
+    end
 
-    -- Official LungeDetect blade collision report (essential for hitting moving targets in EX mode)
+    -- Official LungeDetect blade collision report (essential for hitting moving & crouched/stationary targets in EX mode)
     if useIntercept and #hitParts > 0 and remotes.Attacks and remotes.Attacks:FindFirstChild("LungeDetect") then
         for _, hp in ipairs(hitParts) do
             pcall(function() remotes.Attacks.LungeDetect:FireServer(hp, hp.Position) end)
@@ -7747,11 +7823,11 @@ local function executeKillerHitCore(targetChar, useIntercept, fireSwingRemotes, 
 end
 
 local function executeKillerHit(targetChar)
-    executeKillerHitCore(targetChar, false, true, nil)
+    executeKillerHitCore(targetChar, false, true, nil, 0, true)
 end
 
-local function executeKillerHitEX(targetChar, fireSwingRemotes, frameVel)
-    executeKillerHitCore(targetChar, true, fireSwingRemotes, frameVel)
+local function executeKillerHitEX(targetChar, fireSwingRemotes, frameVel, stationaryAngleIdx, includeLunge)
+    executeKillerHitCore(targetChar, true, fireSwingRemotes, frameVel, stationaryAngleIdx, includeLunge)
 end
 
 -- Continuous frame-locked Auto Aim for Killer (Works whether Auto Catch is ON or OFF)
@@ -7795,7 +7871,8 @@ updateKillerAim = function()
             local cam = workspace.CurrentCamera
             if not cam then return end
 
-            local aimPos = sHrp.Position + Vector3.new(0, 1.2, 0)
+            local aimYOffset = autoCatchEXEnabled and 0.25 or 1.2
+            local aimPos = sHrp.Position + Vector3.new(0, aimYOffset, 0)
 
             -- Lock Camera directly at Survivor
             cam.CFrame = CFrame.lookAt(cam.CFrame.Position, aimPos)
@@ -8641,6 +8718,9 @@ local function runAutoCatchSession(isEXMode, thisSession)
         local exLastSamplePos = nil
         local exLastSampleTime = 0
         local exMeasuredFrameVel = nil
+        local exStationaryAngleIdx = 0
+        local exTargetLockHP = nil
+        local exLastDamageTime = 0
 
         local function stopExHeartbeat()
             if exHeartbeatConn then
@@ -8653,6 +8733,8 @@ local function runAutoCatchSession(isEXMode, thisSession)
             exGluedStartTime = 0
             exLastSamplePos = nil
             exMeasuredFrameVel = nil
+            exStationaryAngleIdx = 0
+            exTargetLockHP = nil
             if player.Character then
                 setKillerChaseCollision(player.Character, true)
             end
@@ -8729,13 +8811,13 @@ local function runAutoCatchSession(isEXMode, thisSession)
 
                 unlockKillerMotion(myChar, myHrp)
                 setKillerChaseCollision(myChar, false)
-                myHrp.CFrame = computeInterceptCFrame(sHrp, exMeasuredFrameVel)
+                myHrp.CFrame = computeInterceptCFrame(sHrp, exMeasuredFrameVel, target, exStationaryAngleIdx)
                 myHrp.AssemblyLinearVelocity = Vector3.zero
                 myHrp.AssemblyAngularVelocity = Vector3.zero
 
                 local cam = workspace.CurrentCamera
                 if cam then
-                    cam.CFrame = CFrame.lookAt(cam.CFrame.Position, sHrp.Position + Vector3.new(0, 1.2, 0))
+                    cam.CFrame = CFrame.lookAt(cam.CFrame.Position, sHrp.Position + Vector3.new(0, 0.25, 0))
                 end
 
                 local dist = (myHrp.Position - sHrp.Position).Magnitude
@@ -8844,6 +8926,10 @@ local function runAutoCatchSession(isEXMode, thisSession)
                         exGluedStartTime = 0
                         exLastSamplePos = nil
                         exMeasuredFrameVel = nil
+                        exStationaryAngleIdx = 0
+                        local sHumInit = lockedCatchSurvivor and lockedCatchSurvivor:FindFirstChildOfClass("Humanoid")
+                        exTargetLockHP = sHumInit and sHumInit.Health or 100
+                        exLastDamageTime = tick()
                     end
 
                     if lockedCatchSurvivor and lockedCatchSurvivor:FindFirstChild("HumanoidRootPart") then
@@ -8860,15 +8946,26 @@ local function runAutoCatchSession(isEXMode, thisSession)
                         local sHrp = lockedCatchSurvivor.HumanoidRootPart
 
                         if isEXMode then
-                            -- EX Mode: Real-position verify + 0.0001s retry + Heartbeat intercept lock
+                            -- Track damage progress on stationary targets & auto-rotate clear stand angle if blocked
+                            local sHum = lockedCatchSurvivor:FindFirstChildOfClass("Humanoid")
+                            local curHP = sHum and sHum.Health or 100
+                            if exTargetLockHP == nil or curHP < exTargetLockHP then
+                                exTargetLockHP = curHP
+                                exLastDamageTime = tick()
+                                exStationaryAngleIdx = 0
+                            end
+
+                            -- EX Mode: Real-position verify + 0.0001s retry + Heartbeat intercept/stationary lock
                             exActiveTarget = lockedCatchSurvivor
                             setKillerChaseCollision(myChar, false)
-                            local targetCF = computeInterceptCFrame(sHrp, exMeasuredFrameVel)
+                            local targetCF, targetSpeed = computeInterceptCFrame(sHrp, exMeasuredFrameVel, lockedCatchSurvivor, exStationaryAngleIdx)
+                            local isStationary = (targetSpeed or 0) <= 1.5
                             local realDist = (myHrp.Position - targetCF.Position).Magnitude
                             if realDist > 3.5 or myHrp.Anchored then
                                 teleportVerifyEX(myChar, myHrp, function()
                                     if sHrp and sHrp.Parent then
-                                        return computeInterceptCFrame(sHrp, exMeasuredFrameVel)
+                                        local cf = computeInterceptCFrame(sHrp, exMeasuredFrameVel, lockedCatchSurvivor, exStationaryAngleIdx)
+                                        return cf
                                     end
                                     return nil
                                 end, 3.5, 10)
@@ -8878,17 +8975,29 @@ local function runAutoCatchSession(isEXMode, thisSession)
                                 myHrp.AssemblyAngularVelocity = Vector3.zero
                             end
 
-                            -- Wait >= 45ms of real-position overlap replication before firing swing remotes
-                            if exGluedStartTime > 0 and (tick() - exGluedStartTime) >= 0.045 then
+                            -- Rotate angle & step closer if stationary target took no damage after 0.28s
+                            if isStationary and exGluedStartTime > 0 and (tick() - exGluedStartTime) >= 0.065 and (tick() - exLastDamageTime) >= 0.28 then
+                                exStationaryAngleIdx = (exStationaryAngleIdx + 1) % 8
+                                exLastDamageTime = tick()
+                                local rotCF = computeInterceptCFrame(sHrp, exMeasuredFrameVel, lockedCatchSurvivor, exStationaryAngleIdx)
+                                myHrp.CFrame = rotCF
+                                myHrp.AssemblyLinearVelocity = Vector3.zero
+                                myHrp.AssemblyAngularVelocity = Vector3.zero
+                            end
+
+                            -- Wait >= 60ms of real-position replication before swinging so stationary hits don't misfire into miss lock
+                            local settleThreshold = isStationary and 0.06 or 0.045
+                            if exGluedStartTime > 0 and (tick() - exGluedStartTime) >= settleThreshold then
                                 if not isKillerStunnedOrLocked(myChar) then
+                                    local includeLunge = (not isStationary) or (exStationaryAngleIdx % 2 == 1)
                                     if (tick() - lastKillerHitTime) >= 0.12 then
-                                        executeKillerHitEX(lockedCatchSurvivor, true, exMeasuredFrameVel)
+                                        executeKillerHitEX(lockedCatchSurvivor, true, exMeasuredFrameVel, exStationaryAngleIdx, includeLunge)
                                         lastKillerHitTime = tick()
                                         exLastSwingStartTime = tick()
                                     elseif (tick() - exLastSwingStartTime) <= 0.12
                                         or myChar:GetAttribute("isAttacking") == true
                                         or myChar:GetAttribute("isLunging") == true then
-                                        executeKillerHitEX(lockedCatchSurvivor, false, exMeasuredFrameVel)
+                                        executeKillerHitEX(lockedCatchSurvivor, false, exMeasuredFrameVel, exStationaryAngleIdx, includeLunge)
                                     end
                                 end
                             end
