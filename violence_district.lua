@@ -34,6 +34,8 @@ local startTravelNoClip = nil
 local stopTravelNoClip = nil
 local computeSmartWaypoints = nil
 local autoCatchEXEnabled = false
+local exFailPauseDuration = 3
+local exFailPauseActive = false
 
 do
 ViolenceTab = Window:Tab({
@@ -6071,6 +6073,7 @@ updateKillerAim = function()
     local function performAim()
         pcall(function()
             if not autoAimSurvivorEnabled then return end
+            if autoCatchEXEnabled and exFailPauseActive then return end
 
             local myChar = player.Character
             local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -6977,6 +6980,8 @@ local function runAutoCatchEXSession(thisSession)
 
         -- EX Heartbeat Velocity-Intercept & Carry/Hook Tracking State
         local exHeartbeatConn = nil
+        local exAfterAttackConn = nil
+        local exAttackLockConn = nil
         local exActiveTarget = nil
         local exHoldHookPart = nil
         local exHoldHookCF = nil
@@ -6990,10 +6995,104 @@ local function runAutoCatchEXSession(thisSession)
         local exTargetLockHP = nil
         local exLastDamageTime = 0
 
+        -- EX 3-Failed-Hit Pause & Same-Target Retry State
+        local exTargetFailHits = 0
+        local exFailPauseUntil = 0
+        local exFailPauseStart = 0
+        local exLastCountedHitTime = 0
+        local exAfterAttackCooldownUntil = 0
+        local exServerAttackLock = false
+        local exServerAttackLockUntil = 0
+        local exPendingFallbackSwingAt = 0
+        local exPrevIsAttacking = false
+        local exCurSwingCounted = false
+        local exSwingEndedAt = 0
+
+        local function resetExTargetHitTracking(targetModel)
+            exTargetFailHits = 0
+            exFailPauseActive = false
+            exFailPauseUntil = 0
+            exFailPauseStart = 0
+            exLastCountedHitTime = 0
+            exAfterAttackCooldownUntil = 0
+            exPendingFallbackSwingAt = 0
+            exPrevIsAttacking = false
+            exCurSwingCounted = false
+            exSwingEndedAt = 0
+            local sHumInit = targetModel and targetModel:FindFirstChildOfClass("Humanoid")
+            exTargetLockHP = sHumInit and sHumInit.Health or 100
+            exLastDamageTime = tick()
+        end
+
+        local function triggerExFailPause()
+            if exFailPauseActive then return end
+            if not lockedCatchSurvivor or isEXTargetOutOfPlay(lockedCatchSurvivor) or isEXTargetTrulyKnocked(lockedCatchSurvivor) then
+                return
+            end
+            local dur = math.clamp(tonumber(exFailPauseDuration) or 0, 0, 3)
+            if dur <= 0 then
+                exTargetFailHits = 0
+                exPendingFallbackSwingAt = 0
+                return
+            end
+            exFailPauseActive = true
+            exFailPauseStart = tick()
+            exFailPauseUntil = exFailPauseStart + dur
+            exActiveTarget = nil
+            exGluedStartTime = 0
+            exLastSamplePos = nil
+            exMeasuredFrameVel = nil
+            exPendingFallbackSwingAt = 0
+            exCurSwingCounted = false
+            exSwingEndedAt = 0
+            exTargetFailHits = 0
+            if player.Character then
+                setKillerChaseCollision(player.Character, true)
+            end
+            WindUI:Notify({
+                Title = "⏸️ EX Cooldown Pause",
+                Content = string.format("3 hits failed to knock target — pausing teleport & hit for %.1fs (same target locked).", dur),
+                Duration = math.clamp(dur, 1.2, 2.5)
+            })
+        end
+
+        local function registerExHitAttempt(dedupGap, cooldownExt)
+            if not checkCatchActive() or exFailPauseActive then return end
+            if not lockedCatchSurvivor or isEXTargetOutOfPlay(lockedCatchSurvivor) or isEXTargetTrulyKnocked(lockedCatchSurvivor) then
+                return
+            end
+            local now = tick()
+            if exCurSwingCounted and (now - exLastCountedHitTime) < (dedupGap or 0.90) then
+                if cooldownExt and cooldownExt > 0 then
+                    exAfterAttackCooldownUntil = math.max(exAfterAttackCooldownUntil, now + cooldownExt)
+                end
+                return
+            end
+            exCurSwingCounted = true
+            exSwingEndedAt = 0
+            exLastCountedHitTime = now
+            exPendingFallbackSwingAt = 0
+            if cooldownExt and cooldownExt > 0 then
+                exAfterAttackCooldownUntil = math.max(exAfterAttackCooldownUntil, now + cooldownExt)
+            end
+            exTargetFailHits = exTargetFailHits + 1
+            if exTargetFailHits >= 3 then
+                triggerExFailPause()
+            end
+        end
+
         local function stopExHeartbeat()
             if exHeartbeatConn then
                 pcall(function() exHeartbeatConn:Disconnect() end)
                 exHeartbeatConn = nil
+            end
+            if exAfterAttackConn then
+                pcall(function() exAfterAttackConn:Disconnect() end)
+                exAfterAttackConn = nil
+            end
+            if exAttackLockConn then
+                pcall(function() exAttackLockConn:Disconnect() end)
+                exAttackLockConn = nil
             end
             exActiveTarget = nil
             exHoldHookPart = nil
@@ -7004,10 +7103,41 @@ local function runAutoCatchEXSession(thisSession)
             exMeasuredFrameVel = nil
             exStationaryAngleIdx = 0
             exTargetLockHP = nil
+            exFailPauseActive = false
+            exFailPauseUntil = 0
+            exTargetFailHits = 0
             if player.Character then
                 setKillerChaseCollision(player.Character, true)
             end
         end
+
+        pcall(function()
+            local remotes = getVDRemotes()
+            if remotes and remotes.Attacks then
+                local afterAttackRemote = remotes.Attacks:FindFirstChild("AfterAttack")
+                if afterAttackRemote and afterAttackRemote:IsA("RemoteEvent") then
+                    exAfterAttackConn = afterAttackRemote.OnClientEvent:Connect(function(isHit)
+                        if not checkCatchActive() or exFailPauseActive then return end
+                        if not lockedCatchSurvivor or isEXTargetOutOfPlay(lockedCatchSurvivor) or isEXTargetTrulyKnocked(lockedCatchSurvivor) then
+                            return
+                        end
+                        if exGluedStartTime == 0 and (tick() - exLastSwingStartTime) > 1.5 then
+                            return
+                        end
+                        registerExHitAttempt(0.35, (isHit == true) and 2.5 or 1.3)
+                    end)
+                end
+                local attackLockRemote = remotes.Attacks:FindFirstChild("AttackLock")
+                if attackLockRemote and attackLockRemote:IsA("RemoteEvent") then
+                    exAttackLockConn = attackLockRemote.OnClientEvent:Connect(function(locked)
+                        if type(locked) == "boolean" then
+                            exServerAttackLock = locked
+                            exServerAttackLockUntil = locked and (tick() + 3.2) or 0
+                        end
+                    end)
+                end
+            end
+        end)
 
         exHeartbeatConn = RunService.Heartbeat:Connect(function()
             if not checkCatchActive() then
@@ -7018,6 +7148,15 @@ local function runAutoCatchEXSession(thisSession)
             local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
             if not myHrp then
                 exGluedStartTime = 0
+                return
+            end
+
+            -- 0. EX Failed-Hit Cooldown Pause: disable teleport & chase lock while waiting out cooldown
+            if exFailPauseActive then
+                exGluedStartTime = 0
+                exLastSamplePos = nil
+                exMeasuredFrameVel = nil
+                setKillerChaseCollision(myChar, true)
                 return
             end
 
@@ -7149,6 +7288,7 @@ local function runAutoCatchEXSession(thisSession)
                         or isEXTargetOutOfPlay(lockedCatchSurvivor)
                         or isEXTargetTrulyKnocked(lockedCatchSurvivor) then
                         lockedCatchSurvivor = nil
+                        resetExTargetHitTracking(nil)
                     end
                 end
 
@@ -7160,15 +7300,41 @@ local function runAutoCatchEXSession(thisSession)
                         exLastSamplePos = nil
                         exMeasuredFrameVel = nil
                         exStationaryAngleIdx = 0
-                        local sHumInit = lockedCatchSurvivor:FindFirstChildOfClass("Humanoid")
-                        exTargetLockHP = sHumInit and sHumInit.Health or 100
-                        exLastDamageTime = tick()
+                        resetExTargetHitTracking(lockedCatchSurvivor)
                     end
                 end
 
                 if lockedCatchSurvivor and lockedCatchSurvivor:FindFirstChild("HumanoidRootPart") then
                     exHoldHookPart = nil
                     exHoldBodyChar = nil
+
+                    -- If currently in 3-failed-hits cooldown pause: hold off instant teleport & auto-hit until pause finishes, keeping SAME locked target
+                    if exFailPauseActive then
+                        local now = tick()
+                        local liveDur = math.clamp(tonumber(exFailPauseDuration) or 0, 0, 3)
+                        local effectiveUntil = math.min(exFailPauseUntil, exFailPauseStart + liveDur)
+                        if liveDur <= 0 or now >= effectiveUntil then
+                            exFailPauseActive = false
+                            exFailPauseUntil = 0
+                            exFailPauseStart = 0
+                            exTargetFailHits = 0
+                            exPendingFallbackSwingAt = 0
+                            exCurSwingCounted = false
+                            exSwingEndedAt = 0
+                            exAfterAttackCooldownUntil = 0
+                            exServerAttackLock = false
+                            exGluedStartTime = 0
+                            exLastSamplePos = nil
+                            exMeasuredFrameVel = nil
+                            exLastDamageTime = tick()
+                        else
+                            exActiveTarget = nil
+                            exGluedStartTime = 0
+                            setKillerChaseCollision(myChar, true)
+                            task.wait(0.01)
+                            return
+                        end
+                    end
 
                     -- Revived / active survivor detected! Prioritize knocking down all survivors first.
                     if isKillerCarrying(myChar) then
@@ -7226,13 +7392,20 @@ local function runAutoCatchEXSession(thisSession)
                     currentKillerTarget = lockedCatchSurvivor
                     local sHrp = lockedCatchSurvivor.HumanoidRootPart
 
-                    -- Track damage progress on stationary targets & auto-rotate clear stand angle if occluded
+                    -- Track damage progress on stationary targets & count landed damage hits cleanly
                     local sHum = lockedCatchSurvivor:FindFirstChildOfClass("Humanoid")
                     local curHP = sHum and sHum.Health or 100
-                    if exTargetLockHP == nil or curHP < exTargetLockHP then
+                    if exTargetLockHP == nil then
+                        exTargetLockHP = curHP
+                        exLastDamageTime = tick()
+                    elseif curHP < exTargetLockHP then
                         exTargetLockHP = curHP
                         exLastDamageTime = tick()
                         exStationaryAngleIdx = 0
+                        registerExHitAttempt(0.40, 2.3)
+                        if exFailPauseActive then
+                            return
+                        end
                     end
 
                     -- EX Mode: Real-position verify + 0.0001s retry + Heartbeat intercept/stationary lock
@@ -7269,14 +7442,44 @@ local function runAutoCatchEXSession(thisSession)
                     local settleThreshold = isStationary and 0.06 or 0.045
                     if exGluedStartTime > 0 and (tick() - exGluedStartTime) >= settleThreshold then
                         if not isKillerStunnedOrLocked(myChar) then
+                            local now = tick()
+                            if exServerAttackLock and exServerAttackLockUntil > 0 and now > exServerAttackLockUntil then
+                                exServerAttackLock = false
+                            end
+
+                            local isAttackingNow = myChar:GetAttribute("isAttacking") == true or myChar:GetAttribute("isLunging") == true
+                            if isAttackingNow and not exPrevIsAttacking then
+                                exCurSwingCounted = false
+                                exSwingEndedAt = 0
+                            elseif not isAttackingNow and exPrevIsAttacking then
+                                if not exCurSwingCounted then
+                                    exSwingEndedAt = now
+                                end
+                            elseif not isAttackingNow and exSwingEndedAt > 0 and (now - exSwingEndedAt) >= 0.10 then
+                                registerExHitAttempt(0.45, 0.9)
+                                exSwingEndedAt = 0
+                                if exFailPauseActive then
+                                    exPrevIsAttacking = false
+                                    return
+                                end
+                            end
+                            exPrevIsAttacking = isAttackingNow
+
                             local includeLunge = (not isStationary) or (exStationaryAngleIdx % 2 == 1)
-                            if (tick() - lastKillerHitTime) >= 0.12 then
+                            if (now - lastKillerHitTime) >= 0.12 then
                                 executeKillerHitEX(lockedCatchSurvivor, true, exMeasuredFrameVel, exStationaryAngleIdx, includeLunge)
-                                lastKillerHitTime = tick()
-                                exLastSwingStartTime = tick()
-                            elseif (tick() - exLastSwingStartTime) <= 0.12
-                                or myChar:GetAttribute("isAttacking") == true
-                                or myChar:GetAttribute("isLunging") == true then
+                                lastKillerHitTime = now
+                                exLastSwingStartTime = now
+                                if exPendingFallbackSwingAt == 0 then
+                                    exPendingFallbackSwingAt = now
+                                elseif not exServerAttackLock and not isAttackingNow and exSwingEndedAt == 0 and now >= exAfterAttackCooldownUntil and (now - exPendingFallbackSwingAt) >= 0.60 then
+                                    registerExHitAttempt(0.55, 0)
+                                    exPendingFallbackSwingAt = now
+                                    if exFailPauseActive then
+                                        return
+                                    end
+                                end
+                            elseif (now - exLastSwingStartTime) <= 0.12 or isAttackingNow then
                                 executeKillerHitEX(lockedCatchSurvivor, false, exMeasuredFrameVel, exStationaryAngleIdx, includeLunge)
                             end
                         end
@@ -7564,6 +7767,7 @@ V_KillerSection:Toggle({
         autoCatchEnabled = v
         if v then
             autoCatchEXEnabled = false
+            exFailPauseActive = false
         end
         catchSession = catchSession + 1
         local thisSession = catchSession
@@ -7923,6 +8127,7 @@ V_KillerSection:Toggle({
     Default = false,
     Callback = function(v)
         autoCatchEXEnabled = v
+        exFailPauseActive = false
         if v then
             autoCatchEnabled = false
         end
@@ -7930,6 +8135,7 @@ V_KillerSection:Toggle({
         local thisSession = catchSession
 
         if not v then
+            exFailPauseActive = false
             if not autoCatchEnabled then
                 currentKillerTarget = nil
                 catchBotsIgnoredActive = false
@@ -7951,6 +8157,20 @@ V_KillerSection:Toggle({
 
         WindUI:Notify({ Title = "Auto Catch EX", Content = "Experimental Predictive Sure-Hit Catch active!", Duration = 2.5 })
         runAutoCatchEXSession(thisSession)
+    end
+})
+
+V_KillerSection:Slider({
+    Title = "EX Fail Hit Cooldown (s)",
+    Description = "Pause teleport & auto hit (seconds) after 3 hits fail to knock current target (0 - 3s)",
+    Step = 0.1,
+    Value = {
+        Min = 0,
+        Max = 3,
+        Default = 3,
+    },
+    Callback = function(val)
+        exFailPauseDuration = math.clamp(tonumber(val) or 3, 0, 3)
     end
 })
 
