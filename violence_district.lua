@@ -44,6 +44,16 @@ local currentGhostEXPoint = nil
 local currentGhostEXModel = nil
 local ghostEXHoldPos = nil
 local stopGhostRepairEX = nil
+local vdESPState = {
+    killerToggle = nil,
+    genToggle = nil,
+    survivorToggle = nil,
+    hookToggle = nil,
+    autoRoleESPEnabled = true,
+    hookESPEnabled = false,
+    cleanHookESP = nil,
+    lastAppliedRole = nil
+}
 
 do
 ViolenceTab = Window:Tab({
@@ -175,21 +185,130 @@ isPlayerKiller = checkPlayerKillerStatus
 autoRoleAdaptEnabled = false -- Default to false so it NEVER disables active user toggles
 local lastDetectedRole = nil
 
+vdESPState.detectRole = function()
+    local myChar = player.Character
+    if not myChar or not myChar.Parent or not myChar:FindFirstChild("HumanoidRootPart") then
+        return "Lobby"
+    end
+    if isEntityInLobbyOrSpectating and isEntityInLobbyOrSpectating(myChar, player) then
+        return "Lobby"
+    end
+    if player.Team then
+        local tName = player.Team.Name:lower()
+        if tName:find("lobby") or tName:find("spectat") then
+            return "Lobby"
+        end
+        if tName:find("killer") or tName:find("slasher") then
+            return "Killer"
+        end
+    end
+    local pRole = player:GetAttribute("Role") or myChar:GetAttribute("Role")
+    if type(pRole) == "string" then
+        local rLower = pRole:lower()
+        if rLower == "lobby" or rLower:find("spectat") then
+            return "Lobby"
+        end
+        if rLower == "killer" or rLower == "slasher" then
+            return "Killer"
+        end
+    end
+
+    if isPlayerKiller and isPlayerKiller() then
+        return "Killer"
+    end
+
+    -- Confirm player is actively in match as Survivor (not standing in pre-match Lobby)
+    if player.Team and player.Team.Name:lower():find("survivor") then
+        return "Survivor"
+    end
+    if type(pRole) == "string" and pRole:lower():find("survivor") then
+        return "Survivor"
+    end
+    if CollectionService and (CollectionService:HasTag(myChar, "Survivor") or CollectionService:HasTag(player, "Survivor")) then
+        return "Survivor"
+    end
+    local pg = player:FindFirstChild("PlayerGui")
+    if pg and (pg:FindFirstChild("Survivor-mob") or pg:FindFirstChild("Survivor") or pg:FindFirstChild("Survivor-con")) then
+        return "Survivor"
+    end
+    if myChar:GetAttribute("isRepairing") ~= nil or myChar:GetAttribute("isHealing") ~= nil or myChar:GetAttribute("HookCount") ~= nil then
+        return "Survivor"
+    end
+    if workspace:FindFirstChild("Map") or workspace:FindFirstChild("map") then
+        return "Survivor"
+    end
+    if CollectionService and #CollectionService:GetTagged("GeneratorPoint") > 0 then
+        return "Survivor"
+    end
+
+    return "Lobby"
+end
+
+vdESPState.setToggleSafe = function(toggleObj, desired)
+    if not toggleObj then return end
+    if toggleObj.Value ~= desired and toggleObj.Set then
+        pcall(function() toggleObj:Set(desired) end)
+    end
+end
+
+vdESPState.applyRoleESPs = function(role)
+    if not (vdESPState.killerToggle and vdESPState.genToggle and vdESPState.survivorToggle and vdESPState.hookToggle) then
+        return false
+    end
+    if role == "Survivor" then
+        vdESPState.setToggleSafe(vdESPState.survivorToggle, true)
+        vdESPState.setToggleSafe(vdESPState.genToggle, true)
+        vdESPState.setToggleSafe(vdESPState.killerToggle, true)
+        vdESPState.setToggleSafe(vdESPState.hookToggle, false)
+        return true
+    elseif role == "Killer" then
+        vdESPState.setToggleSafe(vdESPState.hookToggle, true)
+        vdESPState.setToggleSafe(vdESPState.survivorToggle, true)
+        vdESPState.setToggleSafe(vdESPState.genToggle, false)
+        vdESPState.setToggleSafe(vdESPState.killerToggle, false)
+        return true
+    end
+    return false
+end
+
+V_RoleSection:Toggle({
+    Title = "Auto Role ESP",
+    Description = "Auto-detects Killer/Survivor role: enables Survivor, Generator & Killer ESP for Survivor; Hook & Survivor ESP for Killer",
+    Default = true,
+    Callback = function(v)
+        vdESPState.autoRoleESPEnabled = v
+        if v then
+            vdESPState.lastAppliedRole = nil
+        end
+    end
+})
+
 V_RoleSection:Toggle({
     Title = "Auto Role Adapt",
     Description = "Automatically detects Killer/Survivor role and auto-disables opposing features",
     Default = false,
     Callback = function(v)
         autoRoleAdaptEnabled = v
-        WindUI:Notify({ Title = "Role Adapt", Content = v and "Auto Role Adapt active!" or "Auto Role Adapt disabled.", Duration = 2 })
     end
 })
 
--- Background Auto-Role Monitor Thread (runs every 1 second)
+-- Background Auto-Role & Auto-ESP Monitor Thread (runs every 0.5 seconds)
 task.spawn(function()
     while scriptRunning do
         pcall(function()
             if not scriptRunning then return end
+
+            if vdESPState.autoRoleESPEnabled then
+                local matchRole = vdESPState.detectRole()
+                if matchRole == "Lobby" then
+                    vdESPState.lastAppliedRole = nil
+                elseif matchRole ~= vdESPState.lastAppliedRole then
+                    if vdESPState.applyRoleESPs(matchRole) then
+                        vdESPState.lastAppliedRole = matchRole
+                    end
+                end
+            end
+
             if autoRoleAdaptEnabled then
                 -- NEVER override or shut down active features manually enabled by the user!
                 if autoCatchEnabled or autoCatchEXEnabled or autoAimSurvivorEnabled or autoHitSurvivorEnabled or autoHookSurvivorEnabled then
@@ -219,7 +338,6 @@ task.spawn(function()
                             autoPalletEnabled = false
                             autoParryEnabled = false
                             autoSaveEnabled = false
-                            WindUI:Notify({ Title = "👹 Role: KILLER", Content = "Detected Killer role.", Duration = 2 })
                         elseif currentRole == "Survivor" then
                             catchSession = (catchSession or 0) + 1
                             autoCatchEnabled = false
@@ -229,13 +347,12 @@ task.spawn(function()
                             autoHitSurvivorEnabled = false
                             currentKillerTarget = nil
                             if updateKillerAim then updateKillerAim() end
-                            WindUI:Notify({ Title = "🏃 Role: SURVIVOR", Content = "Detected Survivor role.", Duration = 2 })
                         end
                     end
                 end
             end
         end)
-        task.wait(1)
+        task.wait(0.5)
     end
 end)
 
@@ -831,12 +948,14 @@ local function cleanAllESPs()
     if cleanKillerESP then pcall(cleanKillerESP) end
     if cleanSurvivorESP then pcall(cleanSurvivorESP) end
     if cleanGenESP then pcall(cleanGenESP) end
+    if vdESPState and vdESPState.cleanHookESP then pcall(vdESPState.cleanHookESP) end
 
     pcall(function()
         for _, obj in ipairs(workspace:GetDescendants()) do
             if obj.Name == "KillerESPHighlight" or obj.Name == "KillerESPBillboard"
                 or obj.Name == "SurvivorESPHighlight" or obj.Name == "SurvivorESPBillboard"
                 or obj.Name == "GenESPHighlight" or obj.Name == "GenESPBillboard"
+                or obj.Name == "HookESPHighlight" or obj.Name == "HookESPBillboard"
                 or obj.Name == "GhostEXGenHighlight" then
                 obj:Destroy()
             end
@@ -852,6 +971,7 @@ local function onMatchOrCharacterReset()
     currentGhostEXModel = nil
     ghostEXHoldPos = nil
     lastDetectedRole = nil
+    if vdESPState then vdESPState.lastAppliedRole = nil end
     lastCapturedRepairRequestId = nil
     lastCapturedGenModel = nil
     lastCapturedGenPoint = nil
@@ -914,7 +1034,7 @@ cleanKillerESP = function()
     end)
 end
 
-V_ESPSection:Toggle({
+vdESPState.killerToggle = V_ESPSection:Toggle({
     Title = "Killer ESP",
     Description = "Highlights the Killer with real-time status & distance (Persists seamlessly across matches)",
     Default = false,
@@ -922,10 +1042,8 @@ V_ESPSection:Toggle({
         killerESPEnabled = v
         if not v then
             cleanKillerESP()
-            WindUI:Notify({ Title = "Killer ESP", Content = "Killer ESP disabled.", Duration = 2 })
             return
         end
-        WindUI:Notify({ Title = "Killer ESP", Content = "Killer ESP enabled!", Duration = 2 })
     end
 })
 
@@ -1059,7 +1177,7 @@ local function isGeneratorModel(model)
     return false
 end
 
-V_ESPSection:Toggle({
+vdESPState.genToggle = V_ESPSection:Toggle({
     Title = "Generator ESP",
     Description = "Highlights Generators with live progress & completion status",
     Default = false,
@@ -1067,11 +1185,8 @@ V_ESPSection:Toggle({
         genESPEnabled = v
         if not v then
             cleanGenESP()
-            WindUI:Notify({ Title = "Generator ESP", Content = "Generator ESP disabled.", Duration = 2 })
             return
         end
-
-        WindUI:Notify({ Title = "Generator ESP", Content = "Generator ESP enabled!", Duration = 2 })
 
         task.spawn(function()
             while genESPEnabled do
@@ -1177,7 +1292,7 @@ cleanSurvivorESP = function()
     end)
 end
 
-V_ESPSection:Toggle({
+vdESPState.survivorToggle = V_ESPSection:Toggle({
     Title = "Survivor Detector (ESP)",
     Description = "Highlights all Survivors with health, knocked/hooked state & distance (Persists across matches)",
     Default = false,
@@ -1185,10 +1300,8 @@ V_ESPSection:Toggle({
         survivorESPEnabled = v
         if not v then
             cleanSurvivorESP()
-            WindUI:Notify({ Title = "Survivor ESP", Content = "Survivor Detector disabled.", Duration = 2 })
             return
         end
-        WindUI:Notify({ Title = "Survivor ESP", Content = "Survivor Detector active!", Duration = 2 })
     end
 })
 
@@ -1404,6 +1517,214 @@ task.spawn(function()
         task.wait(0.3)
     end
 end)
+
+-- ============================================================
+-- 2.5 HOOK PLACE ESP (ALL HOOK LOCATIONS & LIVE STATUS)
+-- ============================================================
+do
+    local hookESPObjects = {}
+
+    local function cleanHookESP()
+        for _, item in ipairs(hookESPObjects) do
+            pcall(function() item:Destroy() end)
+        end
+        hookESPObjects = {}
+        pcall(function()
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj.Name == "HookESPHighlight" or obj.Name == "HookESPBillboard" then
+                    pcall(function() obj:Destroy() end)
+                end
+            end
+        end)
+    end
+    vdESPState.cleanHookESP = cleanHookESP
+
+    local function collectAllHooksForESP()
+        local myChar = player.Character
+        local results = {}
+        local seenModels = {}
+
+        local function registerHook(hookPart)
+            if not hookPart or not hookPart:IsA("BasePart") or not hookPart:IsDescendantOf(workspace) then return end
+            if hookPart:FindFirstAncestor("Lobby") then return end
+            if myChar and hookPart:IsDescendantOf(myChar) then return end
+            if hookPart:FindFirstAncestorOfClass("Tool") or hookPart:FindFirstAncestorOfClass("Backpack") then return end
+            -- Skip character-owned accessories/weapons
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr.Character and hookPart:IsDescendantOf(plr.Character) then
+                    return
+                end
+            end
+
+            local hookModel = hookPart:FindFirstAncestorOfClass("Model")
+            if hookModel == workspace or (hookModel and hookModel.Name:lower() == "hooks") or (hookModel and hookModel.Name:lower() == "map") then
+                hookModel = nil
+            end
+            local dedupKey = hookModel or hookPart
+            if seenModels[dedupKey] then return end
+            seenModels[dedupKey] = true
+
+            table.insert(results, {
+                part = hookPart,
+                model = hookModel or hookPart
+            })
+        end
+
+        local mapFolder = workspace:FindFirstChild("Map") or workspace:FindFirstChild("map")
+        local hooksFolder = mapFolder and (mapFolder:FindFirstChild("Hooks") or mapFolder:FindFirstChild("hooks"))
+            or workspace:FindFirstChild("Hooks") or workspace:FindFirstChild("hooks")
+        if hooksFolder then
+            for _, hookModel in ipairs(hooksFolder:GetChildren()) do
+                local hp = hookModel:FindFirstChild("HookPoint") or hookModel:FindFirstChild("HitBox") or (hookModel:IsA("Model") and hookModel.PrimaryPart) or hookModel:FindFirstChildWhichIsA("BasePart")
+                if hp then registerHook(hp) end
+            end
+        end
+
+        if CollectionService then
+            pcall(function()
+                for _, p in ipairs(CollectionService:GetTagged("HookPoint")) do
+                    registerHook(p)
+                end
+            end)
+        end
+
+        if #results == 0 then
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("BasePart") and (obj.Name == "HookPoint" or (obj.Name:lower():find("hook") and obj.Name:lower():find("point"))) then
+                    registerHook(obj)
+                elseif obj:IsA("Model") and obj.Name:lower():find("hook") and not obj:FindFirstChildOfClass("Humanoid") then
+                    local p = obj:FindFirstChild("HookPoint") or obj:FindFirstChild("HitBox") or obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+                    if p then registerHook(p) end
+                end
+            end
+        end
+
+        return results
+    end
+
+    local function isHookPointOccupiedOrBroken(hookPart, hookModel, myChar)
+        local broken = (CollectionService and CollectionService:HasTag(hookPart, "Broken"))
+            or hookPart:GetAttribute("Broken") == true or hookPart:GetAttribute("Sabotaged") == true
+            or (hookModel and hookModel ~= hookPart and (hookModel:GetAttribute("Broken") == true or hookModel:GetAttribute("Sabotaged") == true or (CollectionService and CollectionService:HasTag(hookModel, "Broken"))))
+        if broken then
+            return "BROKEN", Color3.fromRGB(160, 160, 160)
+        end
+
+        local occupied = (CollectionService and (CollectionService:HasTag(hookPart, "doing action") or CollectionService:HasTag(hookPart, "Occupied")))
+            or hookPart:GetAttribute("Occupied") == true or hookPart:GetAttribute("IsHooked") == true
+            or (hookModel and hookModel ~= hookPart and (hookModel:GetAttribute("Occupied") == true or hookModel:GetAttribute("IsHooked") == true or (CollectionService and CollectionService:HasTag(hookModel, "Occupied"))))
+
+        if not occupied then
+            if trackedSurvivors then
+                for sChar, _ in pairs(trackedSurvivors) do
+                    if sChar and sChar.Parent and sChar ~= myChar and isCharacterHooked(sChar) then
+                        local sHrp = sChar:FindFirstChild("HumanoidRootPart")
+                        if sHrp and (sHrp.Position - hookPart.Position).Magnitude <= 5.5 then
+                            occupied = true
+                            break
+                        end
+                    end
+                end
+            end
+            if not occupied then
+                for _, plr in ipairs(Players:GetPlayers()) do
+                    local sChar = plr.Character
+                    if sChar and sChar ~= myChar and isCharacterHooked(sChar) then
+                        local sHrp = sChar:FindFirstChild("HumanoidRootPart")
+                        if sHrp and (sHrp.Position - hookPart.Position).Magnitude <= 5.5 then
+                            occupied = true
+                            break
+                        end
+                    end
+                end
+            end
+        end
+
+        if occupied then
+            return "OCCUPIED", Color3.fromRGB(255, 70, 180)
+        end
+        return "READY", Color3.fromRGB(255, 165, 30)
+    end
+
+    vdESPState.hookToggle = V_ESPSection:Toggle({
+        Title = "Hook Place ESP",
+        Description = "Highlights all Hook places on the map with live status & distance",
+        Default = false,
+        Callback = function(v)
+            vdESPState.hookESPEnabled = v
+            if not v then
+                cleanHookESP()
+                return
+            end
+
+            task.spawn(function()
+                while vdESPState.hookESPEnabled and scriptRunning do
+                    pcall(function()
+                        cleanHookESP()
+                        local myChar = player.Character
+                        local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                        if not myHrp then return end
+
+                        for _, entry in ipairs(collectAllHooksForESP()) do
+                            if not vdESPState.hookESPEnabled or not scriptRunning then break end
+                            local hp = entry.part
+                            local hm = entry.model
+                            if hp and hp.Parent and hm and hm.Parent then
+                                local dist = (myHrp.Position - hp.Position).Magnitude
+                                local status, hlColor = isHookPointOccupiedOrBroken(hp, hm, myChar)
+
+                                local hl = Instance.new("Highlight")
+                                hl.Name = "HookESPHighlight"
+                                hl.FillColor = hlColor
+                                hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+                                hl.FillTransparency = 0.45
+                                hl.OutlineTransparency = 0.15
+                                hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                                hl.Adornee = hm
+                                hl.Parent = hm
+                                table.insert(hookESPObjects, hl)
+
+                                local bb = Instance.new("BillboardGui")
+                                bb.Name = "HookESPBillboard"
+                                bb.Adornee = hp
+                                bb.Size = UDim2.fromOffset(155, 42)
+                                bb.StudsOffset = Vector3.new(0, 3.0, 0)
+                                bb.AlwaysOnTop = true
+
+                                local lbl = Instance.new("TextLabel")
+                                lbl.Size = UDim2.fromScale(1, 1)
+                                lbl.BackgroundTransparency = 1
+                                lbl.TextColor3 = hlColor
+                                lbl.TextStrokeTransparency = 0.2
+                                lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                                lbl.Font = Enum.Font.GothamBold
+                                lbl.TextScaled = true
+                                lbl.Text = string.format("🪝 HOOK [%s]\n%.0f studs", status, dist)
+                                lbl.Parent = bb
+
+                                bb.Parent = hp
+                                table.insert(hookESPObjects, bb)
+                            end
+                        end
+                    end)
+                    task.wait(1.5)
+                end
+                cleanHookESP()
+            end)
+        end
+    })
+
+    -- Immediately sync role-based ESP on load if already in an active match
+    task.defer(function()
+        if vdESPState.autoRoleESPEnabled then
+            local initRole = vdESPState.detectRole()
+            if initRole ~= "Lobby" and vdESPState.applyRoleESPs(initRole) then
+                vdESPState.lastAppliedRole = initRole
+            end
+        end
+    end)
+end
+
 -- ============================================================
 -- WALL & OBSTACLE REMOVER (KEEPS GENERATORS & FLOORS 100% INTACT)
 -- ============================================================
@@ -1563,11 +1884,9 @@ do
             removeWallsEnabled = v
             if not v then
                 restoreAllWalls()
-                WindUI:Notify({ Title = "Wall Remover", Content = "All walls & obstacles restored.", Duration = 2 })
                 return
             end
 
-            WindUI:Notify({ Title = "Wall Remover", Content = "Walls removed! (Generators & floor preserved)", Duration = 2 })
             task.spawn(executeWallRemoval)
         end
     })
@@ -2512,12 +2831,10 @@ local autoSkillcheckToggle = V_ObjectiveSection:Toggle({
                 skillcheckManualConn = nil
             end
             unlockCameraAndMovement()
-            WindUI:Notify({ Title = "Skillcheck", Content = "Automatic Perfect Skill Check disabled.", Duration = 2 })
             return
         end
 
         startSkillcheckWatcher()
-        WindUI:Notify({ Title = "Skillcheck", Content = "Automatic Perfect Skill Check active!", Duration = 2 })
     end
 })
 
@@ -2533,7 +2850,6 @@ local noSkillcheckToggle = V_ObjectiveSection:Toggle({
                 autoSkillCheckEnabled = true
             end
             startSkillcheckWatcher()
-            WindUI:Notify({ Title = "No Skill Check", Content = "No Skill Check active: pop-ups hidden & auto-solved!", Duration = 2 })
         else
             restoreCheckVisuals()
             if not perfectSkillcheckEnabled then
@@ -2546,7 +2862,6 @@ local noSkillcheckToggle = V_ObjectiveSection:Toggle({
                     skillcheckManualConn = nil
                 end
             end
-            WindUI:Notify({ Title = "No Skill Check", Content = "No Skill Check disabled: normal UI restored.", Duration = 2 })
         end
     end
 })
@@ -3485,12 +3800,10 @@ V_ObjectiveSection:Toggle({
                     player.Character:SetAttribute("isRepairing", false)
                 end
             end)
-            WindUI:Notify({ Title = "Auto Repair", Content = "Auto repair stopped immediately.", Duration = 2 })
             return
         end
 
         completedGenerators = {}
-        WindUI:Notify({ Title = "Auto Repair", Content = "Auto repair active! (Auto-avoids Killer)", Duration = 2 })
 
         local function checkRepairActive()
             return autoRepairEnabled and (repairSession == thisSession) and scriptRunning
@@ -3968,11 +4281,9 @@ V_ObjectiveSection:Toggle({
             ghostOriginalCFrame = nil
             completedGenerators = {}
             startGhostRepairThread()
-            WindUI:Notify({ Title = "Ghost Gen", Content = "Underground Ghost Repair enabled!", Duration = 2.5 })
         else
             ghostRepairSession = ghostRepairSession + 1
             stopGhostRepair()
-            WindUI:Notify({ Title = "Ghost Gen", Content = "Underground Ghost Repair stopped.", Duration = 2 })
         end
     end
 })
@@ -4515,11 +4826,9 @@ V_ObjectiveSection:Toggle({
             ghostEXOriginalCFrame = nil
             completedGenerators = {}
             startGhostRepairEXThread()
-            WindUI:Notify({ Title = "🟣 Ghost Gen EX", Content = "Underground Repair Generator EX enabled!", Duration = 2.5 })
         else
             ghostRepairEXSession = ghostRepairEXSession + 1
             stopGhostRepairEX()
-            WindUI:Notify({ Title = "Ghost Gen EX", Content = "Underground Repair Generator EX stopped.", Duration = 2 })
         end
     end
 })
@@ -4596,11 +4905,8 @@ V_CombatSection:Toggle({
         local remotes = getVDRemotes()
 
         if not v then
-            WindUI:Notify({ Title = "Pallet Stun", Content = "Auto Pallet Stun disabled immediately.", Duration = 2 })
             return
         end
-
-        WindUI:Notify({ Title = "Pallet Stun", Content = "Auto Pallet Stun active!", Duration = 2 })
 
         task.spawn(function()
             while autoPalletEnabled and (palletSession == thisSession) and scriptRunning do
@@ -4754,11 +5060,8 @@ V_CombatSection:Toggle({
         local remotes = getVDRemotes()
 
         if not v then
-            WindUI:Notify({ Title = "Auto Parry", Content = "Auto Parry disabled immediately.", Duration = 2 })
             return
         end
-
-        WindUI:Notify({ Title = "Auto Parry", Content = "Auto Parry active! (Directional snap + item defense)", Duration = 2 })
 
         task.spawn(function()
             while autoParryEnabled and (parrySession == thisSession) and scriptRunning do
@@ -4884,11 +5187,8 @@ V_CombatSection:Toggle({
         end
 
         if not v then
-            WindUI:Notify({ Title = "Auto Aim", Content = "Auto Aim disabled.", Duration = 2 })
             return
         end
-
-        WindUI:Notify({ Title = "Auto Aim", Content = "Auto Aim enabled!", Duration = 2 })
 
         aimConn = RunService.RenderStepped:Connect(function()
             if not autoAimEnabled then return end
@@ -4922,11 +5222,8 @@ V_CombatSection:Toggle({
         local thisSession = dodgeSession
 
         if not v then
-            WindUI:Notify({ Title = "Auto Dodge", Content = "Auto Dodge disabled immediately.", Duration = 2 })
             return
         end
-
-        WindUI:Notify({ Title = "Auto Dodge", Content = "Auto Dodge active! (Always 17 studs behind Killer)", Duration = 2 })
 
         task.spawn(function()
             while autoDodgeEnabled and (dodgeSession == thisSession) and scriptRunning do
@@ -5122,16 +5419,18 @@ V_RescueSection:Dropdown({
 })
 
 -- Dynamic dropdown of hooked teammates
-local initialHookedLabels = getHookedTeammateLabels()
-rescueDropdownRef = V_RescueSection:Dropdown({
-    Title = "Select Hooked Teammate",
-    Description = "Choose a specific hooked teammate to rescue",
-    Values = initialHookedLabels,
-    Value = initialHookedLabels[1],
-    Callback = function(v)
-        selectedHookedTeammateLabel = v
-    end
-})
+do
+    local initialHookedLabels = getHookedTeammateLabels()
+    rescueDropdownRef = V_RescueSection:Dropdown({
+        Title = "Select Hooked Teammate",
+        Description = "Choose a specific hooked teammate to rescue",
+        Values = initialHookedLabels,
+        Value = initialHookedLabels[1],
+        Callback = function(v)
+            selectedHookedTeammateLabel = v
+        end
+    })
+end
 
 V_RescueSection:Button({
     Title = "🔄 Refresh Hooked List",
@@ -5235,11 +5534,8 @@ V_RescueSection:Toggle({
                     remotes.Healing.Reset:FireServer(player.Character)
                 end
             end)
-            WindUI:Notify({ Title = "Auto Save", Content = "Auto Save disabled immediately.", Duration = 2 })
             return
         end
-
-        WindUI:Notify({ Title = "Auto Save", Content = string.format("Auto Save active! (Travel: %s)", rescueTravelMode), Duration = 2.5 })
 
         local function checkSaveActive()
             return autoSaveEnabled and (saveSession == thisSession) and scriptRunning
@@ -5448,7 +5744,6 @@ V_ObjectiveSection:Toggle({
     Default = false,
     Callback = function(v)
         updateNoClip(v)
-        WindUI:Notify({ Title = "NoClip", Content = v and "NoClip enabled!" or "NoClip disabled.", Duration = 2 })
     end
 })
 
@@ -5480,12 +5775,10 @@ V_ServerRemotesSection:Toggle({
         serverDisableCollisionEnabled = v
         if v then
             fireDisableCollision()
-            WindUI:Notify({ Title = "Server Collision", Content = "Server-side collision disabled!", Duration = 2 })
         else
             if not noClipEnabled then
                 fireEnableCollision()
             end
-            WindUI:Notify({ Title = "Server Collision", Content = "Server-side collision restored.", Duration = 2 })
         end
     end
 })
@@ -5507,7 +5800,6 @@ V_ServerRemotesSection:Toggle({
     Callback = function(v)
         serverCrouchEnabled = v
         fireChangeAttribute("Crouchingserver", v)
-        WindUI:Notify({ Title = "Server Crouch", Content = v and "Server Crouch active (Crouchingserver = true)!" or "Server Crouch disabled.", Duration = 2 })
     end
 })
 
@@ -5520,10 +5812,8 @@ V_ServerRemotesSection:Toggle({
         serverSpeedboostEnabled = v
         if v then
             fireChangeAttribute("speedboost", speedboostMultiplier)
-            WindUI:Notify({ Title = "Server Speedboost", Content = string.format("Speedboost active (%.1fx multiplier)!", speedboostMultiplier), Duration = 2 })
         else
             fireChangeAttribute("speedboost", 1)
-            WindUI:Notify({ Title = "Server Speedboost", Content = "Speedboost reset to normal (1.0x).", Duration = 2 })
         end
     end
 })
@@ -5557,10 +5847,8 @@ V_ServerRemotesSection:Toggle({
             fireChangeAttribute("isStunned", false)
             fireChangeAttribute("IsStunned", false)
             fireChangeAttribute("Stunned", false)
-            WindUI:Notify({ Title = "Server No-Stun", Content = "No-Stun active (nostun = true)!", Duration = 2 })
         else
             fireChangeAttribute("nostun", false)
-            WindUI:Notify({ Title = "Server No-Stun", Content = "Server No-Stun disabled.", Duration = 2 })
         end
     end
 })
@@ -5576,9 +5864,6 @@ V_ServerRemotesSection:Toggle({
             fireChangeAttribute("IsCarried", false)
             fireChangeAttribute("isCarried", false)
             fireChangeAttribute("BeingCarried", false)
-            WindUI:Notify({ Title = "Anti-Carry Active", Content = "Will force drop immediately if picked up by Killer!", Duration = 2.5 })
-        else
-            WindUI:Notify({ Title = "Anti-Carry Disabled", Content = "Anti-Carry disabled.", Duration = 2 })
         end
     end
 })
@@ -5605,9 +5890,6 @@ V_ServerRemotesSection:Toggle({
             fireChangeAttribute("Immobile", false)
             fireChangeAttribute("Rooted", false)
             fireChangeAttribute("Trapped", false)
-            WindUI:Notify({ Title = "Anti-Immobile Active", Content = "Movement freeze locks automatically bypassed!", Duration = 2.5 })
-        else
-            WindUI:Notify({ Title = "Anti-Immobile Disabled", Content = "Anti-Immobile disabled.", Duration = 2 })
         end
     end
 })
@@ -7401,7 +7683,6 @@ V_KillerSection:Toggle({
         standaloneAimUserSetting = v
         autoAimSurvivorEnabled = v or autoCatchEnabled or autoCatchEXEnabled
         updateKillerAim()
-        WindUI:Notify({ Title = "Auto Aim", Content = v and "Killer Auto Aim active!" or "Killer Auto Aim disabled.", Duration = 2 })
     end
 })
 
@@ -7412,7 +7693,6 @@ V_KillerSection:Toggle({
     Callback = function(v)
         standaloneHitUserSetting = v
         autoHitSurvivorEnabled = v or autoCatchEnabled or autoCatchEXEnabled
-        WindUI:Notify({ Title = "Auto Hit", Content = v and "Killer Auto Hit active!" or "Killer Auto Hit disabled.", Duration = 2 })
     end
 })
 
@@ -7422,7 +7702,6 @@ V_KillerSection:Toggle({
     Default = false,
     Callback = function(v)
         autoHookSurvivorEnabled = v
-        WindUI:Notify({ Title = "Auto Hook", Content = v and "Auto Hook Survivor active!" or "Auto Hook disabled.", Duration = 2 })
     end
 })
 
@@ -8407,15 +8686,12 @@ V_KillerSection:Toggle({
                     autoHitSurvivorEnabled = false
                 end
             end
-            WindUI:Notify({ Title = "Auto Catch", Content = "Auto Catch disabled immediately.", Duration = 2 })
             return
         end
 
         autoAimSurvivorEnabled = true
         autoHitSurvivorEnabled = true
         updateKillerAim()
-
-        WindUI:Notify({ Title = "Auto Catch", Content = "Hunting Survivors (Lock Spam Teleport, Take Body & Hook)...", Duration = 2.5 })
 
         local function checkCatchActive()
             return autoCatchEnabled and (catchSession == thisSession) and scriptRunning
@@ -8772,7 +9048,6 @@ V_KillerSection:Toggle({
                     autoHitSurvivorEnabled = false
                 end
             end
-            WindUI:Notify({ Title = "Auto Catch EX", Content = "Auto Catch EX disabled immediately.", Duration = 2 })
             return
         end
 
@@ -8780,7 +9055,6 @@ V_KillerSection:Toggle({
         autoHitSurvivorEnabled = true
         updateKillerAim()
 
-        WindUI:Notify({ Title = "Auto Catch EX", Content = "Experimental Predictive Sure-Hit Catch active!", Duration = 2.5 })
         runAutoCatchEXSession(thisSession)
     end
 })
