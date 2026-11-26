@@ -2988,7 +2988,7 @@ local function isGeneratorCompleted(point)
 
     if rawProgress and tonumber(rawProgress) then
         local pVal = tonumber(rawProgress)
-        if pVal >= 99.5 or (pVal >= 1 and pVal <= 1.01 and pVal > 0) then
+        if pVal >= 99.5 then
             return true, 100
         else
             return false, pVal
@@ -4357,6 +4357,7 @@ local ghostEXHighlight = nil
 local ghostEXHighlightModel = nil
 local ghostEXRepairRequestId = nil
 local ghostEXKillerSafeDist = 40
+local ghostEXActiveDepth = nil
 
 local function clearGhostEXGenMarker()
     if ghostEXHighlight then
@@ -4438,29 +4439,59 @@ local function isKillerNearEXTarget(targetPoint, myHrp)
     return minDist <= ghostEXKillerSafeDist, minDist
 end
 
-local function findNearestUnfinishedGeneratorEX(excludeModel, excludePoint)
+local function isGenSlotBusy(pt, myChar)
+    if not pt or not pt.Parent then return true end
+    if CollectionService and (CollectionService:HasTag(pt, "Occupied") or CollectionService:HasTag(pt, "Blocked")) then
+        return true
+    end
+    if pt:GetAttribute("Occupied") == true or pt:GetAttribute("InUse") == true then
+        return true
+    end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and plr.Character and plr.Character ~= myChar then
+            local oHrp = plr.Character:FindFirstChild("HumanoidRootPart")
+            if oHrp and (oHrp.Position - pt.Position).Magnitude <= 4.2 and plr.Character:GetAttribute("isRepairing") == true then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function findNearestGeneratorSlotsEX(excludeModel)
     local myChar = player.Character
     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
     local myPos = myHrp and myHrp.Position or Vector3.new(0, 0, 0)
-    local candidatePoints = {}
-    local processedGenerators = {}
+    local genBuckets = {}
+    local seenPoints = {}
 
     local function addPoint(pt)
-        if pt and pt:IsA("BasePart") and not (myChar and pt:IsDescendantOf(myChar)) then
+        if pt and pt:IsA("BasePart") and pt:IsDescendantOf(workspace) and not (myChar and pt:IsDescendantOf(myChar)) then
+            if pt:FindFirstAncestor("Lobby") or seenPoints[pt] then return end
+            seenPoints[pt] = true
             local genModel = getGeneratorModel(pt) or pt.Parent
-            if genModel and not processedGenerators[genModel] then
-                if (excludeModel and genModel == excludeModel) or (excludePoint and pt == excludePoint) then
+            if genModel and genModel:IsDescendantOf(workspace) then
+                if excludeModel and genModel == excludeModel then
                     return
                 end
                 local isCompleted, prog = isGeneratorCompleted(pt)
-                if not isCompleted and prog < 99.5 then
-                    table.insert(candidatePoints, {
-                        point = pt,
-                        model = genModel,
-                        progress = prog,
-                        dist = (myPos - pt.Position).Magnitude
-                    })
-                    processedGenerators[genModel] = true
+                if not isCompleted and (prog or 0) < 99.5 then
+                    local bucket = genBuckets[genModel]
+                    if not bucket then
+                        bucket = {
+                            model = genModel,
+                            progress = prog or 0,
+                            dist = (myPos - pt.Position).Magnitude,
+                            points = {}
+                        }
+                        genBuckets[genModel] = bucket
+                    else
+                        local d = (myPos - pt.Position).Magnitude
+                        if d < bucket.dist then
+                            bucket.dist = d
+                        end
+                    end
+                    table.insert(bucket.points, pt)
                 end
             end
         end
@@ -4474,20 +4505,22 @@ local function findNearestUnfinishedGeneratorEX(excludeModel, excludePoint)
     end)
 
     pcall(function()
-        local map = workspace:FindFirstChild("Map")
-        local mapGens = map and (map:FindFirstChild("Generators") or map:FindFirstChild("new Generators"))
+        local map = workspace:FindFirstChild("Map") or workspace:FindFirstChild("map")
+        local mapGens = map and (map:FindFirstChild("Generators") or map:FindFirstChild("new Generators") or map:FindFirstChild("generators"))
         if mapGens then
             for _, gen in ipairs(mapGens:GetChildren()) do
                 for _, desc in ipairs(gen:GetDescendants()) do
                     if desc:IsA("BasePart") and (desc.Name:find("GeneratorPoint") or desc.Name == "RepairPoint") then
                         addPoint(desc)
+                    elseif desc:IsA("ProximityPrompt") and desc.Parent and desc.Parent:IsA("BasePart") then
+                        addPoint(desc.Parent)
                     end
                 end
             end
         end
     end)
 
-    if #candidatePoints == 0 then
+    if not next(genBuckets) then
         for _, obj in ipairs(workspace:GetDescendants()) do
             if obj:IsA("BasePart") and (obj.Name == "RepairPoint" or obj.Name == "GeneratorPoint") then
                 addPoint(obj)
@@ -4495,36 +4528,48 @@ local function findNearestUnfinishedGeneratorEX(excludeModel, excludePoint)
         end
     end
 
-    if #candidatePoints == 0 then return nil, nil, false end
+    local candidates = {}
+    for _, bucket in pairs(genBuckets) do
+        -- Prefer unoccupied slots with enabled ProximityPrompts first within this generator
+        table.sort(bucket.points, function(a, b)
+            local busyA = isGenSlotBusy(a, myChar) and 1 or 0
+            local busyB = isGenSlotBusy(b, myChar) and 1 or 0
+            if busyA ~= busyB then
+                return busyA < busyB
+            end
+            return (myPos - a.Position).Magnitude < (myPos - b.Position).Magnitude
+        end)
+        table.insert(candidates, bucket)
+    end
+
+    if #candidates == 0 then return nil, nil, nil, false end
 
     local killer = getKiller()
     local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
     local safeCandidates = {}
 
     if kHrp then
-        for _, cand in ipairs(candidatePoints) do
-            local kDist = (kHrp.Position - cand.point.Position).Magnitude
+        for _, cand in ipairs(candidates) do
+            local repPt = cand.points[1]
+            local kDist = (kHrp.Position - repPt.Position).Magnitude
             if kDist > ghostEXKillerSafeDist then
                 cand.kDist = kDist
                 table.insert(safeCandidates, cand)
             end
         end
         if #safeCandidates > 0 then
-            -- Pick strictly nearest unfinished generator outside Killer's 40-stud threat zone
             table.sort(safeCandidates, function(a, b)
                 return a.dist < b.dist
             end)
-            return safeCandidates[1].point, safeCandidates[1].model, false
+            return safeCandidates[1].points[1], safeCandidates[1].model, safeCandidates[1].points, false
         end
-        -- All unfinished generators currently have Killer <= 40 studs away
-        return nil, nil, true
+        return nil, nil, nil, true
     end
 
-    -- Pick strictly nearest unfinished generator first
-    table.sort(candidatePoints, function(a, b)
+    table.sort(candidates, function(a, b)
         return a.dist < b.dist
     end)
-    return candidatePoints[1].point, candidatePoints[1].model, false
+    return candidates[1].points[1], candidates[1].model, candidates[1].points, false
 end
 
 stopGhostRepairEX = function()
@@ -4555,11 +4600,16 @@ stopGhostRepairEX = function()
     ghostEXOriginalCFrame = nil
     ghostEXRepairRequestId = nil
     ghostEXHoldPos = nil
+    ghostEXActiveDepth = nil
     currentGhostEXPoint = nil
     currentGhostEXModel = nil
     pcall(function()
         if player.Character then
             player.Character:SetAttribute("isRepairing", false)
+            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+            if hrp and CollectionService then
+                pcall(function() CollectionService:RemoveTag(hrp, "doing action") end)
+            end
             for _, part in ipairs(player.Character:GetDescendants()) do
                 if part:IsA("BasePart") and (part.Name == "HumanoidRootPart" or part.Name == "Torso" or part.Name == "UpperTorso" or part.Name == "LowerTorso" or part.Name == "Head") then
                     part.CanCollide = true
@@ -4584,12 +4634,16 @@ local function startGhostRepairEXThread()
         ghostEXOriginalCFrame = initialHrp.CFrame
     end
 
+    local function getActiveDepth()
+        return ghostEXActiveDepth or ghostDepthOffset or 7.0
+    end
+
     local function enforceEXUndergroundPos(maxDistTolerance)
         local c = player.Character
         local hrp = c and c:FindFirstChild("HumanoidRootPart")
         local hum = c and c:FindFirstChildOfClass("Humanoid")
         local pt = currentGhostEXPoint
-        local desiredPos = (pt and pt.Parent) and (pt.Position - Vector3.new(0, ghostDepthOffset, 0)) or ghostEXHoldPos
+        local desiredPos = (pt and pt.Parent) and (pt.Position - Vector3.new(0, getActiveDepth(), 0)) or ghostEXHoldPos
         if not hrp or not hum or hum.Health <= 0 or not desiredPos then
             return false
         end
@@ -4644,8 +4698,9 @@ local function startGhostRepairEXThread()
     task.spawn(function()
         local trackedEXChar = nil
         local avoidGenModel = nil
-        local avoidGenPoint = nil
         local avoidUntilTime = 0
+        local currentGenSlots = nil
+        local currentSlotIdx = 1
 
         while checkEXActive() do
             local iterOk = pcall(function()
@@ -4653,6 +4708,8 @@ local function startGhostRepairEXThread()
                 if not myChar or not myChar:IsDescendantOf(workspace) then
                     currentGhostEXPoint = nil
                     currentGhostEXModel = nil
+                    currentGenSlots = nil
+                    ghostEXActiveDepth = nil
                     clearGhostEXGenMarker()
                     task.wait(0.2)
                     return
@@ -4662,11 +4719,13 @@ local function startGhostRepairEXThread()
                     trackedEXChar = myChar
                     ghostEXOriginalCFrame = nil
                     ghostEXHoldPos = nil
+                    ghostEXActiveDepth = nil
                     currentGhostEXPoint = nil
                     currentGhostEXModel = nil
+                    currentGenSlots = nil
+                    currentSlotIdx = 1
                     ghostEXRepairRequestId = nil
                     avoidGenModel = nil
-                    avoidGenPoint = nil
                     clearGhostEXGenMarker()
                 end
 
@@ -4674,8 +4733,10 @@ local function startGhostRepairEXThread()
                 local myHrp = myChar:FindFirstChild("HumanoidRootPart")
                 if not myHrp or not hum or hum.Health <= 0 then
                     ghostEXHoldPos = nil
+                    ghostEXActiveDepth = nil
                     currentGhostEXPoint = nil
                     currentGhostEXModel = nil
+                    currentGenSlots = nil
                     clearGhostEXGenMarker()
                     task.wait(0.2)
                     return
@@ -4683,8 +4744,10 @@ local function startGhostRepairEXThread()
 
                 if isCharacterHooked(myChar) or isCharacterKnocked(myChar) then
                     ghostEXHoldPos = nil
+                    ghostEXActiveDepth = nil
                     currentGhostEXPoint = nil
                     currentGhostEXModel = nil
+                    currentGenSlots = nil
                     clearGhostEXGenMarker()
                     task.wait(0.2)
                     return
@@ -4696,19 +4759,20 @@ local function startGhostRepairEXThread()
 
                 if avoidGenModel and tick() >= avoidUntilTime then
                     avoidGenModel = nil
-                    avoidGenPoint = nil
                 end
 
                 -- Pick nearest safe unfinished generator only when not already locked onto one
                 if not currentGhostEXPoint or not currentGhostEXPoint.Parent or isGeneratorCompleted(currentGhostEXPoint) then
-                    local nextPt, nextModel, allThreatened = findNearestUnfinishedGeneratorEX(avoidGenModel, avoidGenPoint)
+                    ghostEXActiveDepth = nil
+                    local nextPt, nextModel, nextSlots, allThreatened = findNearestGeneratorSlotsEX(avoidGenModel)
                     if not nextPt and avoidGenModel then
-                        nextPt, nextModel, allThreatened = findNearestUnfinishedGeneratorEX(nil, nil)
+                        nextPt, nextModel, nextSlots, allThreatened = findNearestGeneratorSlotsEX(nil)
                     end
                     if not nextPt or not nextModel then
                         clearGhostEXGenMarker()
                         currentGhostEXPoint = nil
                         currentGhostEXModel = nil
+                        currentGenSlots = nil
                         if allThreatened then
                             if not ghostEXHoldPos then
                                 ghostEXHoldPos = myHrp.Position
@@ -4729,7 +4793,9 @@ local function startGhostRepairEXThread()
                     end
                     currentGhostEXPoint = nextPt
                     currentGhostEXModel = nextModel
-                    ghostEXHoldPos = nextPt.Position - Vector3.new(0, ghostDepthOffset, 0)
+                    currentGenSlots = nextSlots or { nextPt }
+                    currentSlotIdx = 1
+                    ghostEXHoldPos = nextPt.Position - Vector3.new(0, getActiveDepth(), 0)
                 end
 
                 local targetPoint = currentGhostEXPoint
@@ -4750,33 +4816,73 @@ local function startGhostRepairEXThread()
                     Duration = 2
                 })
 
-                -- Ultra-fast 0.0001s Initial Real-Position Verification before firing RepairEvent
-                local desiredPos = targetPoint.Position - Vector3.new(0, ghostDepthOffset, 0)
-                for attempt = 1, 20 do
-                    if not checkEXActive() or not targetPoint.Parent then break end
-                    unlockGhostEXMotion(myChar, myHrp)
-                    myHrp.CFrame = CFrame.new(desiredPos)
-                    myHrp.AssemblyLinearVelocity = Vector3.zero
-                    myHrp.AssemblyAngularVelocity = Vector3.zero
-                    task.wait(0.0001)
-                    if (myHrp.Position - desiredPos).Magnitude <= 0.35 and not myHrp.Anchored then
-                        break
+                -- Wait underground until real position matches AND server position replication settles (~0.10s)
+                local function settleUndergroundForServer(pt)
+                    local dPos = pt.Position - Vector3.new(0, getActiveDepth(), 0)
+                    ghostEXHoldPos = dPos
+                    for attempt = 1, 20 do
+                        if not checkEXActive() or not pt.Parent then break end
+                        unlockGhostEXMotion(myChar, myHrp)
+                        myHrp.CFrame = CFrame.new(dPos)
+                        myHrp.AssemblyLinearVelocity = Vector3.zero
+                        myHrp.AssemblyAngularVelocity = Vector3.zero
+                        task.wait(0.0001)
+                        if (myHrp.Position - dPos).Magnitude <= 0.35 and not myHrp.Anchored then
+                            break
+                        end
+                    end
+                    -- Hold pinned underground for 0.10s so server receives updated CFrame BEFORE RepairEvent fires
+                    local settleEnd = tick() + 0.10
+                    while tick() < settleEnd and checkEXActive() and pt.Parent do
+                        enforceEXUndergroundPos(0.25)
+                        task.wait(0.0001)
                     end
                 end
 
+                local function beginEXRepairOnSlot(pt, curReqId)
+                    if CollectionService and myHrp then
+                        pcall(function() CollectionService:RemoveTag(myHrp, "doing action") end)
+                    end
+                    local actualModel = resolveGeneratorInstance(pt, genModel)
+                    lastCapturedGenModel = actualModel
+                    lastCapturedGenPoint = pt
+                    lastCapturedRepairRequestId = curReqId
+
+                    -- Trigger any ProximityPrompt on the slot/generator as backup
+                    pcall(function()
+                        if typeof(fireproximityprompt) == "function" then
+                            local slotPrompt = pt:FindFirstChildOfClass("ProximityPrompt")
+                            if slotPrompt and slotPrompt.Enabled then
+                                fireproximityprompt(slotPrompt)
+                            elseif genModel then
+                                for _, desc in ipairs(genModel:GetDescendants()) do
+                                    if desc:IsA("ProximityPrompt") and desc.Enabled and (desc.Parent == pt or (desc.Parent and desc.Parent:IsA("BasePart") and (desc.Parent.Position - pt.Position).Magnitude <= 6)) then
+                                        fireproximityprompt(desc)
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end)
+
+                    pcall(function()
+                        remotes.Generator.RepairEvent:FireServer(pt, true, nil, curReqId, myChar)
+                    end)
+                    return actualModel
+                end
+
+                settleUndergroundForServer(targetPoint)
+                if not checkEXActive() or not targetPoint.Parent then return end
+
                 local requestId = HttpService:GenerateGUID(false)
                 ghostEXRepairRequestId = requestId
-                local actualGenModel = resolveGeneratorInstance(targetPoint, genModel)
-                lastCapturedGenModel = actualGenModel
-                lastCapturedGenPoint = targetPoint
-                lastCapturedRepairRequestId = requestId
-
-                pcall(function()
-                    remotes.Generator.RepairEvent:FireServer(targetPoint, true, nil, requestId, myChar)
-                    myChar:SetAttribute("isRepairing", true)
-                end)
+                local actualGenModel = beginEXRepairOnSlot(targetPoint, requestId)
 
                 local lastPulseSent = tick()
+                local lastObservedProg = currentProg or 0
+                local lastProgressTime = tick()
+                local stallRetries = 0
+
                 -- Stay STRICTLY locked on current generator until 100% done OR Killer enters <= 40 studs
                 while checkEXActive() and currentGhostEXPoint == targetPoint and targetPoint.Parent do
                     if isCharacterHooked(myChar) or isCharacterKnocked(myChar) then
@@ -4785,7 +4891,8 @@ local function startGhostRepairEXThread()
 
                     -- Condition 1: Generator Completed
                     local doneNow, progNow = isGeneratorCompleted(targetPoint)
-                    if doneNow or (progNow and progNow >= 99.5) then
+                    progNow = progNow or 0
+                    if doneNow or progNow >= 99.5 then
                         completedGenerators[targetPoint] = true
                         completedGenerators[genModel] = true
                         pcall(function()
@@ -4794,9 +4901,10 @@ local function startGhostRepairEXThread()
                         clearGhostEXGenMarker()
                         currentGhostEXPoint = nil
                         currentGhostEXModel = nil
+                        currentGenSlots = nil
                         ghostEXRepairRequestId = nil
+                        ghostEXActiveDepth = nil
                         avoidGenModel = nil
-                        avoidGenPoint = nil
                         WindUI:Notify({ Title = "🟣 Ghost Gen EX", Content = "✅ " .. genName .. " Fixed 100%! Picking next nearest...", Duration = 2 })
                         task.wait(0.1)
                         break
@@ -4810,18 +4918,55 @@ local function startGhostRepairEXThread()
                         end)
                         myChar:SetAttribute("isRepairing", false)
                         avoidGenModel = genModel
-                        avoidGenPoint = targetPoint
                         avoidUntilTime = tick() + 6
                         clearGhostEXGenMarker()
                         currentGhostEXPoint = nil
                         currentGhostEXModel = nil
+                        currentGenSlots = nil
                         ghostEXRepairRequestId = nil
+                        ghostEXActiveDepth = nil
                         WindUI:Notify({
                             Title = "⚠️ Killer Near (~" .. tostring(math.floor(kDist)) .. " studs)",
                             Content = "Switching away from generator to nearest safe target!",
                             Duration = 2
                         })
                         break
+                    end
+
+                    -- Watchdog: track real server progress growth; if stalled >= 2.2s, recover without leaving target gen!
+                    if progNow > (lastObservedProg + 0.05) then
+                        lastObservedProg = progNow
+                        lastProgressTime = tick()
+                        stallRetries = 0
+                    elseif (tick() - lastProgressTime) >= 2.2 then
+                        stallRetries = stallRetries + 1
+                        pcall(function()
+                            remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, requestId, myChar)
+                        end)
+                        task.wait(0.05)
+                        if not checkEXActive() or currentGhostEXPoint ~= targetPoint then break end
+
+                        -- Rotate to next GeneratorPoint slot on the SAME locked generator model
+                        if currentGenSlots and #currentGenSlots > 1 then
+                            currentSlotIdx = (currentSlotIdx % #currentGenSlots) + 1
+                            local nextSlot = currentGenSlots[currentSlotIdx]
+                            if nextSlot and nextSlot.Parent then
+                                targetPoint = nextSlot
+                                currentGhostEXPoint = nextSlot
+                            end
+                        end
+
+                        -- If stalled >= 2 times and depth > 5.8, bring underground depth slightly closer (5.6 studs) so elevated gens remain inside server repair range
+                        if stallRetries >= 2 and (ghostDepthOffset or 7.0) > 5.8 then
+                            ghostEXActiveDepth = 5.6
+                        end
+
+                        settleUndergroundForServer(targetPoint)
+                        requestId = HttpService:GenerateGUID(false)
+                        ghostEXRepairRequestId = requestId
+                        actualGenModel = beginEXRepairOnSlot(targetPoint, requestId)
+                        lastProgressTime = tick()
+                        lastPulseSent = tick()
                     end
 
                     -- Maintain purple highlight & fire periodic repair + Great skillcheck progression pulses
