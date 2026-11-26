@@ -1,10 +1,10 @@
 -- ============================================================
 -- RIEL PRIVATE: OFFICIALLY RESTORED WINDUI ARCHITECTURE (MONTH 10)
--- Version: 1.26
+-- Version: 1.27
 -- 100% Pure Lua 5.1 & Delta Executor Android Compatibility
 -- ============================================================
 
-local RIEL_VERSION = "1.26"
+local RIEL_VERSION = "1.27"
 
 print("==================================================")
 print("🛡️ [Riel Private v" .. RIEL_VERSION .. "] Initializing Script on Delta Executor...")
@@ -3167,8 +3167,42 @@ pcall(function()
         return Vector3.new(pt.Position.X, desiredY, pt.Position.Z), floorY
     end
 
-    vdESPState.microTransitTo = function(myChar, myHrp, targetPos, checkFn, setCollisionFalse, verifyTol)
-        if not myChar or not myHrp or not myHrp.Parent then return false end
+    vdESPState.scoreEscapeRoute = function(myPos, candPos, kPos, minSafeDist)
+        local seg = Vector3.new(candPos.X - myPos.X, 0, candPos.Z - myPos.Z)
+        local travelDist = seg.Magnitude
+        local endKDist = (candPos - kPos).Magnitude
+        local kFlat = Vector3.new(kPos.X - myPos.X, 0, kPos.Z - myPos.Z)
+        local endKFlat = Vector3.new(candPos.X - kPos.X, 0, candPos.Z - kPos.Z).Magnitude
+
+        local pathClearance = endKFlat
+        local awayDot = 0
+        if travelDist >= 0.5 then
+            local t = math.clamp(kFlat:Dot(seg) / math.max(seg:Dot(seg), 0.001), 0, 1)
+            local closestOffset = kFlat - (seg * t)
+            pathClearance = closestOffset.Magnitude
+            if kFlat.Magnitude >= 0.5 then
+                awayDot = seg.Unit:Dot((-kFlat).Unit)
+            end
+        end
+
+        local safeReq = minSafeDist or 100
+        local score = math.min(endKDist, safeReq + 45) * 1.15
+        if endKDist > safeReq then
+            score = score + (endKDist - safeReq) * 0.25
+        else
+            score = score - (safeReq - endKDist) * 2.2
+        end
+        score = score + math.min(pathClearance, 115) * 1.75 + (awayDot * 50) - (travelDist * 0.18)
+        if pathClearance < 38 then
+            score = score - (460 - pathClearance * 6)
+        elseif awayDot < -0.15 and pathClearance < 58 then
+            score = score - 220
+        end
+        return score, endKDist, pathClearance
+    end
+
+    vdESPState.microTransitTo = function(myChar, myHrp, targetPos, checkFn, setCollisionFalse, verifyTol, steerFn)
+        if not myChar or not myHrp or not myHrp.Parent then return false, targetPos end
         local RS = game:GetService("RunService")
 
         local function isServerAnchored()
@@ -3296,20 +3330,33 @@ pcall(function()
             if not myHrp or not myHrp.Parent then return false end
         end
 
-        -- Tier 3: Discrete 17-stud server-synced hops (0 continuous 185-studs/s void-glide anti-fly triggers)
+        -- Tier 3: Discrete 17-stud server-synced hops with real-time Killer & obstacle/void steering
         curPos = myHrp.Position
         local startTime = tick()
         local rollbackHits = 0
         local lockHits = 0
+        local lastRejectedDir = nil
 
-        while (tick() - startTime) < 4.5 do
-            if checkFn and not checkFn() then return false end
-            if not myHrp or not myHrp.Parent then return false end
+        while (tick() - startTime) < 7.0 do
+            if checkFn and not checkFn() then return false, targetPos end
+            if not myHrp or not myHrp.Parent then return false, targetPos end
 
             curPos = myHrp.Position
+            local liveKPos = nil
+            if steerFn then
+                local okSteer, kP, newTgt = pcall(steerFn, curPos, targetPos)
+                if okSteer then
+                    liveKPos = kP
+                    if typeof(newTgt) == "Vector3" then
+                        targetPos = newTgt
+                    end
+                end
+            end
+
             local remVec = targetPos - curPos
             local remDist = remVec.Magnitude
-            if remDist <= 17.5 then
+            local targetKillerClear = (not liveKPos) or (Vector3.new(targetPos.X - liveKPos.X, 0, targetPos.Z - liveKPos.Z).Magnitude >= 24.0)
+            if remDist <= 17.5 and targetKillerClear then
                 local finalStart = tick()
                 prepTransit()
                 myHrp.AssemblyLinearVelocity = Vector3.zero
@@ -3317,38 +3364,109 @@ pcall(function()
                 myHrp.CFrame = CFrame.new(targetPos)
                 for _ = 1, 2 do
                     RS.Heartbeat:Wait()
-                    if checkFn and not checkFn() then return false end
-                    if not myHrp or not myHrp.Parent then return false end
+                    if checkFn and not checkFn() then return false, targetPos end
+                    if not myHrp or not myHrp.Parent then return false, targetPos end
                     if isServerAnchored() or (vdESPState.lastACAnchorTick or 0) >= finalStart then
                         vdESPState.lastServerAnchorTick = tick()
-                        return false
+                        return false, targetPos
                     end
                 end
-                return (myHrp.Position - targetPos).Magnitude <= math.max(tol, 8.0)
+                return (myHrp.Position - targetPos).Magnitude <= math.max(tol, 8.0), targetPos
             end
 
             local hopLen = (rollbackHits > 0) and 11.5 or 17.0
             local hopXZ
+            local hopY = targetPos.Y
+            local chosenDir = nil
             local flatVec = Vector3.new(remVec.X, 0, remVec.Z)
             if flatVec.Magnitude >= 0.2 then
-                local flatDir = flatVec.Unit
-                local flatStep = math.min(hopLen, flatVec.Magnitude)
-                hopXZ = Vector3.new(curPos.X + flatDir.X * flatStep, 0, curPos.Z + flatDir.Z * flatStep)
+                local fwdDir = flatVec.Unit
+                local kFlatVec = liveKPos and Vector3.new(liveKPos.X - curPos.X, 0, liveKPos.Z - curPos.Z) or nil
+                local kFlatDist = kFlatVec and kFlatVec.Magnitude or math.huge
+                local fwdTowardK = kFlatVec and kFlatDist >= 0.1 and (fwdDir:Dot(kFlatVec.Unit) > 0.40)
+
+                local straightStep = math.min(hopLen, flatVec.Magnitude)
+                local straightXZ = Vector3.new(curPos.X + fwdDir.X * straightStep, 0, curPos.Z + fwdDir.Z * straightStep)
+                local straightFloorY = (setCollisionFalse and vdESPState.findFloorYBelow) and vdESPState.findFloorYBelow(straightXZ.X, curPos.Y + 14, straightXZ.Z, nil) or nil
+
+                local needSteer = (liveKPos ~= nil and (kFlatDist < 68 or (fwdTowardK and kFlatDist < 108)))
+                    or (lastRejectedDir ~= nil)
+                    or (setCollisionFalse and (straightFloorY == nil or math.abs((straightFloorY - 4.0) - curPos.Y) > 13.0))
+
+                if not needSteer then
+                    chosenDir = fwdDir
+                    hopXZ = straightXZ
+                    if setCollisionFalse and straightFloorY then
+                        hopY = straightFloorY - 4.0
+                    else
+                        local frac = math.clamp(hopLen / math.max(remDist, 1), 0, 1)
+                        hopY = curPos.Y + (targetPos.Y - curPos.Y) * frac
+                    end
+                else
+                    local angleList = (kFlatDist < 58 or lastRejectedDir ~= nil or straightFloorY == nil)
+                        and { 0, 38, -38, 72, -72, 112, -112, 180 }
+                        or { 0, 38, -38, 72, -72 }
+
+                    local bestCandScore = -math.huge
+                    local bestCandXZ, bestCandFY, bestCandDir = straightXZ, straightFloorY, fwdDir
+
+                    for _, deg in ipairs(angleList) do
+                        local rad = math.rad(deg)
+                        local cCos, cSin = math.cos(rad), math.sin(rad)
+                        local candDir = Vector3.new(fwdDir.X * cCos - fwdDir.Z * cSin, 0, fwdDir.X * cSin + fwdDir.Z * cCos).Unit
+                        local candStep = (deg == 0) and straightStep or hopLen
+                        local candX = curPos.X + candDir.X * candStep
+                        local candZ = curPos.Z + candDir.Z * candStep
+                        local candFY = straightFloorY
+                        if deg ~= 0 and setCollisionFalse and vdESPState.findFloorYBelow then
+                            candFY = vdESPState.findFloorYBelow(candX, curPos.Y + 14, candZ, nil)
+                        end
+
+                        local candScore = candDir:Dot(fwdDir) * 38
+                        if setCollisionFalse then
+                            if not candFY then
+                                candScore = candScore - 650
+                            elseif math.abs((candFY - 4.0) - curPos.Y) > 13.0 then
+                                candScore = candScore - 160
+                            end
+                        end
+                        if liveKPos then
+                            local candKDist = Vector3.new(candX - liveKPos.X, 0, candZ - liveKPos.Z).Magnitude
+                            local midKDist = Vector3.new((curPos.X + candX) * 0.5 - liveKPos.X, 0, (curPos.Z + candZ) * 0.5 - liveKPos.Z).Magnitude
+                            candScore = candScore + math.min(candKDist, 105) * 1.45
+                            if candKDist < 28 or midKDist < 24 then
+                                candScore = candScore - 550
+                            elseif kFlatDist < 62 and candKDist < kFlatDist then
+                                candScore = candScore - 260
+                            end
+                        end
+                        if lastRejectedDir then
+                            local rDot = candDir:Dot(lastRejectedDir)
+                            if rDot > 0.35 then
+                                candScore = candScore - (280 * rDot)
+                            end
+                        end
+
+                        if candScore > bestCandScore then
+                            bestCandScore = candScore
+                            bestCandXZ = Vector3.new(candX, 0, candZ)
+                            bestCandFY = candFY
+                            bestCandDir = candDir
+                        end
+                    end
+
+                    chosenDir = bestCandDir
+                    hopXZ = bestCandXZ
+                    if setCollisionFalse and bestCandFY then
+                        hopY = bestCandFY - 4.0
+                    else
+                        local frac = math.clamp(hopLen / math.max(remDist, 1), 0, 1)
+                        hopY = curPos.Y + (targetPos.Y - curPos.Y) * frac
+                    end
+                end
             else
                 local stepVec = curPos + (remVec.Unit * math.min(hopLen, remDist))
                 hopXZ = Vector3.new(stepVec.X, 0, stepVec.Z)
-            end
-
-            local hopY = targetPos.Y
-            if setCollisionFalse and vdESPState.findFloorYBelow then
-                local hopFloorY = vdESPState.findFloorYBelow(hopXZ.X, math.max(curPos.Y, targetPos.Y) + 10, hopXZ.Z, nil)
-                if hopFloorY then
-                    hopY = hopFloorY - 4.0
-                else
-                    local frac = math.clamp(hopLen / math.max(remDist, 1), 0, 1)
-                    hopY = curPos.Y + (targetPos.Y - curPos.Y) * frac
-                end
-            else
                 local frac = math.clamp(hopLen / math.max(remDist, 1), 0, 1)
                 hopY = curPos.Y + (targetPos.Y - curPos.Y) * frac
             end
@@ -3366,8 +3484,8 @@ pcall(function()
             local hopRejected = false
             while tick() < settleEnd do
                 RS.Heartbeat:Wait()
-                if checkFn and not checkFn() then return false end
-                if not myHrp or not myHrp.Parent then return false end
+                if checkFn and not checkFn() then return false, targetPos end
+                if not myHrp or not myHrp.Parent then return false, targetPos end
 
                 local actualPos = myHrp.Position
                 if isServerAnchored() or (vdESPState.lastACAnchorTick or 0) >= hopStart then
@@ -3394,14 +3512,17 @@ pcall(function()
             end
 
             if hopRejected then
-                if lockHits >= 2 or rollbackHits >= 3 then
-                    return false
+                lastRejectedDir = chosenDir
+                if lockHits >= 2 or rollbackHits >= 4 then
+                    return false, targetPos
                 end
-                task.wait(0.25)
+                task.wait(0.22)
+            else
+                lastRejectedDir = nil
             end
         end
 
-        return (myHrp.Position - targetPos).Magnitude <= tol
+        return (myHrp.Position - targetPos).Magnitude <= tol, targetPos
     end
 
     vdESPState.findFurthestSafeGround = function(myChar, myPos, kPos)
@@ -3459,13 +3580,14 @@ pcall(function()
             return hit.Position + Vector3.new(0, 3.0, 0)
         end
 
-        local bestPos, bestKDist = nil, -1
+        local bestPos, bestKDist, bestScore = nil, -1, -math.huge
         for i = 1, math.min(#anchors, 36) do
             local a = anchors[i]
             local gp = tryFloor(a.X + 3.0, a.Y, a.Z + 3.0)
             if gp then
-                local kd = (gp - kPos).Magnitude
-                if kd > bestKDist then
+                local sc, kd = vdESPState.scoreEscapeRoute(myPos, gp, kPos, 100)
+                if sc > bestScore then
+                    bestScore = sc
                     bestKDist = kd
                     bestPos = gp
                 end
@@ -3480,8 +3602,9 @@ pcall(function()
                 local ang = baseAngle + angOff
                 local gp = tryFloor(kPos.X + math.cos(ang) * rad, myPos.Y, kPos.Z + math.sin(ang) * rad)
                 if gp then
-                    local kd = (gp - kPos).Magnitude
-                    if kd > bestKDist then
+                    local sc, kd = vdESPState.scoreEscapeRoute(myPos, gp, kPos, 100)
+                    if sc > bestScore then
+                        bestScore = sc
                         bestKDist = kd
                         bestPos = gp
                     end
@@ -9503,38 +9626,46 @@ pcall(function()
     end
 
     local function pickFastUndergroundTarget(myChar, myPos, kPos, minSafeDist)
-        -- 1. If Underground Repair Generator EX is active, prefer an unfinished generator strictly far from Killer
+        local safeGoal = minSafeDist or 100
+        -- 1. If Underground Repair Generator EX is active, pick highest-scoring safe generator (avoiding crossing Killer!)
         if ghostRepairEXEnabled and not vdESPState.ghostEXPaused then
-            local bestGenPos, bestGenFloorY, bestGenKDist = nil, nil, -1
+            local bestGenPos, bestGenFloorY, bestGenKDist, bestGenScore = nil, nil, -1, -math.huge
             pcall(function()
                 for _, pt in ipairs(CollectionService:GetTagged("GeneratorPoint")) do
                     if pt:IsA("BasePart") and pt:IsDescendantOf(workspace) and not pt:IsDescendantOf(myChar) and not pt:FindFirstAncestor("Lobby") then
                         local done = isGeneratorCompleted and isGeneratorCompleted(pt)
                         if not done then
-                            local kd = (pt.Position - kPos).Magnitude
-                            if kd > bestGenKDist then
-                                bestGenKDist = kd
-                                bestGenPos, bestGenFloorY = computeGenUndergroundPoint(pt)
+                            local genPos, genFY = computeGenUndergroundPoint(pt)
+                            if genPos then
+                                local sc, kd = vdESPState.scoreEscapeRoute(myPos, genPos, kPos, safeGoal)
+                                if kd >= (safeGoal + 16) and sc > bestGenScore then
+                                    bestGenScore = sc
+                                    bestGenKDist = kd
+                                    bestGenPos = genPos
+                                    bestGenFloorY = genFY
+                                end
                             end
                         end
                     end
                 end
             end)
-            if bestGenPos and bestGenKDist >= (minSafeDist + 16) then
+            if bestGenPos and bestGenKDist >= (safeGoal + 16) then
                 return bestGenPos, bestGenKDist, bestGenFloorY
             end
         end
 
-        -- 2. Otherwise use pre-cached floor nodes in < 0.05ms (refresh once only if completely empty)
+        -- 2. Otherwise use pre-cached floor nodes scored by path clearance from Killer & safe endpoint distance
         if #cachedSafeNodes == 0 then
             refreshSafeNodeCache(myPos)
         end
 
         local depth = getCachedUndergroundDepth()
-        local bestNode, bestKDist = nil, -1
+        local bestNode, bestKDist, bestScore = nil, -1, -math.huge
         for _, node in ipairs(cachedSafeNodes) do
-            local kd = (node.groundPos - kPos).Magnitude
-            if kd > bestKDist then
+            local candUnder = Vector3.new(node.groundPos.X, node.floorY - depth, node.groundPos.Z)
+            local sc, kd = vdESPState.scoreEscapeRoute(myPos, candUnder, kPos, safeGoal)
+            if sc > bestScore then
+                bestScore = sc
                 bestKDist = kd
                 bestNode = node
             end
@@ -9548,7 +9679,7 @@ pcall(function()
         -- 3. Emergency radial geometric fallback (zero raycast fail-safe)
         local flatAway = Vector3.new(myPos.X - kPos.X, 0, myPos.Z - kPos.Z)
         flatAway = (flatAway.Magnitude >= 0.1) and flatAway.Unit or Vector3.new(1, 0, 0)
-        local escapeDist = math.max(minSafeDist + 35, 135)
+        local escapeDist = math.max(safeGoal + 35, 135)
         local fallbackXZ = Vector3.new(kPos.X + flatAway.X * escapeDist, myPos.Y, kPos.Z + flatAway.Z * escapeDist)
         local floorY = (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(fallbackXZ.X, myPos.Y, fallbackXZ.Z, nil)) or (myPos.Y - 3.0)
         local targetPos = Vector3.new(fallbackXZ.X, floorY - depth, fallbackXZ.Z)
@@ -9800,11 +9931,34 @@ pcall(function()
                                 fleePendingGlide = false
                                 fleeTransiting = true
                                 vdESPState.autoFleeHoldPos = nil
-                                local landed = true
+                                local landed, finalTargetPos = true, undergroundPos
+                                local lastRerouteAt = tick()
                                 if vdESPState.microTransitTo then
-                                    landed = vdESPState.microTransitTo(myChar, myHrp, undergroundPos, function()
+                                    landed, finalTargetPos = vdESPState.microTransitTo(myChar, myHrp, undergroundPos, function()
                                         return isFleeValid() and not isCharacterKnocked(myChar) and not (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar))
-                                    end, true, 6.5)
+                                    end, true, 6.5, function(curP, activeTgt)
+                                        local kLive = getKiller and getKiller()
+                                        local kLiveHrp = kLive and kLive:FindFirstChild("HumanoidRootPart")
+                                        if not kLiveHrp then return nil, nil end
+                                        local lkPos = kLiveHrp.Position
+                                        local newTarget = nil
+                                        if (tick() - lastRerouteAt) >= 0.45 then
+                                            local tgtKDist = (activeTgt - lkPos).Magnitude
+                                            local curSc, _, curClearance = vdESPState.scoreEscapeRoute(curP, activeTgt, lkPos, targetDist)
+                                            if tgtKDist < (targetDist * 0.85) or (curClearance < 30 and (activeTgt - curP).Magnitude > 42) then
+                                                local altPos, altDist, altFY = pickFastUndergroundTarget(myChar, curP, lkPos, targetDist)
+                                                if altPos and (altPos - activeTgt).Magnitude > 14 then
+                                                    local altSc = vdESPState.scoreEscapeRoute(curP, altPos, lkPos, targetDist)
+                                                    if altSc > (curSc + 45) then
+                                                        lastRerouteAt = tick()
+                                                        floorY = altFY or floorY
+                                                        newTarget = altPos
+                                                    end
+                                                end
+                                            end
+                                        end
+                                        return lkPos, newTarget
+                                    end)
                                 end
                                 fleeTransiting = false
 
@@ -9812,9 +9966,15 @@ pcall(function()
                                     return
                                 end
 
-                                if landed and myHrp.Parent and (myHrp.Position - undergroundPos).Magnitude <= 6.5 then
-                                    fleeGroundY = floorY
-                                    vdESPState.autoFleeHoldPos = undergroundPos
+                                finalTargetPos = finalTargetPos or undergroundPos
+                                local kAfter = getKiller and getKiller()
+                                local kAfterHrp = kAfter and kAfter:FindFirstChild("HumanoidRootPart")
+                                local safeAtEnd = kAfterHrp and ((myHrp.Position - kAfterHrp.Position).Magnitude >= (targetDist - 4))
+                                if landed and myHrp.Parent and ((myHrp.Position - finalTargetPos).Magnitude <= 8.0 or safeAtEnd) then
+                                    local landedPos = ((myHrp.Position - finalTargetPos).Magnitude <= 8.0) and finalTargetPos or myHrp.Position
+                                    local curLandedFY = (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(landedPos.X, landedPos.Y + 12, landedPos.Z, nil)) or floorY
+                                    fleeGroundY = curLandedFY
+                                    vdESPState.autoFleeHoldPos = landedPos
                                     fleeFailCount = 0
                                     lastFleeAt = tick()
                                     stayUndergroundUntil = tick() + 0.30
@@ -10059,13 +10219,17 @@ pcall(function()
         fleeKnockTransiting = true
         vdESPState.fleeKnockHoldPos = nil
         unlockFleeKnockMotion(myChar, myHrp, false)
-        local arrived = true
+        local arrived, finalFarPos = true, undergroundFarPos
         if vdESPState.microTransitTo then
-            arrived = vdESPState.microTransitTo(myChar, myHrp, undergroundFarPos, function()
+            arrived, finalFarPos = vdESPState.microTransitTo(myChar, myHrp, undergroundFarPos, function()
                 return isSessionValid()
                     and not isCharacterHooked(myChar)
                     and not (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar))
-            end, true, 6.5)
+            end, true, 6.5, function()
+                local kLive = getKiller and getKiller()
+                local kLiveHrp = kLive and kLive:FindFirstChild("HumanoidRootPart")
+                return kLiveHrp and kLiveHrp.Position or nil, nil
+            end)
         else
             myHrp.CFrame = CFrame.new(undergroundFarPos)
         end
@@ -10075,8 +10239,9 @@ pcall(function()
             return "skip", now
         end
 
-        fleeKnockGroundY = floorY
-        vdESPState.fleeKnockHoldPos = undergroundFarPos
+        finalFarPos = finalFarPos or undergroundFarPos
+        fleeKnockGroundY = (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(finalFarPos.X, finalFarPos.Y + 12, finalFarPos.Z, nil)) or floorY
+        vdESPState.fleeKnockHoldPos = finalFarPos
         fleeKnockTransiting = false
 
         local settleEnd = tick() + 0.06
@@ -10085,7 +10250,7 @@ pcall(function()
             task.wait(0.0001)
         end
 
-        if arrived and myHrp.Parent and (myHrp.Position - undergroundFarPos).Magnitude <= 6.5 then
+        if arrived and myHrp.Parent and (myHrp.Position - finalFarPos).Magnitude <= 7.5 then
             return "ok", tick()
         end
 
