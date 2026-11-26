@@ -1,10 +1,10 @@
 -- ============================================================
 -- RIEL PRIVATE: OFFICIALLY RESTORED WINDUI ARCHITECTURE (MONTH 10)
--- Version: 1.20
+-- Version: 1.21
 -- 100% Pure Lua 5.1 & Delta Executor Android Compatibility
 -- ============================================================
 
-local RIEL_VERSION = "1.20"
+local RIEL_VERSION = "1.21"
 
 print("==================================================")
 print("🛡️ [Riel Private v" .. RIEL_VERSION .. "] Initializing Script on Delta Executor...")
@@ -3139,15 +3139,25 @@ pcall(function()
 
     vdESPState.microTransitTo = function(myChar, myHrp, targetPos, checkFn, setCollisionFalse, verifyTol)
         if not myChar or not myHrp or not myHrp.Parent then return false end
-        vdESPState.setMovementBypass(myChar, true)
 
-        local function clearTransitLocks()
+        local function prepTransit()
+            vdESPState.setMovementBypass(myChar, true)
             if myHrp.Anchored then myHrp.Anchored = false end
             pcall(function()
                 if myChar:GetAttribute("Rooted") == true then myChar:SetAttribute("Rooted", false) end
                 if myChar:GetAttribute("Immobile") == true then myChar:SetAttribute("Immobile", false) end
                 if myChar:GetAttribute("AC_ServerAnchor") ~= nil then myChar:SetAttribute("AC_ServerAnchor", nil) end
+                if myChar:GetAttribute("isRepairing") == true then myChar:SetAttribute("isRepairing", false) end
+                if CollectionService then
+                    CollectionService:RemoveTag(myHrp, "doing action")
+                    CollectionService:RemoveTag(myChar, "doing action")
+                end
             end)
+            local hum = myChar:FindFirstChildOfClass("Humanoid")
+            if hum then
+                if hum.PlatformStand then hum.PlatformStand = false end
+                if hum.Sit then hum.Sit = false end
+            end
             if setCollisionFalse then
                 for _, part in ipairs(myChar:GetDescendants()) do
                     if part:IsA("BasePart") and part.CanCollide then
@@ -3157,35 +3167,43 @@ pcall(function()
             end
         end
 
-        clearTransitLocks()
+        prepTransit()
 
         local fromPos = myHrp.Position
         local totalDist = (targetPos - fromPos).Magnitude
-        if totalDist > 16 then
-            local burstSteps = math.clamp(math.ceil(totalDist / 16), 2, 24)
-            for s = 1, burstSteps do
+        if totalDist > 55 then
+            local hopSteps = math.clamp(math.ceil(totalDist / 85), 2, 4)
+            local safeSubY = math.min(fromPos.Y, targetPos.Y)
+            for s = 1, hopSteps - 1 do
                 if checkFn and not checkFn() then return false end
-                vdESPState.setMovementBypass(myChar, true)
-                clearTransitLocks()
-                local stepPos = fromPos:Lerp(targetPos, s / burstSteps)
+                prepTransit()
+                local stepPos = fromPos:Lerp(targetPos, s / hopSteps)
+                if setCollisionFalse then
+                    stepPos = Vector3.new(stepPos.X, math.min(stepPos.Y, safeSubY), stepPos.Z)
+                end
                 myHrp.AssemblyLinearVelocity = Vector3.zero
                 myHrp.AssemblyAngularVelocity = Vector3.zero
                 myHrp.CFrame = CFrame.new(stepPos)
-                task.wait(0.01)
+                task.wait(0.0001)
             end
         end
 
         local tol = verifyTol or 6.0
-        for _ = 1, 3 do
+        for _ = 1, 15 do
             if checkFn and not checkFn() then return false end
-            clearTransitLocks()
+            prepTransit()
             myHrp.AssemblyLinearVelocity = Vector3.zero
             myHrp.AssemblyAngularVelocity = Vector3.zero
             myHrp.CFrame = CFrame.new(targetPos)
-            if (myHrp.Position - targetPos).Magnitude <= tol then
+            task.wait(0.0001)
+            if not myHrp or not myHrp.Parent then return false end
+            prepTransit()
+            if (myHrp.Position - targetPos).Magnitude <= tol and not myHrp.Anchored then
+                myHrp.CFrame = CFrame.new(targetPos)
+                myHrp.AssemblyLinearVelocity = Vector3.zero
+                myHrp.AssemblyAngularVelocity = Vector3.zero
                 return true
             end
-            task.wait(0.015)
         end
         return (myHrp.Position - targetPos).Magnitude <= tol
     end
@@ -6745,10 +6763,13 @@ local function isGenSlotBusy(pt, myChar)
     return false
 end
 
-local function findNearestGeneratorSlotsEX()
+local function findNearestGeneratorSlotsEX(excludeModel)
     local myChar = player.Character
     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
     local myPos = myHrp and myHrp.Position or Vector3.new(0, 0, 0)
+    local killer = getKiller and getKiller()
+    local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
+    local kPos = kHrp and kHrp.Position or nil
     local genBuckets = {}
     local seenPoints = {}
 
@@ -6761,18 +6782,23 @@ local function findNearestGeneratorSlotsEX()
                 local isCompleted, prog = isGeneratorCompleted(pt)
                 if not isCompleted and (prog or 0) < 99.5 then
                     local bucket = genBuckets[genModel]
+                    local myD = (myPos - pt.Position).Magnitude
+                    local kD = kPos and (kPos - pt.Position).Magnitude or math.huge
                     if not bucket then
                         bucket = {
                             model = genModel,
                             progress = prog or 0,
-                            dist = (myPos - pt.Position).Magnitude,
+                            dist = myD,
+                            killerDist = kD,
                             points = {}
                         }
                         genBuckets[genModel] = bucket
                     else
-                        local d = (myPos - pt.Position).Magnitude
-                        if d < bucket.dist then
-                            bucket.dist = d
+                        if myD < bucket.dist then
+                            bucket.dist = myD
+                        end
+                        if kD < bucket.killerDist then
+                            bucket.killerDist = kD
                         end
                     end
                     table.insert(bucket.points, pt)
@@ -6818,6 +6844,9 @@ local function findNearestGeneratorSlotsEX()
             if busyA ~= busyB then
                 return busyA < busyB
             end
+            if kPos then
+                return (kPos - a.Position).Magnitude > (kPos - b.Position).Magnitude
+            end
             return (myPos - a.Position).Magnitude < (myPos - b.Position).Magnitude
         end)
         table.insert(candidates, bucket)
@@ -6825,9 +6854,34 @@ local function findNearestGeneratorSlotsEX()
 
     if #candidates == 0 then return nil, nil, nil end
 
-    table.sort(candidates, function(a, b)
-        return a.dist < b.dist
-    end)
+    if excludeModel and #candidates > 1 then
+        local filtered = {}
+        for _, c in ipairs(candidates) do
+            if c.model ~= excludeModel then
+                table.insert(filtered, c)
+            end
+        end
+        if #filtered > 0 then
+            candidates = filtered
+        end
+    end
+
+    if kPos then
+        -- Always choose generator furthest away from Killer (break very close ties by higher progress / closer distance)
+        table.sort(candidates, function(a, b)
+            if math.abs(a.killerDist - b.killerDist) > 10 then
+                return a.killerDist > b.killerDist
+            end
+            if math.abs(a.progress - b.progress) > 2 then
+                return a.progress > b.progress
+            end
+            return a.dist < b.dist
+        end)
+    else
+        table.sort(candidates, function(a, b)
+            return a.dist < b.dist
+        end)
+    end
     return candidates[1].points[1], candidates[1].model, candidates[1].points, false
 end
 
@@ -6909,21 +6963,27 @@ local function startGhostRepairEXThread()
     end
 
     local function computeTrueUndergroundGenPos(pt, genModel)
-        local baseDepth = math.clamp(tonumber(ghostEXActiveDepth or ghostDepthOffset) or 7.0, 4.5, 10.0)
         local floorY = ghostEXCurrentFloorY
         if not floorY and vdESPState.findFloorYBelow then
             floorY = vdESPState.findFloorYBelow(pt.Position.X, pt.Position.Y, pt.Position.Z, genModel)
             ghostEXCurrentFloorY = floorY
         end
 
-        local desiredY = pt.Position.Y - math.max(baseDepth, 7.2)
+        local sliderDepth = math.clamp(tonumber(ghostEXActiveDepth or ghostDepthOffset) or 7.0, 5.2, 8.2)
+        local depthSteps = { math.clamp(sliderDepth, 5.6, 7.6), 6.4, 5.8 }
+        local desiredBelowPt = depthSteps[(ghostEXRetryDepthStep % 3) + 1] or 7.0
+        local desiredY = pt.Position.Y - desiredBelowPt
+
         if floorY then
-            -- Keep entire character (HRP +2.5 head) strictly buried beneath solid floor on Killer POV
-            local minBuriedMargins = { 5.2, 4.7, 4.3 }
-            local margin = minBuriedMargins[(ghostEXRetryDepthStep % 3) + 1] or 5.2
-            local buriedY = floorY - margin
-            if buriedY < desiredY then
-                desiredY = math.max(buriedY, pt.Position.Y - math.max(baseDepth + 2.2, 9.2))
+            -- Head is ~2.5 studs above HRP center: keeping HRP <= floorY - 3.3 guarantees full body is buried underground
+            local maxSafeBuriedY = floorY - 3.3
+            if desiredY > maxSafeBuriedY then
+                desiredY = maxSafeBuriedY
+            end
+            -- Stay within server RepairEvent interaction radius (~8.0 studs max from RepairPoint)
+            local maxReachMinY = pt.Position.Y - 8.0
+            if desiredY < maxReachMinY then
+                desiredY = math.min(maxSafeBuriedY, maxReachMinY)
             end
         end
         return Vector3.new(pt.Position.X, desiredY, pt.Position.Z)
@@ -7043,22 +7103,28 @@ local function startGhostRepairEXThread()
         local repairFailCount = 0
         local teleportFailCount = 0
 
-        local function isBlockedByStandaloneAutoFlee(pt)
+        local function isYieldingHoldOnly()
             if not vdESPState then return false end
-            if vdESPState.fleeKnockEXEnabled and vdESPState.fleeKnockEXBlocking then return true end
-            if vdESPState.rescueEXEnabled and (vdESPState.rescueEXWantsPriority or (not vdESPState.rescueEXPaused and vdESPState.rescueEXHoldPos ~= nil)) then
+            return (vdESPState.fleeKnockEXEnabled and vdESPState.fleeKnockEXBlocking)
+                or (vdESPState.autoFleeEnabled and (vdESPState.autoFleeBlocking or vdESPState.autoFleeHoldPos ~= nil))
+                or (vdESPState.rescueEXEnabled and (vdESPState.rescueEXWantsPriority or (not vdESPState.rescueEXPaused and vdESPState.rescueEXHoldPos ~= nil)))
+                or (vdESPState.autoLeverEXEnabled and (vdESPState.autoLeverEXWantsPriority or (not vdESPState.autoLeverEXPaused and vdESPState.autoLeverEXHoldPos ~= nil)))
+        end
+
+        local function isBlockedByStandaloneAutoFlee(pt, myHrpRef)
+            if isYieldingHoldOnly() then return true end
+            if not vdESPState then return false end
+            if vdESPState.autoFleeEnabled and vdESPState.autoFleePauseUntil and tick() < vdESPState.autoFleePauseUntil then
                 return true
             end
-            if vdESPState.autoLeverEXEnabled and (vdESPState.autoLeverEXWantsPriority or (not vdESPState.autoLeverEXPaused and vdESPState.autoLeverEXHoldPos ~= nil)) then
-                return true
-            end
-            if not vdESPState.autoFleeEnabled then return false end
-            if vdESPState.autoFleeBlocking then return true end
-            if vdESPState.autoFleePauseUntil and tick() < vdESPState.autoFleePauseUntil then return true end
-            if pt and pt.Parent then
-                local killer = getKiller()
-                local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
-                if kHrp and (kHrp.Position - pt.Position).Magnitude <= (vdESPState.autoFleeDistance or 100) then
+            local safeDist = tonumber(vdESPState.autoFleeDistance) or 100
+            local killer = getKiller and getKiller()
+            local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
+            if kHrp then
+                if pt and pt.Parent and (kHrp.Position - pt.Position).Magnitude <= safeDist then
+                    return true
+                end
+                if myHrpRef and myHrpRef.Parent and (kHrp.Position - myHrpRef.Position).Magnitude <= safeDist then
                     return true
                 end
             end
@@ -7174,17 +7240,17 @@ local function startGhostRepairEXThread()
                         return
                     end
 
-                    if isBlockedByStandaloneAutoFlee(nextPt) then
+                    if isBlockedByStandaloneAutoFlee(nextPt, myHrp) then
                         ghostEXTransiting = false
                         ghostEXHoldPos = nil
-                        local yieldingToOtherEX = vdESPState and (
-                            (vdESPState.rescueEXEnabled and vdESPState.rescueEXWantsPriority)
-                            or (vdESPState.autoLeverEXEnabled and vdESPState.autoLeverEXWantsPriority)
-                        )
-                        if not yieldingToOtherEX then
+                        currentGhostEXPoint = nil
+                        currentGhostEXModel = nil
+                        currentGenSlots = nil
+                        clearGhostEXGenMarker()
+                        if not isYieldingHoldOnly() then
                             unlockGhostEXMotion(myChar, myHrp, false, true)
                         end
-                        task.wait(0.15)
+                        task.wait(0.10)
                         return
                     end
 
@@ -7200,13 +7266,13 @@ local function startGhostRepairEXThread()
                         arrived = vdESPState.microTransitTo(myChar, myHrp, initDestPos, function()
                             return checkEXActive()
                                 and nextPt.Parent
-                                and not isBlockedByStandaloneAutoFlee(nextPt)
+                                and not isBlockedByStandaloneAutoFlee(nextPt, myHrp)
                                 and not isCharacterKnocked(myChar)
                                 and not isCharacterHooked(myChar)
                                 and not (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar))
                         end, true, 6.5)
                     end
-                    if not checkEXActive() or not nextPt.Parent or isBlockedByStandaloneAutoFlee(nextPt) or isCharacterKnocked(myChar) or isCharacterHooked(myChar) or (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar)) then
+                    if not checkEXActive() or not nextPt.Parent or isBlockedByStandaloneAutoFlee(nextPt, myHrp) or isCharacterKnocked(myChar) or isCharacterHooked(myChar) or (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar)) then
                         ghostEXTransiting = false
                         return
                     end
@@ -7214,7 +7280,7 @@ local function startGhostRepairEXThread()
                         ghostEXTransiting = false
                         ghostEXHoldPos = nil
                         teleportFailCount = teleportFailCount + 1
-                        unlockGhostEXMotion(myChar, myHrp, true, true)
+                        unlockGhostEXMotion(myChar, myHrp, true, not isYieldingHoldOnly())
                         if vdESPState.setMovementBypass then
                             vdESPState.setMovementBypass(myChar, false)
                         end
@@ -7243,16 +7309,25 @@ local function startGhostRepairEXThread()
                     ghostEXTransiting = false
                 end
 
-                if isBlockedByStandaloneAutoFlee(currentGhostEXPoint) then
+                if isBlockedByStandaloneAutoFlee(currentGhostEXPoint, myHrp) then
+                    local oldModel = currentGhostEXModel
                     ghostEXHoldPos = nil
-                    local yieldingToOtherEX = vdESPState and (
-                        (vdESPState.rescueEXEnabled and vdESPState.rescueEXWantsPriority)
-                        or (vdESPState.autoLeverEXEnabled and vdESPState.autoLeverEXWantsPriority)
-                    )
-                    if not yieldingToOtherEX then
+                    currentGhostEXPoint = nil
+                    currentGhostEXModel = nil
+                    currentGenSlots = nil
+                    clearGhostEXGenMarker()
+                    if not isYieldingHoldOnly() then
+                        local altPt = findNearestGeneratorSlotsEX(oldModel)
+                        local safeRange = tonumber(vdESPState and vdESPState.autoFleeDistance) or 100
+                        local kNow = getKiller and getKiller()
+                        local kHrpNow = kNow and kNow:FindFirstChild("HumanoidRootPart")
+                        if altPt and (not kHrpNow or (altPt.Position - kHrpNow.Position).Magnitude > safeRange + 5) then
+                            unlockGhostEXMotion(myChar, myHrp, true, false)
+                            return
+                        end
                         unlockGhostEXMotion(myChar, myHrp, false, true)
                     end
-                    task.wait(0.15)
+                    task.wait(0.08)
                     return
                 end
 
@@ -7270,7 +7345,7 @@ local function startGhostRepairEXThread()
                 local _, currentProg = isGeneratorCompleted(targetPoint)
                 WindUI:Notify({
                     Title = "🟣 Ghost Gen EX",
-                    Content = string.format("Locked onto nearest %s [%.0f%%] (Purple Marker)", genName, currentProg or 0),
+                    Content = string.format("Locked onto safest %s [%.0f%%] (Purple Marker)", genName, currentProg or 0),
                     Duration = 2
                 })
 
@@ -7280,12 +7355,12 @@ local function startGhostRepairEXThread()
                     local dPos = computeTrueUndergroundGenPos(pt, genModel)
                     ghostEXHoldPos = dPos
                     local okTransit = true
-                    if myHrp and (myHrp.Position - dPos).Magnitude > 16 and vdESPState.microTransitTo then
+                    if myHrp and (myHrp.Position - dPos).Magnitude > 6.5 and vdESPState.microTransitTo then
                         ghostEXTransiting = true
                         okTransit = vdESPState.microTransitTo(myChar, myHrp, dPos, function()
                             return checkEXActive()
                                 and pt.Parent
-                                and not isBlockedByStandaloneAutoFlee(pt)
+                                and not isBlockedByStandaloneAutoFlee(pt, myHrp)
                                 and not isCharacterKnocked(myChar)
                                 and not isCharacterHooked(myChar)
                                 and not (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar))
@@ -7331,7 +7406,7 @@ local function startGhostRepairEXThread()
                     if not checkEXActive() or not targetPoint.Parent then return end
                     teleportFailCount = teleportFailCount + 1
                     ghostEXHoldPos = nil
-                    unlockGhostEXMotion(myChar, myHrp, true, true)
+                    unlockGhostEXMotion(myChar, myHrp, true, not isYieldingHoldOnly())
                     if vdESPState.setMovementBypass then
                         vdESPState.setMovementBypass(myChar, false)
                     end
@@ -7351,7 +7426,7 @@ local function startGhostRepairEXThread()
                     return
                 end
                 teleportFailCount = 0
-                if not checkEXActive() or not targetPoint.Parent or isBlockedByStandaloneAutoFlee(targetPoint) then return end
+                if not checkEXActive() or not targetPoint.Parent or isBlockedByStandaloneAutoFlee(targetPoint, myHrp) then return end
 
                 local requestId = HttpService:GenerateGUID(false)
                 ghostEXRepairRequestId = requestId
@@ -7367,17 +7442,24 @@ local function startGhostRepairEXThread()
                         break
                     end
 
-                    if isBlockedByStandaloneAutoFlee(targetPoint) then
+                    if isBlockedByStandaloneAutoFlee(targetPoint, myHrp) then
                         pcall(function()
                             remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, requestId, myChar)
                         end)
                         myChar:SetAttribute("isRepairing", false)
+                        clearGhostEXGenMarker()
+                        currentGhostEXPoint = nil
+                        currentGhostEXModel = nil
+                        currentGenSlots = nil
                         ghostEXHoldPos = nil
-                        local yieldingToOtherEX = vdESPState and (
-                            (vdESPState.rescueEXEnabled and vdESPState.rescueEXWantsPriority)
-                            or (vdESPState.autoLeverEXEnabled and vdESPState.autoLeverEXWantsPriority)
-                        )
-                        unlockGhostEXMotion(myChar, myHrp, true, not yieldingToOtherEX)
+                        if not isYieldingHoldOnly() then
+                            local altPt = findNearestGeneratorSlotsEX(genModel)
+                            local safeRange = tonumber(vdESPState and vdESPState.autoFleeDistance) or 100
+                            local kNow = getKiller and getKiller()
+                            local kHrpNow = kNow and kNow:FindFirstChild("HumanoidRootPart")
+                            local restoreColl = not (altPt and (not kHrpNow or (altPt.Position - kHrpNow.Position).Magnitude > safeRange + 5))
+                            unlockGhostEXMotion(myChar, myHrp, true, restoreColl)
+                        end
                         break
                     end
 
@@ -9053,6 +9135,11 @@ pcall(function()
         fleeGroundY = nil
     end
 
+    local cachedSafeNodes = {}
+    local cachedGenFloors = setmetatable({}, { __mode = "k" })
+    local lastCacheRefreshAt = 0
+    local cachedCharRef = nil
+
     local function buildMapRayParams()
         local exclude = {}
         local lobby = workspace:FindFirstChild("Lobby")
@@ -9071,10 +9158,34 @@ pcall(function()
         return rp
     end
 
-    local function getMapBoundsAndAnchors(fallbackY)
+    local function getCachedUndergroundDepth()
+        return math.clamp(math.max(tonumber(ghostDepthOffset) or 7.0, 5.2), 5.2, 10.0)
+    end
+
+    local function computeGenUndergroundPoint(pt)
+        local floorY = cachedGenFloors[pt]
+        if not floorY and vdESPState.findFloorYBelow then
+            local gm = (getGeneratorModel and getGeneratorModel(pt)) or pt.Parent
+            floorY = vdESPState.findFloorYBelow(pt.Position.X, pt.Position.Y, pt.Position.Z, gm)
+            if floorY then
+                cachedGenFloors[pt] = floorY
+            end
+        end
+        local depth = math.clamp(tonumber(ghostDepthOffset) or 7.0, 5.6, 7.6)
+        local desiredY = pt.Position.Y - depth
+        if floorY then
+            local maxSafeBuriedY = floorY - 3.3
+            if desiredY > maxSafeBuriedY then desiredY = maxSafeBuriedY end
+            local maxReachMinY = pt.Position.Y - 8.0
+            if desiredY < maxReachMinY then desiredY = math.min(maxSafeBuriedY, maxReachMinY) end
+        end
+        return Vector3.new(pt.Position.X, desiredY, pt.Position.Z), floorY or (pt.Position.Y - 3.5)
+    end
+
+    local function refreshSafeNodeCache(refPos)
+        local rp = buildMapRayParams()
         local anchors = {}
-        local minY = math.huge
-        local maxY = -math.huge
+        local minY, maxY = math.huge, -math.huge
 
         local function pushAnchor(pos)
             table.insert(anchors, pos)
@@ -9086,19 +9197,18 @@ pcall(function()
             for _, pt in ipairs(CollectionService:GetTagged("GeneratorPoint")) do
                 if pt:IsA("BasePart") and pt:IsDescendantOf(workspace) and not pt:FindFirstAncestor("Lobby") then
                     pushAnchor(pt.Position)
+                    if not cachedGenFloors[pt] and vdESPState.findFloorYBelow then
+                        local gm = (getGeneratorModel and getGeneratorModel(pt)) or pt.Parent
+                        local fy = vdESPState.findFloorYBelow(pt.Position.X, pt.Position.Y, pt.Position.Z, gm)
+                        if fy then cachedGenFloors[pt] = fy end
+                    end
                 end
             end
-        end)
-
-        pcall(function()
             for _, pt in ipairs(CollectionService:GetTagged("UnhookPoint")) do
                 if pt:IsA("BasePart") and pt:IsDescendantOf(workspace) and not pt:FindFirstAncestor("Lobby") then
                     pushAnchor(pt.Position)
                 end
             end
-        end)
-
-        pcall(function()
             local map = workspace:FindFirstChild("Map") or workspace:FindFirstChild("map")
             if map then
                 for _, folderName in ipairs({ "Generators", "new Generators", "generators", "Hooks", "Exits", "ExitGates", "Gates" }) do
@@ -9106,9 +9216,7 @@ pcall(function()
                     if f then
                         for _, child in ipairs(f:GetChildren()) do
                             local p = child:IsA("BasePart") and child or (child:IsA("Model") and (child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart")))
-                            if p then
-                                pushAnchor(p.Position)
-                            end
+                            if p then pushAnchor(p.Position) end
                         end
                     end
                 end
@@ -9116,118 +9224,133 @@ pcall(function()
         end)
 
         if minY == math.huge then
-            minY = fallbackY - 35
-            maxY = fallbackY + 35
-        end
-        return anchors, minY, maxY
-    end
-
-    local function raycastValidFloor(rp, x, yHint, z, minY, maxY)
-        local origin = Vector3.new(x, yHint + 28, z)
-        local hit = workspace:Raycast(origin, Vector3.new(0, -85, 0), rp)
-        if not hit or not hit.Instance then return nil end
-        if not hit.Instance.CanCollide then return nil end
-        if hit.Instance:FindFirstAncestor("Lobby") then return nil end
-        if hit.Normal.Y < 0.65 then return nil end
-        if hit.Position.Y < (minY - 18) or hit.Position.Y > (maxY + 38) then return nil end
-
-        local upHit = workspace:Raycast(hit.Position + Vector3.new(0, 1.5, 0), Vector3.new(0, 4.2, 0), rp)
-        if upHit and upHit.Instance and upHit.Instance.CanCollide then
-            return nil
+            local baseY = refPos and refPos.Y or 0
+            minY = baseY - 35
+            maxY = baseY + 35
         end
 
-        return hit.Position + Vector3.new(0, 3.2, 0), hit.Position.Y
-    end
-
-    local function findBestFleePosition(myChar, myPos, kPos, minSafeDist)
-        local rp = buildMapRayParams()
-        local anchors, minY, maxY = getMapBoundsAndAnchors(myPos.Y)
-        local candidates = {}
-
-        local function tryAddCandidate(x, yHint, z, preferBonus)
-            local gp, floorY = raycastValidFloor(rp, x, yHint, z, minY, maxY)
-            if gp then
-                table.insert(candidates, {
-                    pos = gp,
-                    floorY = floorY,
-                    kDist = (gp - kPos).Magnitude,
-                    myDist = (gp - myPos).Magnitude,
-                    bonus = preferBonus or 0
-                })
-            end
+        local nodes = {}
+        local function sampleNode(x, yHint, z)
+            local hit = workspace:Raycast(Vector3.new(x, yHint + 28, z), Vector3.new(0, -85, 0), rp)
+            if not hit or not hit.Instance then return end
+            if not hit.Instance.CanCollide or hit.Instance:FindFirstAncestor("Lobby") then return end
+            if hit.Normal.Y < 0.65 then return end
+            if hit.Position.Y < (minY - 18) or hit.Position.Y > (maxY + 38) then return end
+            local upHit = workspace:Raycast(hit.Position + Vector3.new(0, 1.5, 0), Vector3.new(0, 4.2, 0), rp)
+            if upHit and upHit.Instance and upHit.Instance.CanCollide then return end
+            table.insert(nodes, {
+                groundPos = hit.Position + Vector3.new(0, 3.2, 0),
+                floorY = hit.Position.Y
+            })
         end
 
-        for i = 1, math.min(#anchors, 36) do
+        for i = 1, math.min(#anchors, 32) do
             local a = anchors[i]
-            tryAddCandidate(a.X + 2.5, a.Y, a.Z + 2.5, 10)
+            sampleNode(a.X + 2.5, a.Y, a.Z + 2.5)
         end
 
-        local flatAway = Vector3.new(myPos.X - kPos.X, 0, myPos.Z - kPos.Z)
-        if flatAway.Magnitude < 0.1 then
-            flatAway = Vector3.new(1, 0, 0)
-        else
-            flatAway = flatAway.Unit
-        end
-
-        local baseAngle = math.atan2(flatAway.Z, flatAway.X)
-        local angleOffsets = { 0, 0.55, -0.55, 1.15, -1.15, 1.85, -1.85, 2.55, -2.55, math.pi }
-        local radii = {}
-        local r1 = math.max(minSafeDist + 18, 45)
-        table.insert(radii, r1)
-        if (minSafeDist + 48) <= 320 then
-            table.insert(radii, minSafeDist + 48)
-        end
-        for _, fixedR in ipairs({ 95, 160, 235, 305 }) do
-            if fixedR > (minSafeDist + 8) then
-                table.insert(radii, fixedR)
+        local center = refPos or (anchors[1] or Vector3.new(0, 10, 0))
+        for _, rad in ipairs({ 75, 130, 195, 260 }) do
+            for aIdx = 0, 7 do
+                local ang = aIdx * (math.pi / 4)
+                sampleNode(center.X + math.cos(ang) * rad, center.Y, center.Z + math.sin(ang) * rad)
             end
         end
 
-        local tested = 0
-        for _, rad in ipairs(radii) do
-            for _, angOff in ipairs(angleOffsets) do
-                if tested >= 42 then break end
-                tested = tested + 1
-                local ang = baseAngle + angOff
-                local tx = kPos.X + math.cos(ang) * rad
-                local tz = kPos.Z + math.sin(ang) * rad
-                tryAddCandidate(tx, myPos.Y, tz, 0)
-            end
-            if tested >= 42 then break end
+        if #nodes > 0 then
+            cachedSafeNodes = nodes
+            lastCacheRefreshAt = tick()
         end
-
-        if #candidates == 0 then
-            return nil, 0, nil
-        end
-
-        local bestSafe = nil
-        local bestSafeScore = -math.huge
-        local furthestAny = nil
-        local maxAnyDist = -1
-
-        for _, c in ipairs(candidates) do
-            if c.kDist > maxAnyDist then
-                maxAnyDist = c.kDist
-                furthestAny = c
-            end
-            if c.kDist >= (minSafeDist + 8) then
-                local excess = math.max(0, c.kDist - (minSafeDist + 28))
-                local score = c.bonus - (excess * 0.25) - (c.myDist * 0.05)
-                if score > bestSafeScore then
-                    bestSafeScore = score
-                    bestSafe = c
-                end
-            end
-        end
-
-        local chosen = bestSafe or furthestAny
-        return chosen.pos, chosen.kDist, chosen.floorY
     end
 
-    local function computeUndergroundFleeTarget(groundPos, knownFloorY)
-        local floorY = knownFloorY or (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(groundPos.X, groundPos.Y, groundPos.Z, nil)) or (groundPos.Y - 3.2)
-        local depth = math.clamp(math.max(tonumber(ghostDepthOffset) or 7.0, 5.2), 5.2, 10.0)
-        return Vector3.new(groundPos.X, floorY - depth, groundPos.Z), floorY
+    local function pickFastUndergroundTarget(myChar, myPos, kPos, minSafeDist)
+        -- 1. If Underground Repair Generator EX is active, prefer an unfinished generator strictly far from Killer
+        if ghostRepairEXEnabled and not vdESPState.ghostEXPaused then
+            local bestGenPos, bestGenFloorY, bestGenKDist = nil, nil, -1
+            pcall(function()
+                for _, pt in ipairs(CollectionService:GetTagged("GeneratorPoint")) do
+                    if pt:IsA("BasePart") and pt:IsDescendantOf(workspace) and not pt:IsDescendantOf(myChar) and not pt:FindFirstAncestor("Lobby") then
+                        local done = isGeneratorCompleted and isGeneratorCompleted(pt)
+                        if not done then
+                            local kd = (pt.Position - kPos).Magnitude
+                            if kd > bestGenKDist then
+                                bestGenKDist = kd
+                                bestGenPos, bestGenFloorY = computeGenUndergroundPoint(pt)
+                            end
+                        end
+                    end
+                end
+            end)
+            if bestGenPos and bestGenKDist >= (minSafeDist + 8) then
+                return bestGenPos, bestGenKDist, bestGenFloorY
+            end
+        end
+
+        -- 2. Otherwise use pre-cached floor nodes in < 0.05ms (refresh once only if completely empty)
+        if #cachedSafeNodes == 0 then
+            refreshSafeNodeCache(myPos)
+        end
+
+        local depth = getCachedUndergroundDepth()
+        local bestNode, bestKDist = nil, -1
+        for _, node in ipairs(cachedSafeNodes) do
+            local kd = (node.groundPos - kPos).Magnitude
+            if kd > bestKDist then
+                bestKDist = kd
+                bestNode = node
+            end
+        end
+
+        if bestNode then
+            local targetPos = Vector3.new(bestNode.groundPos.X, bestNode.floorY - depth, bestNode.groundPos.Z)
+            return targetPos, bestKDist, bestNode.floorY
+        end
+
+        -- 3. Emergency radial geometric fallback (zero raycast fail-safe)
+        local flatAway = Vector3.new(myPos.X - kPos.X, 0, myPos.Z - kPos.Z)
+        flatAway = (flatAway.Magnitude >= 0.1) and flatAway.Unit or Vector3.new(1, 0, 0)
+        local escapeDist = math.max(minSafeDist + 35, 135)
+        local fallbackXZ = Vector3.new(kPos.X + flatAway.X * escapeDist, myPos.Y, kPos.Z + flatAway.Z * escapeDist)
+        local floorY = (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(fallbackXZ.X, myPos.Y, fallbackXZ.Z, nil)) or (myPos.Y - 3.0)
+        local targetPos = Vector3.new(fallbackXZ.X, floorY - depth, fallbackXZ.Z)
+        return targetPos, (targetPos - kPos).Magnitude, floorY
+    end
+
+    local function cancelActiveRepairImmediately(myChar)
+        pcall(function()
+            if myChar:GetAttribute("isRepairing") == true then
+                myChar:SetAttribute("isRepairing", false)
+            end
+            local hrp = myChar:FindFirstChild("HumanoidRootPart")
+            if hrp then CollectionService:RemoveTag(hrp, "doing action") end
+            CollectionService:RemoveTag(myChar, "doing action")
+            local remotes = getVDRemotes and getVDRemotes()
+            if lastCapturedGenPoint and remotes and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
+                remotes.Generator.RepairEvent:FireServer(lastCapturedGenPoint, false, nil, lastCapturedRepairRequestId or HttpService:GenerateGUID(false), myChar)
+            end
+        end)
+    end
+
+    local function applyImmediateUndergroundEscape(myChar, myHrp, kHrp, targetDist)
+        cancelActiveRepairImmediately(myChar)
+        vdESPState.autoFleeBlocking = true
+        vdESPState.autoFleePauseUntil = tick() + 0.9
+        ghostEXHoldPos = nil
+
+        local undergroundPos, safeKDist, floorY = pickFastUndergroundTarget(myChar, myHrp.Position, kHrp.Position, targetDist)
+        if not undergroundPos then return nil, 0, nil end
+
+        fleeGroundY = floorY
+        vdESPState.autoFleeHoldPos = undergroundPos
+        if vdESPState.setMovementBypass then
+            vdESPState.setMovementBypass(myChar, true)
+        end
+        unlockFleeConstraints(myChar, myHrp, false)
+        myHrp.Anchored = false
+        myHrp.AssemblyLinearVelocity = Vector3.zero
+        myHrp.AssemblyAngularVelocity = Vector3.zero
+        myHrp.CFrame = CFrame.new(undergroundPos)
+        return undergroundPos, safeKDist, floorY
     end
 
     local function startAutoFleeThread()
@@ -9246,12 +9369,35 @@ pcall(function()
             pcall(function() enforceFleeUndergroundPos(0.25) end)
         end)
 
+        -- Zero-latency per-frame distance monitor + instant underground snap
         fleeHeartbeatConn = RunService.Heartbeat:Connect(function()
             if not isFleeValid() then
                 if fleeHeartbeatConn then pcall(function() fleeHeartbeatConn:Disconnect() end) fleeHeartbeatConn = nil end
                 return
             end
-            pcall(function() enforceFleeUndergroundPos(0.25) end)
+            pcall(function()
+                enforceFleeUndergroundPos(0.25)
+                if fleePaused or fleeTransiting then return end
+                if isPlayerKiller and isPlayerKiller() then return end
+                local myChar = player.Character
+                local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+                local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                if not myChar or not myHrp or not hum or hum.Health <= 0 then return end
+                if (isEntityInLobbyOrSpectating and isEntityInLobbyOrSpectating(myChar, player))
+                    or isCharacterHooked(myChar)
+                    or isCharacterKnocked(myChar)
+                    or (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar)) then
+                    return
+                end
+                local killer = getKiller and getKiller()
+                local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
+                if not kHrp then return end
+
+                local targetDist = vdESPState.autoFleeDistance or 100
+                if (myHrp.Position - kHrp.Position).Magnitude <= targetDist and not vdESPState.autoFleeHoldPos then
+                    applyImmediateUndergroundEscape(myChar, myHrp, kHrp, targetDist)
+                end
+            end)
         end)
 
         -- 0.0001s real-position underground checker while fleeing/hiding
@@ -9262,6 +9408,7 @@ pcall(function()
             end
         end)
 
+        -- Background map cache builder + arrival verification & 2-fail -> 2s reset manager
         task.spawn(function()
             local lastFleeAt = 0
             local stayUndergroundUntil = 0
@@ -9290,6 +9437,12 @@ pcall(function()
                         return
                     end
 
+                    if cachedCharRef ~= myChar then
+                        cachedCharRef = myChar
+                        cachedSafeNodes = {}
+                        cachedGenFloors = setmetatable({}, { __mode = "k" })
+                    end
+
                     if (isEntityInLobbyOrSpectating and isEntityInLobbyOrSpectating(myChar, player))
                         or isCharacterHooked(myChar)
                         or isCharacterKnocked(myChar)
@@ -9300,6 +9453,10 @@ pcall(function()
                         fleeFailCount = 0
                         task.wait(0.15)
                         return
+                    end
+
+                    if (#cachedSafeNodes == 0 or (tick() - lastCacheRefreshAt) >= 2.0) and not vdESPState.autoFleeBlocking then
+                        refreshSafeNodeCache(myHrp.Position)
                     end
 
                     local killer = getKiller and getKiller()
@@ -9316,7 +9473,7 @@ pcall(function()
                                 if vdESPState.setMovementBypass then vdESPState.setMovementBypass(myChar, false) end
                             end
                         end
-                        task.wait(0.12)
+                        task.wait(0.10)
                         return
                     end
 
@@ -9325,62 +9482,69 @@ pcall(function()
 
                     if curDist <= targetDist then
                         vdESPState.autoFleeBlocking = true
-                        vdESPState.autoFleePauseUntil = tick() + 1.2
+                        vdESPState.autoFleePauseUntil = tick() + 0.9
                         ghostEXHoldPos = nil
 
                         local now = tick()
-                        local needTransit = (not vdESPState.autoFleeHoldPos) or ((myHrp.Position - vdESPState.autoFleeHoldPos).Magnitude > 6.5) or ((now - lastFleeAt) >= 0.35)
-                        if needTransit and (now - lastFleeAt) >= 0.15 then
-                            local safeGroundPos, safeKDist, groundFloorY = findBestFleePosition(myChar, myHrp.Position, kHrp.Position, targetDist)
-                            local undergroundPos, floorY = nil, nil
-                            if safeGroundPos then
-                                undergroundPos, floorY = computeUndergroundFleeTarget(safeGroundPos, groundFloorY)
+                        local holdPos = vdESPState.autoFleeHoldPos
+                        local drifted = (not holdPos) or ((myHrp.Position - holdPos).Magnitude > 6.5)
+
+                        -- Check only if holdPos doesn't exist, real body rubberbanded/stuck, or a much safer spot emerged
+                        local shouldMove = drifted
+                        if not shouldMove and (now - lastFleeAt) >= 0.75 then
+                            local candPos, candDist = pickFastUndergroundTarget(myChar, myHrp.Position, kHrp.Position, targetDist)
+                            if candPos and candDist > (curDist + 24) and (holdPos - candPos).Magnitude > 18 then
+                                shouldMove = true
                             end
+                        end
 
-                            local canTeleport = false
-                            if undergroundPos then
-                                if safeKDist >= (targetDist + 5) or safeKDist > (curDist + 10) or not vdESPState.autoFleeHoldPos then
-                                    canTeleport = true
-                                end
-                            end
-
-                            if canTeleport then
-                                fleeTransiting = true
-                                vdESPState.autoFleeHoldPos = nil
-                                local arrived = true
-                                if vdESPState.microTransitTo then
-                                    arrived = vdESPState.microTransitTo(myChar, myHrp, undergroundPos, function()
-                                        return isFleeValid() and not isCharacterKnocked(myChar) and not (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar))
-                                    end, true, 6.5)
-                                end
-                                if not isFleeValid() or isCharacterKnocked(myChar) or (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar)) then
-                                    fleeTransiting = false
-                                    return
-                                end
-
-                                fleeGroundY = floorY
-                                vdESPState.autoFleeHoldPos = undergroundPos
-                                fleeTransiting = false
-
-                                local settleEnd = tick() + 0.06
-                                while tick() < settleEnd and isFleeValid() do
-                                    enforceFleeUndergroundPos(0.25)
+                        if shouldMove then
+                            local undergroundPos, safeKDist, floorY = applyImmediateUndergroundEscape(myChar, myHrp, kHrp, targetDist)
+                            if not undergroundPos then
+                                fleeFailCount = fleeFailCount + 1
+                            else
+                                -- Rapid 0.0001s verify; fall back to fast micro-hop if server rubberbanded on first frame
+                                local landed = false
+                                for _ = 1, 10 do
+                                    if not isFleeValid() or isCharacterKnocked(myChar) or (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar)) then
+                                        return
+                                    end
+                                    if enforceFleeUndergroundPos(6.0) then
+                                        landed = true
+                                        break
+                                    end
                                     task.wait(0.0001)
                                 end
 
-                                if arrived and myHrp.Parent and (myHrp.Position - undergroundPos).Magnitude <= 6.5 then
+                                if not landed and vdESPState.microTransitTo then
+                                    fleeTransiting = true
+                                    landed = vdESPState.microTransitTo(myChar, myHrp, undergroundPos, function()
+                                        return isFleeValid() and not isCharacterKnocked(myChar) and not (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar))
+                                    end, true, 6.5)
+                                    fleeTransiting = false
+                                    if landed then
+                                        fleeGroundY = floorY
+                                        vdESPState.autoFleeHoldPos = undergroundPos
+                                    end
+                                end
+
+                                if not isFleeValid() or isCharacterKnocked(myChar) or (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar)) then
+                                    return
+                                end
+
+                                if landed and myHrp.Parent and (myHrp.Position - undergroundPos).Magnitude <= 6.5 then
                                     fleeFailCount = 0
                                     lastFleeAt = tick()
-                                    stayUndergroundUntil = tick() + 1.0
-                                    vdESPState.autoFleePauseUntil = tick() + 1.2
+                                    stayUndergroundUntil = tick() + 0.35
+                                    vdESPState.autoFleePauseUntil = tick() + 0.8
                                 else
                                     fleeFailCount = fleeFailCount + 1
-                                    vdESPState.autoFleeHoldPos = nil
-                                    fleeGroundY = nil
-                                    unlockFleeConstraints(myChar, myHrp, true)
-                                    if vdESPState.setMovementBypass then vdESPState.setMovementBypass(myChar, false) end
                                     if fleeFailCount >= 2 then
                                         fleePaused = true
+                                        vdESPState.autoFleeHoldPos = nil
+                                        fleeGroundY = nil
+                                        unlockFleeConstraints(myChar, myHrp, true)
+                                        if vdESPState.setMovementBypass then vdESPState.setMovementBypass(myChar, false) end
                                         local pauseEnd = tick() + 2.0
                                         while tick() < pauseEnd and isFleeValid() and not isCharacterKnocked(myChar) and not (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar)) do
                                             task.wait(0.05)
@@ -9389,26 +9553,9 @@ pcall(function()
                                         fleePaused = false
                                         lastFleeAt = tick()
                                     else
-                                        task.wait(0.12)
+                                        -- Keep CanCollide = false & autoFleeBlocking = true on try #1 and retry fast
+                                        task.wait(0.04)
                                     end
-                                end
-                            else
-                                fleeFailCount = fleeFailCount + 1
-                                if fleeFailCount >= 2 then
-                                    fleePaused = true
-                                    vdESPState.autoFleeHoldPos = nil
-                                    fleeGroundY = nil
-                                    unlockFleeConstraints(myChar, myHrp, true)
-                                    if vdESPState.setMovementBypass then vdESPState.setMovementBypass(myChar, false) end
-                                    local pauseEnd = tick() + 2.0
-                                    while tick() < pauseEnd and isFleeValid() and not isCharacterKnocked(myChar) and not (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar)) do
-                                        task.wait(0.05)
-                                    end
-                                    fleeFailCount = 0
-                                    fleePaused = false
-                                    lastFleeAt = tick()
-                                else
-                                    task.wait(0.12)
                                 end
                             end
                         end
@@ -9416,7 +9563,7 @@ pcall(function()
                         if tick() >= stayUndergroundUntil then
                             vdESPState.autoFleeBlocking = false
                             if vdESPState.autoFleeHoldPos ~= nil then
-                                -- Hold underground briefly so Repair EX / Lever EX / Rescue EX can hand off cleanly without voiding
+                                -- Hold underground briefly so Repair EX / Lever EX / Rescue EX can take over seamlessly
                                 local handoffWait = tick() + 0.25
                                 local handedOff = false
                                 while tick() < handoffWait and isFleeValid() do
@@ -9430,7 +9577,7 @@ pcall(function()
                                         handedOff = true
                                         break
                                     end
-                                    task.wait(0.04)
+                                    task.wait(0.03)
                                 end
                                 local savedGY = fleeGroundY
                                 vdESPState.autoFleeHoldPos = nil
@@ -9451,7 +9598,7 @@ pcall(function()
                         end
                     end
                 end)
-                task.wait(ok and 0.04 or 0.1)
+                task.wait(ok and 0.01 or 0.05)
             end
             stopAutoFleeEngine(true)
         end)
