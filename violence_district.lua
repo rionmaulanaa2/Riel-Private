@@ -86,22 +86,20 @@ V_RoleSection = ViolenceTab:Section({
 -- ============================================================
 -- Authoritative role identification variables initialized at top level
 
-local function checkPlayerKillerStatus()
-    -- If user has enabled any killer automation feature, they are intentionally playing the Killer
-    if autoCatchEnabled or autoCatchEXEnabled or autoAimSurvivorEnabled or autoHitSurvivorEnabled or autoHookSurvivorEnabled then
-        return true
+local function isScreenGuiActive(gui)
+    if not gui then return false end
+    if gui:IsA("ScreenGui") then
+        return gui.Enabled == true
     end
+    if gui:IsA("GuiObject") then
+        return gui.Visible == true
+    end
+    return true
+end
 
+vdESPState.isActualKiller = function()
     local myChar = player.Character
     if not myChar then return false end
-
-    -- Authoritative SelectedKiller attributes from game dump
-    if player:GetAttribute("SelectedKiller") ~= nil or myChar:GetAttribute("SelectedKiller") ~= nil
-        or player:GetAttribute("Killer") ~= nil or myChar:GetAttribute("Killer") ~= nil
-        or player:GetAttribute("IsKiller") == true or player:GetAttribute("Role") == "Killer"
-        or player:GetAttribute("killer") == true or myChar:GetAttribute("IsKiller") == true then
-        return true
-    end
 
     -- 1. Explicit Team verification (Authoritative in Violence District)
     if player.Team then
@@ -109,75 +107,130 @@ local function checkPlayerKillerStatus()
         if tName:find("killer") or tName:find("slasher") then
             return true
         end
-        if tName:find("survivor") then
+        if tName:find("survivor") or tName:find("lobby") or tName:find("spectat") then
             return false
         end
     end
 
-    -- 2. Killer-specific player attributes assigned by server
-    if player:GetAttribute("IsKiller") == true or player:GetAttribute("Role") == "Killer" or player:GetAttribute("killer") == true then
-        return true
-    end
-
-    -- 3. Check PlayerGui for Killer HUD (Slasher-mob, Slasher, Slasher-con)
-    -- EXCLUDE 'KillerPerks' because it is present in PlayerGui for ALL players by default!
-    local pg = player:FindFirstChild("PlayerGui")
-    if pg then
-        if pg:FindFirstChild("Slasher-mob") or pg:FindFirstChild("Slasher") or pg:FindFirstChild("Slasher-con") then
+    -- 2. Authoritative CollectionService Role Tags
+    if CollectionService then
+        if CollectionService:HasTag(myChar, "Killer") or CollectionService:HasTag(myChar, "Killers")
+            or CollectionService:HasTag(player, "Killer") or CollectionService:HasTag(player, "Killers") then
             return true
         end
+        if CollectionService:HasTag(myChar, "Survivor") or CollectionService:HasTag(myChar, "Survivors")
+            or CollectionService:HasTag(player, "Survivor") or CollectionService:HasTag(player, "Survivors") then
+            return false
+        end
+    end
+
+    -- 3. Authoritative explicit Role / boolean IsKiller attributes (NEVER check SelectedKiller or `~= nil`, since Survivors also store SelectedKiller and false attrs!)
+    if player:GetAttribute("IsKiller") == true or myChar:GetAttribute("IsKiller") == true
+        or player:GetAttribute("Killer") == true or myChar:GetAttribute("Killer") == true
+        or player:GetAttribute("killer") == true or myChar:GetAttribute("killer") == true then
+        return true
+    end
+    local pRole = player:GetAttribute("Role") or myChar:GetAttribute("Role")
+    if type(pRole) == "string" then
+        local rLower = pRole:lower()
+        if rLower == "killer" or rLower == "slasher" then
+            return true
+        end
+        if rLower:find("survivor") or rLower == "lobby" or rLower:find("spectat") then
+            return false
+        end
+    end
+
+    -- 4. Survivor-exclusive gameplay attributes & hooked/knocked states
+    if (isCharacterHooked and isCharacterHooked(myChar))
+        or (isCharacterKnocked and isCharacterKnocked(myChar))
+        or myChar:GetAttribute("HookCount") ~= nil
+        or myChar:GetAttribute("isRepairing") == true
+        or myChar:GetAttribute("isHealing") == true
+        or myChar:GetAttribute("isDroppingPallet") == true
+        or myChar:GetAttribute("isUnhooking") == true
+        or myChar:GetAttribute("isExiting") == true
+        or myChar:GetAttribute("isSliding") == true then
+        return false
+    end
+
+    -- 5. Active visible PlayerGui HUD (require Enabled == true on ScreenGui; never match disabled/preloaded templates!)
+    local pg = player:FindFirstChild("PlayerGui")
+    if pg then
+        local killerHudActive = false
+        local survivorHudActive = false
         for _, gui in ipairs(pg:GetChildren()) do
             local gName = gui.Name:lower()
-            if gName ~= "killerperks" and (gName == "slasher" or gName:find("slasher-") or gName == "killergui" or gName == "killerhud") then
-                return true
-            end
-        end
-    end
-
-    -- 4. CollectionService & Attributes on character
-    if CollectionService:HasTag(myChar, "Killer") or CollectionService:HasTag(player, "Killer") then
-        return true
-    end
-    if myChar:GetAttribute("Butcher") == true 
-        or myChar:GetAttribute("IsKiller") == true 
-        or myChar:GetAttribute("KillerName") ~= nil 
-        or myChar:GetAttribute("killercarry") ~= nil then
-        return true
-    end
-
-    -- 5. Killer weapons equipped in character
-    for _, item in ipairs(myChar:GetChildren()) do
-        if item:IsA("Tool") or item:IsA("BasePart") or item:IsA("Model") then
-            local iName = item.Name:lower()
-            if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
-                or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
-                or iName:find("axe") or (iName:find("blade") and not iName:find("parry")) then
-                return true
-            end
-        end
-    end
-
-    -- 6. Check Backpack for Killer weapons
-    local bp = player:FindFirstChild("Backpack")
-    if bp then
-        for _, item in ipairs(bp:GetChildren()) do
-            if item:IsA("Tool") then
-                local iName = item.Name:lower()
-                if iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") 
-                    or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
-                    or iName:find("axe") or (iName:find("blade") and not iName:find("parry")) then
-                    return true
+            if gName ~= "killerperks" then
+                if (gName == "slasher" or gName:find("slasher-") or gName == "killergui" or gName == "killerhud") and isScreenGuiActive(gui) then
+                    killerHudActive = true
+                elseif (gName == "survivor" or gName:find("survivor-")) and isScreenGuiActive(gui) then
+                    survivorHudActive = true
                 end
             end
         end
+        if killerHudActive and not survivorHudActive then
+            return true
+        end
+        if survivorHudActive and not killerHudActive then
+            return false
+        end
     end
 
-    -- 7. Killer specific child objects/scripts
-    if myChar:FindFirstChild("CancelVault") or myChar:FindFirstChild("Damageviz") or myChar:FindFirstChild("RedStain") or myChar:FindFirstChild("KillerHitbox") then
+    -- 6. Strict boolean Killer gameplay attributes & exclusive Killer components
+    local kCarry = myChar:GetAttribute("killercarry")
+    if myChar:GetAttribute("Butcher") == true
+        or myChar:GetAttribute("ChainBusy") == true
+        or myChar:GetAttribute("Frenzy") == true
+        or myChar:GetAttribute("Pursuit") == true
+        or myChar:GetAttribute("Stalker") == true
+        or myChar:GetAttribute("Hidden") == true
+        or myChar:GetAttribute("isAttacking") == true
+        or myChar:GetAttribute("isLunging") == true
+        or kCarry == true or (type(kCarry) == "string" and #kCarry > 0) then
+        return true
+    end
+    if myChar:FindFirstChild("CancelVault") or myChar:FindFirstChild("RedStain")
+        or myChar:FindFirstChild("KillerHitbox") or myChar:FindFirstChild("KillerCollider") then
         return true
     end
 
+    -- 7. Equipped or Backpack Killer Tool weapons (exclude Survivor tools)
+    local function isKillerToolItem(item)
+        if not item:IsA("Tool") then return false end
+        local iName = item.Name:lower()
+        if iName:find("parry") or iName:find("dagger") or iName:find("shield") or iName:find("medkit")
+            or iName:find("bandage") or iName:find("toolbox") or iName:find("flashlight") then
+            return false
+        end
+        return iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw")
+            or iName:find("killerweapon") or iName:find("beartrap") or iName:find("slasher")
+            or iName:find("axe") or iName:find("blade")
+    end
+
+    for _, item in ipairs(myChar:GetChildren()) do
+        if isKillerToolItem(item) then
+            return true
+        end
+    end
+    local bp = player:FindFirstChild("Backpack")
+    if bp then
+        for _, item in ipairs(bp:GetChildren()) do
+            if isKillerToolItem(item) then
+                return true
+            end
+        end
+    end
+
     return false
+end
+
+local function checkPlayerKillerStatus()
+    -- If user has enabled any killer automation feature, treat as Killer for combat/aim
+    if autoCatchEnabled or autoCatchEXEnabled or autoAimSurvivorEnabled or autoHitSurvivorEnabled or autoHookSurvivorEnabled then
+        return true
+    end
+    return vdESPState.isActualKiller()
 end
 
 isPlayerKiller = checkPlayerKillerStatus
@@ -198,9 +251,6 @@ vdESPState.detectRole = function()
         if tName:find("lobby") or tName:find("spectat") then
             return "Lobby"
         end
-        if tName:find("killer") or tName:find("slasher") then
-            return "Killer"
-        end
     end
     local pRole = player:GetAttribute("Role") or myChar:GetAttribute("Role")
     if type(pRole) == "string" then
@@ -208,12 +258,10 @@ vdESPState.detectRole = function()
         if rLower == "lobby" or rLower:find("spectat") then
             return "Lobby"
         end
-        if rLower == "killer" or rLower == "slasher" then
-            return "Killer"
-        end
     end
 
-    if isPlayerKiller and isPlayerKiller() then
+    -- Use pure game-state Killer check so ESP never gets tricked by stray toggles or SelectedKiller
+    if vdESPState.isActualKiller() then
         return "Killer"
     end
 
@@ -228,7 +276,7 @@ vdESPState.detectRole = function()
         return "Survivor"
     end
     local pg = player:FindFirstChild("PlayerGui")
-    if pg and (pg:FindFirstChild("Survivor-mob") or pg:FindFirstChild("Survivor") or pg:FindFirstChild("Survivor-con")) then
+    if pg and (isScreenGuiActive(pg:FindFirstChild("Survivor-mob")) or isScreenGuiActive(pg:FindFirstChild("Survivor")) or isScreenGuiActive(pg:FindFirstChild("Survivor-con"))) then
         return "Survivor"
     end
     if myChar:GetAttribute("isRepairing") ~= nil or myChar:GetAttribute("isHealing") ~= nil or myChar:GetAttribute("HookCount") ~= nil then
@@ -689,29 +737,38 @@ isCharacterKiller = function(char, plr)
         end
     end
 
-    -- 2. Survivor-exclusive interaction state attributes (Killers never repair/heal/unhook/exit/slide)
+    -- 2. Survivor-exclusive Role, Tags, & interaction state attributes
+    local sRole = (plr and plr:GetAttribute("Role")) or char:GetAttribute("Role")
+    if type(sRole) == "string" and sRole:lower():find("survivor") then
+        return false
+    end
+    if CollectionService and (CollectionService:HasTag(char, "Survivor") or CollectionService:HasTag(char, "Survivors")
+        or (plr and (CollectionService:HasTag(plr, "Survivor") or CollectionService:HasTag(plr, "Survivors")))) then
+        return false
+    end
     if char:GetAttribute("isRepairing") == true 
         or char:GetAttribute("isHealing") == true 
         or char:GetAttribute("isDroppingPallet") == true 
         or char:GetAttribute("isUnhooking") == true 
         or char:GetAttribute("isExiting") == true 
         or char:GetAttribute("isSliding") == true 
+        or char:GetAttribute("HookCount") ~= nil
         or isCharacterHooked(char) 
         or isCharacterKnocked(char) then
         return false
     end
 
-    -- 3. Dedicated Killer Attributes (from the dump.lua)
+    -- 3. Dedicated Killer Attributes (strict boolean == true, never ~= nil on false defaults)
     if char:GetAttribute("Butcher") == true 
-        or char:GetAttribute("ChainBusy") ~= nil 
-        or char:GetAttribute("Frenzy") ~= nil 
-        or char:GetAttribute("Pursuit") ~= nil 
-        or char:GetAttribute("Stalker") ~= nil 
-        or char:GetAttribute("Hidden") ~= nil 
-        or char:GetAttribute("Stealth") ~= nil 
-        or char:GetAttribute("Veil") ~= nil 
-        or char:GetAttribute("isAttacking") ~= nil 
-        or char:GetAttribute("isLunging") ~= nil 
+        or char:GetAttribute("ChainBusy") == true 
+        or char:GetAttribute("Frenzy") == true 
+        or char:GetAttribute("Pursuit") == true 
+        or char:GetAttribute("Stalker") == true 
+        or char:GetAttribute("Hidden") == true 
+        or char:GetAttribute("Stealth") == true 
+        or char:GetAttribute("Veil") == true 
+        or char:GetAttribute("isAttacking") == true 
+        or char:GetAttribute("isLunging") == true 
         or char:GetAttribute("Killer") == true 
         or char:GetAttribute("IsKiller") == true then
         return true
@@ -725,11 +782,13 @@ isCharacterKiller = function(char, plr)
         return true
     end
 
-    -- 5. Equipped weapons / tools characteristic of Killers
+    -- 5. Equipped weapons / tools characteristic of Killers (exclude Survivor items)
     for _, item in ipairs(char:GetChildren()) do
-        if item:IsA("Tool") or item:IsA("Model") then
+        if item:IsA("Tool") then
             local iName = item.Name:lower()
-            if iName:find("cleaver") or iName:find("machete") or iName:find("hook") or iName:find("chainsaw") or iName:find("knife") or iName:find("weapon") or iName:find("hammer") or iName:find("axe") or iName:find("blade") then
+            local isSurvivorTool = iName:find("parry") or iName:find("dagger") or iName:find("shield")
+                or iName:find("medkit") or iName:find("bandage") or iName:find("toolbox") or iName:find("flashlight")
+            if not isSurvivorTool and (iName:find("cleaver") or iName:find("machete") or iName:find("chainsaw") or iName:find("knife") or iName:find("killerweapon") or iName:find("beartrap") or iName:find("axe") or iName:find("blade")) then
                 return true
             end
         end
@@ -740,7 +799,7 @@ isCharacterKiller = function(char, plr)
     if animator then
         for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
             local animName = track.Name:lower()
-            if animName:find("attack") or animName:find("slash") or animName:find("lunge") or animName:find("carry") or animName:find("hook") or animName:find("machete") or animName:find("chainsaw") then
+            if animName:find("attack") or animName:find("slash") or animName:find("lunge") or animName:find("machete") or animName:find("chainsaw") then
                 return true
             end
         end
