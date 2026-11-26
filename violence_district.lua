@@ -1397,44 +1397,48 @@ pcall(function()
         local curPos = myHrp.Position
         local totalDist = (targetPos - curPos).Magnitude
 
-        -- Short distances (<= 14 studs, e.g. immediate drop underground): instant 0.0001s snap without anti-cheat strike
+        -- Short distances (<= 14 studs): instant 0.0001s snap; > 14 studs: smooth Safe-Teleport speed underground glide (0% 60s rollback)
         if totalDist > 14 then
-            -- First bury straight down below safe plane if moving underground horizontally (within <= 8 studs vertical, 0% strike)
             local safeSubY = setCollisionFalse and math.min(curPos.Y, targetPos.Y) or targetPos.Y
+            -- Smooth initial sink (<= 5.5 studs vertical so zero strike) before horizontal travel
             if setCollisionFalse and curPos.Y > (safeSubY + 1.5) then
-                local dropY = math.max(safeSubY, curPos.Y - 7.5)
+                local dropY = math.max(safeSubY, curPos.Y - 5.5)
                 curPos = Vector3.new(curPos.X, dropY, curPos.Z)
                 prepTransit()
                 myHrp.AssemblyLinearVelocity = Vector3.zero
                 myHrp.AssemblyAngularVelocity = Vector3.zero
                 myHrp.CFrame = CFrame.new(curPos)
+                RS.Heartbeat:Wait()
+                if checkFn and not checkFn() then return false end
+                if not myHrp or not myHrp.Parent then return false end
             end
 
-            -- FPS-normalized smooth underground glide (~255 studs/s normal, ~140 studs/s during rollback cooldown) -> 0% 60s server freeze
             local startGlide = tick()
             local prevExpectedPos = curPos
             local rollbackHits = 0
-            while (tick() - startGlide) < 3.5 do
+            while (tick() - startGlide) < 4.5 do
                 if checkFn and not checkFn() then return false end
                 if not myHrp or not myHrp.Parent then return false end
 
                 local actualPos = myHrp.Position
-                if (actualPos - prevExpectedPos).Magnitude > 14.0 then
-                    -- Server rejected step or pushed back: yield cleanly to server position, adapt speed down instead of infinite 60s snapback fight
+                if (actualPos - prevExpectedPos).Magnitude > 11.0 then
+                    -- Server rejected step or pushed back: yield cleanly to server position and slow glide instead of snapping back & forth
                     rollbackHits = rollbackHits + 1
-                    vdESPState.serverThrottleUntil = tick() + 6.0
+                    vdESPState.serverThrottleUntil = tick() + 8.0
                     curPos = Vector3.new(actualPos.X, setCollisionFalse and math.min(actualPos.Y, safeSubY) or actualPos.Y, actualPos.Z)
-                    if rollbackHits >= 3 then
+                    if rollbackHits >= 5 then
                         return false
                     end
-                    task.wait(0.04)
+                    task.wait(0.05)
+                    if checkFn and not checkFn() then return false end
+                    if not myHrp or not myHrp.Parent then return false end
                     actualPos = myHrp.Position
                     curPos = Vector3.new(actualPos.X, setCollisionFalse and math.min(actualPos.Y, safeSubY) or actualPos.Y, actualPos.Z)
                 end
 
                 local remVec = targetPos - curPos
                 local remDist = remVec.Magnitude
-                if remDist <= 4.5 then
+                if remDist <= 3.5 then
                     break
                 end
 
@@ -1443,9 +1447,9 @@ pcall(function()
                 if not myHrp or not myHrp.Parent then return false end
 
                 local throttled = vdESPState.serverThrottleUntil and tick() < vdESPState.serverThrottleUntil
-                local speed = throttled and 140 or 255
-                local maxStep = throttled and 3.2 or 5.2
-                local stepLen = math.clamp((dt or 0.016) * speed, 1.8, maxStep)
+                local speed = throttled and 115 or 185
+                local maxStep = throttled and 2.2 or 3.5
+                local stepLen = math.clamp((dt or 0.016) * speed, 1.4, maxStep)
 
                 local nextPos
                 if remDist <= stepLen then
@@ -1463,6 +1467,11 @@ pcall(function()
                 myHrp.CFrame = CFrame.new(nextPos)
                 curPos = nextPos
                 prevExpectedPos = nextPos
+            end
+
+            -- Never attempt a huge >14 stud final snap if glide timed out mid-map (prevents target glitch + snapback)
+            if (myHrp.Position - targetPos).Magnitude > 14.0 then
+                return false
             end
         end
 
@@ -5722,6 +5731,8 @@ local function startGhostRepairEXThread()
                     if isBlockedByStandaloneAutoFlee(targetPoint, myHrp) then
                         pcall(function()
                             remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, requestId, myChar)
+                            if myHrp then CollectionService:RemoveTag(myHrp, "doing action") end
+                            CollectionService:RemoveTag(myChar, "doing action")
                         end)
                         myChar:SetAttribute("isRepairing", false)
                         clearGhostEXGenMarker()
@@ -5734,8 +5745,11 @@ local function startGhostRepairEXThread()
                             local safeRange = tonumber(vdESPState and vdESPState.autoFleeDistance) or 100
                             local kNow = getKiller and getKiller()
                             local kHrpNow = kNow and kNow:FindFirstChild("HumanoidRootPart")
-                            local restoreColl = not (altPt and (not kHrpNow or (altPt.Position - kHrpNow.Position).Magnitude > safeRange + 5))
-                            unlockGhostEXMotion(myChar, myHrp, true, restoreColl)
+                            local hasSafeAlt = altPt and (not kHrpNow or (altPt.Position - kHrpNow.Position).Magnitude > safeRange + 5)
+                            unlockGhostEXMotion(myChar, myHrp, true, not hasSafeAlt)
+                            if hasSafeAlt then
+                                task.wait(0.05)
+                            end
                         end
                         break
                     end
@@ -5861,6 +5875,8 @@ local function startGhostRepairEXThread()
                     if not checkEXActive() or isBlockedByStandaloneAutoFlee(targetPoint, myHrp) then
                         pcall(function()
                             remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, requestId, myChar)
+                            if myHrp then CollectionService:RemoveTag(myHrp, "doing action") end
+                            CollectionService:RemoveTag(myChar, "doing action")
                         end)
                         myChar:SetAttribute("isRepairing", false)
                         clearGhostEXGenMarker()
@@ -5873,8 +5889,11 @@ local function startGhostRepairEXThread()
                             local safeRange = tonumber(vdESPState and vdESPState.autoFleeDistance) or 100
                             local kNow = getKiller and getKiller()
                             local kHrpNow = kNow and kNow:FindFirstChild("HumanoidRootPart")
-                            local restoreColl = not (altPt and (not kHrpNow or (altPt.Position - kHrpNow.Position).Magnitude > safeRange + 5))
-                            unlockGhostEXMotion(myChar, myHrp, true, restoreColl)
+                            local hasSafeAlt = altPt and (not kHrpNow or (altPt.Position - kHrpNow.Position).Magnitude > safeRange + 5)
+                            unlockGhostEXMotion(myChar, myHrp, true, not hasSafeAlt)
+                            if hasSafeAlt then
+                                task.wait(0.05)
+                            end
                         end
                         break
                     end
@@ -7614,38 +7633,65 @@ pcall(function()
     end
 
     local function cancelActiveRepairImmediately(myChar)
+        local wasRepairing = false
         pcall(function()
             if myChar:GetAttribute("isRepairing") == true then
+                wasRepairing = true
                 myChar:SetAttribute("isRepairing", false)
             end
             local hrp = myChar:FindFirstChild("HumanoidRootPart")
+            if hrp and CollectionService:HasTag(hrp, "doing action") then
+                wasRepairing = true
+            end
             if hrp then CollectionService:RemoveTag(hrp, "doing action") end
             CollectionService:RemoveTag(myChar, "doing action")
             local remotes = getVDRemotes and getVDRemotes()
             if lastCapturedGenPoint and remotes and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
+                wasRepairing = true
                 remotes.Generator.RepairEvent:FireServer(lastCapturedGenPoint, false, nil, lastCapturedRepairRequestId or HttpService:GenerateGUID(false), myChar)
             end
         end)
+        return wasRepairing
     end
 
     local fleePendingGlide = false
 
-    local function buryLocallyOnDangerFrame(myChar, myHrp)
+    local function buryLocallyOnDangerFrame(myChar, myHrp, kHrp)
         cancelActiveRepairImmediately(myChar)
         vdESPState.autoFleeBlocking = true
-        vdESPState.autoFleePauseUntil = tick() + 1.4
+        vdESPState.autoFleePauseUntil = tick() + 1.5
         ghostEXHoldPos = nil
         fleePendingGlide = true
 
         local curPos = myHrp.Position
-        local localFloorY = (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(curPos.X, curPos.Y, curPos.Z, nil)) or (curPos.Y - 3.0)
+        local targetX, targetZ = curPos.X, curPos.Z
+
+        -- Instant <= 20-stud tactical evade away from Killer (or behind Killer's back) when Killer is dangerously close
+        if kHrp and kHrp.Parent then
+            local kPos = kHrp.Position
+            local curKDist = (curPos - kPos).Magnitude
+            if curKDist <= 28 then
+                local awayXZ = Vector3.new(curPos.X - kPos.X, 0, curPos.Z - kPos.Z)
+                if awayXZ.Magnitude < 0.8 then
+                    local backVec = -kHrp.CFrame.LookVector
+                    awayXZ = Vector3.new(backVec.X, 0, backVec.Z)
+                end
+                if awayXZ.Magnitude >= 0.05 then
+                    local evadeDir = awayXZ.Unit
+                    local stepOut = math.clamp(22 - curKDist, 14, 20)
+                    targetX = curPos.X + evadeDir.X * stepOut
+                    targetZ = curPos.Z + evadeDir.Z * stepOut
+                end
+            end
+        end
+
+        local localFloorY = (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(targetX, curPos.Y + 4, targetZ, nil)) or (curPos.Y - 3.0)
         local depth = getCachedUndergroundDepth()
         local buriedY = math.min(curPos.Y, localFloorY - depth)
-        -- Clamp instant drop <= 7.5 studs vertically: protects against melee immediately with 0% anti-teleport strike
-        if (curPos.Y - buriedY) > 7.5 then
-            buriedY = curPos.Y - 7.5
+        if (curPos.Y - buriedY) > 6.5 then
+            buriedY = curPos.Y - 6.5
         end
-        local localBuriedPos = Vector3.new(curPos.X, buriedY, curPos.Z)
+        local localBuriedPos = Vector3.new(targetX, buriedY, targetZ)
 
         fleeGroundY = localFloorY
         vdESPState.autoFleeHoldPos = localBuriedPos
@@ -7653,7 +7699,7 @@ pcall(function()
             vdESPState.setMovementBypass(myChar, true)
         end
         unlockFleeConstraints(myChar, myHrp, false)
-        if curPos.Y > (buriedY + 0.5) then
+        if (curPos - localBuriedPos).Magnitude > 0.6 then
             myHrp.Anchored = false
             myHrp.AssemblyLinearVelocity = Vector3.zero
             myHrp.AssemblyAngularVelocity = Vector3.zero
@@ -7678,7 +7724,7 @@ pcall(function()
             pcall(function() enforceFleeUndergroundPos(0.25) end)
         end)
 
-        -- Zero-latency per-frame danger detector: cancels repair & drops <=7.5 studs underground instantly without tripping server anti-cheat
+        -- Zero-latency per-frame danger detector: cancels repair & drops/evades immediately without tripping 60s server lockout
         fleeHeartbeatConn = RunService.Heartbeat:Connect(function()
             if not isFleeValid() then
                 if fleeHeartbeatConn then pcall(function() fleeHeartbeatConn:Disconnect() end) fleeHeartbeatConn = nil end
@@ -7704,7 +7750,7 @@ pcall(function()
 
                 local targetDist = vdESPState.autoFleeDistance or 100
                 if (myHrp.Position - kHrp.Position).Magnitude <= targetDist then
-                    buryLocallyOnDangerFrame(myChar, myHrp)
+                    buryLocallyOnDangerFrame(myChar, myHrp, kHrp)
                 end
             end)
         end)
@@ -7795,7 +7841,7 @@ pcall(function()
 
                     if curDist <= targetDist then
                         vdESPState.autoFleeBlocking = true
-                        vdESPState.autoFleePauseUntil = tick() + 1.4
+                        vdESPState.autoFleePauseUntil = tick() + 1.5
                         ghostEXHoldPos = nil
 
                         local now = tick()
@@ -7811,8 +7857,23 @@ pcall(function()
                         end
 
                         if shouldMove then
-                            cancelActiveRepairImmediately(myChar)
-                            local undergroundPos, safeKDist, floorY = pickFastUndergroundTarget(myChar, myHrp.Position, kHrp.Position, targetDist)
+                            -- If Killer got super close while we hadn't dodged yet, evade immediately first
+                            if curDist <= 28 and not vdESPState.autoFleeHoldPos then
+                                buryLocallyOnDangerFrame(myChar, myHrp, kHrp)
+                            end
+                            local exitedRepair = cancelActiveRepairImmediately(myChar)
+                            if exitedRepair then
+                                -- Brief 0.05s settle so server clears generator Repair lock before horizontal glide begins
+                                task.wait(0.05)
+                                cancelActiveRepairImmediately(myChar)
+                            end
+                            if not isFleeValid() or isCharacterKnocked(myChar) or (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar)) then
+                                return
+                            end
+
+                            local kNow = getKiller and getKiller()
+                            local kHrpNow = kNow and kNow:FindFirstChild("HumanoidRootPart") or kHrp
+                            local undergroundPos, safeKDist, floorY = pickFastUndergroundTarget(myChar, myHrp.Position, kHrpNow.Position, targetDist)
                             if not undergroundPos then
                                 fleeFailCount = fleeFailCount + 1
                             else
@@ -7844,6 +7905,12 @@ pcall(function()
                                     fleeGroundY = nil
                                     if fleeFailCount >= 2 then
                                         fleePaused = true
+                                        -- Safely lift above local floor if partially buried before restoring collisions (prevents void falls!)
+                                        local curP = myHrp.Position
+                                        local curFY = vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(curP.X, curP.Y + 14, curP.Z, nil)
+                                        if curFY and curP.Y < (curFY - 0.5) then
+                                            myHrp.CFrame = CFrame.new(curP.X, curFY + 3.2, curP.Z)
+                                        end
                                         unlockFleeConstraints(myChar, myHrp, true)
                                         if vdESPState.setMovementBypass then vdESPState.setMovementBypass(myChar, false) end
                                         local pauseEnd = tick() + 2.0
