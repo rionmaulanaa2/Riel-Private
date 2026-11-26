@@ -52,7 +52,16 @@ local vdESPState = {
     autoRoleESPEnabled = true,
     hookESPEnabled = false,
     cleanHookESP = nil,
-    lastAppliedRole = nil
+    lastAppliedRole = nil,
+    autoFleeEnabled = false,
+    autoFleeDistance = 40,
+    autoFleeSession = 0,
+    autoFleePauseUntil = 0,
+    autoFleeToggle = nil,
+    rescueEXEnabled = false,
+    rescueEXSession = 0,
+    rescueEXHoldPos = nil,
+    rescueEXToggle = nil
 }
 
 do
@@ -362,7 +371,7 @@ task.spawn(function()
                 if autoCatchEnabled or autoCatchEXEnabled or autoAimSurvivorEnabled or autoHitSurvivorEnabled or autoHookSurvivorEnabled then
                     -- Killer automation is actively in use
                     lastDetectedRole = "Killer"
-                elseif autoRepairEnabled or ghostRepairEnabled or ghostRepairEXEnabled or autoPalletEnabled or autoParryEnabled or autoDodgeEnabled or autoSaveEnabled then
+                elseif autoRepairEnabled or ghostRepairEnabled or ghostRepairEXEnabled or autoPalletEnabled or autoParryEnabled or autoDodgeEnabled or autoSaveEnabled or (vdESPState and (vdESPState.autoFleeEnabled or vdESPState.rescueEXEnabled)) then
                     -- Survivor automation is actively in use
                     lastDetectedRole = "Survivor"
                 else
@@ -386,6 +395,15 @@ task.spawn(function()
                             autoPalletEnabled = false
                             autoParryEnabled = false
                             autoSaveEnabled = false
+                            if vdESPState then
+                                vdESPState.autoFleeEnabled = false
+                                vdESPState.autoFleeBlocking = false
+                                vdESPState.autoFleePauseUntil = 0
+                                vdESPState.autoFleeSession = (vdESPState.autoFleeSession or 0) + 1
+                                vdESPState.rescueEXEnabled = false
+                                vdESPState.rescueEXHoldPos = nil
+                                vdESPState.rescueEXSession = (vdESPState.rescueEXSession or 0) + 1
+                            end
                         elseif currentRole == "Survivor" then
                             catchSession = (catchSession or 0) + 1
                             autoCatchEnabled = false
@@ -1030,7 +1048,12 @@ local function onMatchOrCharacterReset()
     currentGhostEXModel = nil
     ghostEXHoldPos = nil
     lastDetectedRole = nil
-    if vdESPState then vdESPState.lastAppliedRole = nil end
+    if vdESPState then
+        vdESPState.lastAppliedRole = nil
+        vdESPState.autoFleeBlocking = false
+        vdESPState.autoFleePauseUntil = 0
+        vdESPState.rescueEXHoldPos = nil
+    end
     lastCapturedRepairRequestId = nil
     lastCapturedGenModel = nil
     lastCapturedGenPoint = nil
@@ -4356,7 +4379,6 @@ local ghostEXHeartbeatConn = nil
 local ghostEXHighlight = nil
 local ghostEXHighlightModel = nil
 local ghostEXRepairRequestId = nil
-local ghostEXKillerSafeDist = 40
 local ghostEXActiveDepth = nil
 
 local function clearGhostEXGenMarker()
@@ -4424,20 +4446,6 @@ local function unlockGhostEXMotion(char, hrp)
     end
 end
 
-local function isKillerNearEXTarget(targetPoint, myHrp)
-    local killer = getKiller()
-    local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
-    if not kHrp then return false, math.huge end
-
-    local minDist = math.huge
-    if targetPoint and targetPoint.Parent then
-        minDist = math.min(minDist, (kHrp.Position - targetPoint.Position).Magnitude)
-    end
-    if myHrp and myHrp.Parent then
-        minDist = math.min(minDist, (kHrp.Position - myHrp.Position).Magnitude)
-    end
-    return minDist <= ghostEXKillerSafeDist, minDist
-end
 
 local function isGenSlotBusy(pt, myChar)
     if not pt or not pt.Parent then return true end
@@ -4458,7 +4466,7 @@ local function isGenSlotBusy(pt, myChar)
     return false
 end
 
-local function findNearestGeneratorSlotsEX(excludeModel)
+local function findNearestGeneratorSlotsEX()
     local myChar = player.Character
     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
     local myPos = myHrp and myHrp.Position or Vector3.new(0, 0, 0)
@@ -4471,9 +4479,6 @@ local function findNearestGeneratorSlotsEX(excludeModel)
             seenPoints[pt] = true
             local genModel = getGeneratorModel(pt) or pt.Parent
             if genModel and genModel:IsDescendantOf(workspace) then
-                if excludeModel and genModel == excludeModel then
-                    return
-                end
                 local isCompleted, prog = isGeneratorCompleted(pt)
                 if not isCompleted and (prog or 0) < 99.5 then
                     local bucket = genBuckets[genModel]
@@ -4542,29 +4547,7 @@ local function findNearestGeneratorSlotsEX(excludeModel)
         table.insert(candidates, bucket)
     end
 
-    if #candidates == 0 then return nil, nil, nil, false end
-
-    local killer = getKiller()
-    local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
-    local safeCandidates = {}
-
-    if kHrp then
-        for _, cand in ipairs(candidates) do
-            local repPt = cand.points[1]
-            local kDist = (kHrp.Position - repPt.Position).Magnitude
-            if kDist > ghostEXKillerSafeDist then
-                cand.kDist = kDist
-                table.insert(safeCandidates, cand)
-            end
-        end
-        if #safeCandidates > 0 then
-            table.sort(safeCandidates, function(a, b)
-                return a.dist < b.dist
-            end)
-            return safeCandidates[1].points[1], safeCandidates[1].model, safeCandidates[1].points, false
-        end
-        return nil, nil, nil, true
-    end
+    if #candidates == 0 then return nil, nil, nil end
 
     table.sort(candidates, function(a, b)
         return a.dist < b.dist
@@ -4679,28 +4662,46 @@ local function startGhostRepairEXThread()
             end
             return
         end
-        pcall(function()
-            enforceEXUndergroundPos(0.25)
-        end)
+        if not (vdESPState and ((vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking) or (vdESPState.rescueEXEnabled and vdESPState.rescueEXHoldPos ~= nil))) then
+            pcall(function()
+                enforceEXUndergroundPos(0.25)
+            end)
+        end
     end)
 
     -- 2. Ultra-fast 0.0001s Real-Position Checker & Spam Teleport Loop
     task.spawn(function()
         while checkEXActive() do
-            pcall(function()
-                enforceEXUndergroundPos(0.25)
-            end)
+            if not (vdESPState and ((vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking) or (vdESPState.rescueEXEnabled and vdESPState.rescueEXHoldPos ~= nil))) then
+                pcall(function()
+                    enforceEXUndergroundPos(0.25)
+                end)
+            end
             task.wait(0.0001)
         end
     end)
 
-    -- 3. Main EX Generator Lock, 40-Stud Killer Escape, Purple Marker & Repair Thread
+    -- 3. Main EX Generator Lock, Purple Marker & Repair Thread
     task.spawn(function()
         local trackedEXChar = nil
-        local avoidGenModel = nil
-        local avoidUntilTime = 0
         local currentGenSlots = nil
         local currentSlotIdx = 1
+
+        local function isBlockedByStandaloneAutoFlee(pt)
+            if not vdESPState then return false end
+            if vdESPState.rescueEXEnabled and vdESPState.rescueEXHoldPos ~= nil then return true end
+            if not vdESPState.autoFleeEnabled then return false end
+            if vdESPState.autoFleeBlocking then return true end
+            if vdESPState.autoFleePauseUntil and tick() < vdESPState.autoFleePauseUntil then return true end
+            if pt and pt.Parent then
+                local killer = getKiller()
+                local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
+                if kHrp and (kHrp.Position - pt.Position).Magnitude <= (vdESPState.autoFleeDistance or 40) then
+                    return true
+                end
+            end
+            return false
+        end
 
         while checkEXActive() do
             local iterOk = pcall(function()
@@ -4725,7 +4726,6 @@ local function startGhostRepairEXThread()
                     currentGenSlots = nil
                     currentSlotIdx = 1
                     ghostEXRepairRequestId = nil
-                    avoidGenModel = nil
                     clearGhostEXGenMarker()
                 end
 
@@ -4757,38 +4757,24 @@ local function startGhostRepairEXThread()
                     ghostEXOriginalCFrame = myHrp.CFrame
                 end
 
-                if avoidGenModel and tick() >= avoidUntilTime then
-                    avoidGenModel = nil
-                end
-
-                -- Pick nearest safe unfinished generator only when not already locked onto one
+                -- Pick nearest unfinished generator only when not already locked onto one
                 if not currentGhostEXPoint or not currentGhostEXPoint.Parent or isGeneratorCompleted(currentGhostEXPoint) then
                     ghostEXActiveDepth = nil
-                    local nextPt, nextModel, nextSlots, allThreatened = findNearestGeneratorSlotsEX(avoidGenModel)
-                    if not nextPt and avoidGenModel then
-                        nextPt, nextModel, nextSlots, allThreatened = findNearestGeneratorSlotsEX(nil)
-                    end
+                    local nextPt, nextModel, nextSlots = findNearestGeneratorSlotsEX()
                     if not nextPt or not nextModel then
                         clearGhostEXGenMarker()
                         currentGhostEXPoint = nil
                         currentGhostEXModel = nil
                         currentGenSlots = nil
-                        if allThreatened then
-                            if not ghostEXHoldPos then
-                                ghostEXHoldPos = myHrp.Position
-                            end
-                            task.wait(0.25)
-                        else
-                            ghostEXHoldPos = nil
-                            WindUI:Notify({ Title = "⚡ Ghost Gen EX", Content = "All generators 100% completed!", Duration = 3 })
-                            if ghostAutoReturn and ghostEXOriginalCFrame and myHrp then
-                                unlockGhostEXMotion(myChar, myHrp)
-                                myHrp.CFrame = ghostEXOriginalCFrame
-                                myHrp.AssemblyLinearVelocity = Vector3.zero
-                                ghostEXOriginalCFrame = nil
-                            end
-                            task.wait(2.0)
+                        ghostEXHoldPos = nil
+                        WindUI:Notify({ Title = "⚡ Ghost Gen EX", Content = "All generators 100% completed!", Duration = 3 })
+                        if ghostAutoReturn and ghostEXOriginalCFrame and myHrp then
+                            unlockGhostEXMotion(myChar, myHrp)
+                            myHrp.CFrame = ghostEXOriginalCFrame
+                            myHrp.AssemblyLinearVelocity = Vector3.zero
+                            ghostEXOriginalCFrame = nil
                         end
+                        task.wait(2.0)
                         return
                     end
                     currentGhostEXPoint = nextPt
@@ -4796,6 +4782,13 @@ local function startGhostRepairEXThread()
                     currentGenSlots = nextSlots or { nextPt }
                     currentSlotIdx = 1
                     ghostEXHoldPos = nextPt.Position - Vector3.new(0, getActiveDepth(), 0)
+                end
+
+                if isBlockedByStandaloneAutoFlee(currentGhostEXPoint) then
+                    ghostEXHoldPos = nil
+                    unlockGhostEXMotion(myChar, myHrp)
+                    task.wait(0.15)
+                    return
                 end
 
                 local targetPoint = currentGhostEXPoint
@@ -4883,9 +4876,19 @@ local function startGhostRepairEXThread()
                 local lastProgressTime = tick()
                 local stallRetries = 0
 
-                -- Stay STRICTLY locked on current generator until 100% done OR Killer enters <= 40 studs
+                -- Stay STRICTLY locked on current generator until 100% done
                 while checkEXActive() and currentGhostEXPoint == targetPoint and targetPoint.Parent do
                     if isCharacterHooked(myChar) or isCharacterKnocked(myChar) then
+                        break
+                    end
+
+                    if isBlockedByStandaloneAutoFlee(targetPoint) then
+                        pcall(function()
+                            remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, requestId, myChar)
+                        end)
+                        myChar:SetAttribute("isRepairing", false)
+                        ghostEXHoldPos = nil
+                        unlockGhostEXMotion(myChar, myHrp)
                         break
                     end
 
@@ -4904,34 +4907,11 @@ local function startGhostRepairEXThread()
                         currentGenSlots = nil
                         ghostEXRepairRequestId = nil
                         ghostEXActiveDepth = nil
-                        avoidGenModel = nil
                         WindUI:Notify({ Title = "🟣 Ghost Gen EX", Content = "✅ " .. genName .. " Fixed 100%! Picking next nearest...", Duration = 2 })
                         task.wait(0.1)
                         break
                     end
 
-                    -- Condition 2: Killer approached within ~40 studs
-                    local killerNear, kDist = isKillerNearEXTarget(targetPoint, myHrp)
-                    if killerNear then
-                        pcall(function()
-                            remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, requestId, myChar)
-                        end)
-                        myChar:SetAttribute("isRepairing", false)
-                        avoidGenModel = genModel
-                        avoidUntilTime = tick() + 6
-                        clearGhostEXGenMarker()
-                        currentGhostEXPoint = nil
-                        currentGhostEXModel = nil
-                        currentGenSlots = nil
-                        ghostEXRepairRequestId = nil
-                        ghostEXActiveDepth = nil
-                        WindUI:Notify({
-                            Title = "⚠️ Killer Near (~" .. tostring(math.floor(kDist)) .. " studs)",
-                            Content = "Switching away from generator to nearest safe target!",
-                            Duration = 2
-                        })
-                        break
-                    end
 
                     -- Watchdog: track real server progress growth; if stalled >= 2.2s, recover without leaving target gen!
                     if progNow > (lastObservedProg + 0.05) then
@@ -5013,7 +4993,7 @@ end
 
 V_ObjectiveSection:Toggle({
     Title = "Underground Repair Generator EX",
-    Description = "0.0001s real-pos underground lock, picks nearest gen, switches if Killer <= 40 studs, marks target purple",
+    Description = "0.0001s real-pos underground lock, picks nearest gen & locks until 100% done, marks target purple",
     Default = false,
     Callback = function(v)
         ghostRepairEXEnabled = v
@@ -5505,6 +5485,333 @@ V_CombatSection:Slider({
 })
 
 -- ============================================================
+-- AUTO FLEE KILLER (1 - 300 STUDS STANDALONE SAFE ESCAPE)
+-- ============================================================
+pcall(function()
+    local CollectionService = game:GetService("CollectionService")
+
+    local function unlockFleeConstraints(myChar, myHrp)
+        pcall(function()
+            if myHrp then
+                myHrp.Anchored = false
+                myHrp.AssemblyLinearVelocity = Vector3.zero
+                myHrp.AssemblyAngularVelocity = Vector3.zero
+                pcall(function() CollectionService:RemoveTag(myHrp, "doing action") end)
+            end
+            if myChar then
+                myChar:SetAttribute("isRepairing", false)
+                myChar:SetAttribute("isHealing", false)
+                myChar:SetAttribute("isUnhooking", false)
+                myChar:SetAttribute("isExiting", false)
+                myChar:SetAttribute("Rooted", false)
+                myChar:SetAttribute("Immobile", false)
+                myChar:SetAttribute("AC_ServerAnchor", nil)
+                pcall(function() CollectionService:RemoveTag(myChar, "doing action") end)
+                local hum = myChar:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    hum.PlatformStand = false
+                end
+                for _, part in ipairs(myChar:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        if part.Name == "HumanoidRootPart" or part.Name == "Torso" or part.Name == "UpperTorso" or part.Name == "LowerTorso" then
+                            part.CanCollide = true
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    local function buildMapRayParams()
+        local exclude = {}
+        local lobby = workspace:FindFirstChild("Lobby")
+        if lobby then table.insert(exclude, lobby) end
+        local cam = workspace.CurrentCamera
+        if cam then table.insert(exclude, cam) end
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Character then
+                table.insert(exclude, p.Character)
+            end
+        end
+        local rp = RaycastParams.new()
+        rp.FilterType = Enum.RaycastFilterType.Exclude
+        rp.FilterDescendantsInstances = exclude
+        rp.IgnoreWater = true
+        return rp
+    end
+
+    local function getMapBoundsAndAnchors(fallbackY)
+        local anchors = {}
+        local minY = math.huge
+        local maxY = -math.huge
+
+        local function pushAnchor(pos)
+            table.insert(anchors, pos)
+            if pos.Y < minY then minY = pos.Y end
+            if pos.Y > maxY then maxY = pos.Y end
+        end
+
+        pcall(function()
+            for _, pt in ipairs(CollectionService:GetTagged("GeneratorPoint")) do
+                if pt:IsA("BasePart") and pt:IsDescendantOf(workspace) and not pt:FindFirstAncestor("Lobby") then
+                    pushAnchor(pt.Position)
+                end
+            end
+        end)
+
+        pcall(function()
+            for _, pt in ipairs(CollectionService:GetTagged("UnhookPoint")) do
+                if pt:IsA("BasePart") and pt:IsDescendantOf(workspace) and not pt:FindFirstAncestor("Lobby") then
+                    pushAnchor(pt.Position)
+                end
+            end
+        end)
+
+        pcall(function()
+            local map = workspace:FindFirstChild("Map") or workspace:FindFirstChild("map")
+            if map then
+                for _, folderName in ipairs({ "Generators", "new Generators", "generators", "Hooks", "Exits", "ExitGates", "Gates" }) do
+                    local f = map:FindFirstChild(folderName)
+                    if f then
+                        for _, child in ipairs(f:GetChildren()) do
+                            local p = child:IsA("BasePart") and child or (child:IsA("Model") and (child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart")))
+                            if p then
+                                pushAnchor(p.Position)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+
+        if minY == math.huge then
+            minY = fallbackY - 35
+            maxY = fallbackY + 35
+        end
+        return anchors, minY, maxY
+    end
+
+    local function raycastValidFloor(rp, x, yHint, z, minY, maxY)
+        local origin = Vector3.new(x, yHint + 28, z)
+        local hit = workspace:Raycast(origin, Vector3.new(0, -85, 0), rp)
+        if not hit or not hit.Instance then return nil end
+        if not hit.Instance.CanCollide then return nil end
+        if hit.Instance:FindFirstAncestor("Lobby") then return nil end
+        if hit.Normal.Y < 0.65 then return nil end
+        if hit.Position.Y < (minY - 18) or hit.Position.Y > (maxY + 38) then return nil end
+
+        local upHit = workspace:Raycast(hit.Position + Vector3.new(0, 1.5, 0), Vector3.new(0, 4.2, 0), rp)
+        if upHit and upHit.Instance and upHit.Instance.CanCollide then
+            return nil
+        end
+
+        return hit.Position + Vector3.new(0, 3.2, 0)
+    end
+
+    local function findBestFleePosition(myChar, myPos, kPos, minSafeDist)
+        local rp = buildMapRayParams()
+        local anchors, minY, maxY = getMapBoundsAndAnchors(myPos.Y)
+        local candidates = {}
+
+        local function tryAddCandidate(x, yHint, z, preferBonus)
+            local gp = raycastValidFloor(rp, x, yHint, z, minY, maxY)
+            if gp then
+                table.insert(candidates, {
+                    pos = gp,
+                    kDist = (gp - kPos).Magnitude,
+                    myDist = (gp - myPos).Magnitude,
+                    bonus = preferBonus or 0
+                })
+            end
+        end
+
+        -- 1. In-map objective anchors (high reliability inside playable tiles)
+        for i = 1, math.min(#anchors, 36) do
+            local a = anchors[i]
+            tryAddCandidate(a.X + 2.5, a.Y, a.Z + 2.5, 10)
+        end
+
+        -- 2. Radial sweep away from Killer at target safe distance + extended bounds
+        local flatAway = Vector3.new(myPos.X - kPos.X, 0, myPos.Z - kPos.Z)
+        if flatAway.Magnitude < 0.1 then
+            flatAway = Vector3.new(1, 0, 0)
+        else
+            flatAway = flatAway.Unit
+        end
+
+        local baseAngle = math.atan2(flatAway.Z, flatAway.X)
+        local angleOffsets = { 0, 0.55, -0.55, 1.15, -1.15, 1.85, -1.85, 2.55, -2.55, math.pi }
+        local radii = {}
+        local r1 = math.max(minSafeDist + 18, 45)
+        table.insert(radii, r1)
+        if (minSafeDist + 48) <= 320 then
+            table.insert(radii, minSafeDist + 48)
+        end
+        for _, fixedR in ipairs({ 95, 160, 235, 305 }) do
+            if fixedR > (minSafeDist + 8) then
+                table.insert(radii, fixedR)
+            end
+        end
+
+        local tested = 0
+        for _, rad in ipairs(radii) do
+            for _, angOff in ipairs(angleOffsets) do
+                if tested >= 42 then break end
+                tested = tested + 1
+                local ang = baseAngle + angOff
+                local tx = kPos.X + math.cos(ang) * rad
+                local tz = kPos.Z + math.sin(ang) * rad
+                tryAddCandidate(tx, myPos.Y, tz, 0)
+            end
+            if tested >= 42 then break end
+        end
+
+        if #candidates == 0 then
+            return nil, 0
+        end
+
+        local bestSafe = nil
+        local bestSafeScore = -math.huge
+        local furthestAny = nil
+        local maxAnyDist = -1
+
+        for _, c in ipairs(candidates) do
+            if c.kDist > maxAnyDist then
+                maxAnyDist = c.kDist
+                furthestAny = c
+            end
+            if c.kDist >= (minSafeDist + 8) then
+                local excess = math.max(0, c.kDist - (minSafeDist + 28))
+                local score = c.bonus - (excess * 0.25) - (c.myDist * 0.05)
+                if score > bestSafeScore then
+                    bestSafeScore = score
+                    bestSafe = c
+                end
+            end
+        end
+
+        local chosen = bestSafe or furthestAny
+        return chosen.pos, chosen.kDist
+    end
+
+    local function startAutoFleeThread()
+        vdESPState.autoFleeSession = (vdESPState.autoFleeSession or 0) + 1
+        local mySession = vdESPState.autoFleeSession
+
+        task.spawn(function()
+            local lastFleeAt = 0
+            while vdESPState.autoFleeEnabled and mySession == vdESPState.autoFleeSession and scriptRunning do
+                local ok = pcall(function()
+                    if isPlayerKiller and isPlayerKiller() then
+                        vdESPState.autoFleeBlocking = false
+                        task.wait(0.25)
+                        return
+                    end
+
+                    local myChar = player.Character
+                    local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+                    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                    if not myChar or not myHrp or not hum or hum.Health <= 0 then
+                        vdESPState.autoFleeBlocking = false
+                        task.wait(0.15)
+                        return
+                    end
+
+                    if (isEntityInLobbyOrSpectating and isEntityInLobbyOrSpectating(myChar, player))
+                        or isCharacterHooked(myChar)
+                        or isCharacterKnocked(myChar)
+                        or myChar:GetAttribute("IsCarried") == true then
+                        vdESPState.autoFleeBlocking = false
+                        task.wait(0.15)
+                        return
+                    end
+
+                    local killer = getKiller and getKiller()
+                    local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
+                    if not kHrp then
+                        vdESPState.autoFleeBlocking = false
+                        task.wait(0.12)
+                        return
+                    end
+
+                    local targetDist = vdESPState.autoFleeDistance or 40
+                    local curDist = (myHrp.Position - kHrp.Position).Magnitude
+
+                    if curDist <= targetDist then
+                        vdESPState.autoFleeBlocking = true
+                        vdESPState.autoFleePauseUntil = tick() + 1.1
+                        ghostEXHoldPos = nil
+
+                        local now = tick()
+                        if (now - lastFleeAt) >= 0.28 then
+                            local safePos, safeKDist = findBestFleePosition(myChar, myHrp.Position, kHrp.Position, targetDist)
+                            local canTeleport = false
+                            if safePos then
+                                if safeKDist >= (targetDist + 5) then
+                                    canTeleport = true
+                                elseif safeKDist > (curDist + 16) and (now - lastFleeAt) >= 0.95 then
+                                    canTeleport = true
+                                end
+                            end
+
+                            if canTeleport then
+                                unlockFleeConstraints(myChar, myHrp)
+                                local lookVec = Vector3.new(safePos.X - kHrp.Position.X, 0, safePos.Z - kHrp.Position.Z)
+                                if lookVec.Magnitude > 0.05 then
+                                    myHrp.CFrame = CFrame.lookAt(safePos, safePos + lookVec.Unit)
+                                else
+                                    myHrp.CFrame = CFrame.new(safePos)
+                                end
+                                unlockFleeConstraints(myChar, myHrp)
+                                if unlockCameraAndMovement then
+                                    pcall(unlockCameraAndMovement)
+                                end
+                                lastFleeAt = now
+                                vdESPState.autoFleePauseUntil = now + 1.1
+                            end
+                        end
+                    elseif curDist > (targetDist + 5) then
+                        vdESPState.autoFleeBlocking = false
+                    end
+                end)
+                task.wait(ok and 0.04 or 0.1)
+            end
+            vdESPState.autoFleeBlocking = false
+        end)
+    end
+
+    vdESPState.autoFleeToggle = V_CombatSection:Toggle({
+        Title = "Auto Flee Killer",
+        Description = "Automatically flee to safe ground whenever the Killer enters your configured range",
+        Default = false,
+        Callback = function(v)
+            vdESPState.autoFleeEnabled = v
+            if v then
+                startAutoFleeThread()
+            else
+                vdESPState.autoFleeSession = (vdESPState.autoFleeSession or 0) + 1
+                vdESPState.autoFleeBlocking = false
+                vdESPState.autoFleePauseUntil = 0
+            end
+        end
+    })
+
+    V_CombatSection:Slider({
+        Title = "Auto Flee Distance",
+        Description = "Trigger distance in studs to automatically flee from Killer (1 - 300 studs)",
+        Step = 1,
+        Value = {
+            Min = 1,
+            Max = 300,
+            Default = 40,
+        },
+        Callback = function(val)
+            vdESPState.autoFleeDistance = tonumber(val) or 40
+        end
+    })
+end)
+
+-- ============================================================
 -- 8. AUTO SAVE SURVIVOR & RESCUE TEAM ENGINE
 -- ============================================================
 autoSaveEnabled = false
@@ -5884,6 +6191,496 @@ V_RescueSection:Toggle({
         end)
     end
 })
+
+-- ============================================================
+-- RESCUE FRIEND EX (INSTANT UNDERGROUND UNHOOK SYSTEM)
+-- ============================================================
+pcall(function()
+    local RunService = game:GetService("RunService")
+    local CollectionService = game:GetService("CollectionService")
+
+    local rescueEXHeartbeatConn = nil
+    local rescueEXOriginalCFrame = nil
+    local currentRescueTargetChar = nil
+    local rescueEXAnchorPart = nil
+    local rescueEXGroundY = nil
+    local rescueEXDepthStage = 1
+
+    local function checkRescueEXActive()
+        return vdESPState.rescueEXEnabled == true and scriptRunning
+    end
+
+    local function unlockRescueEXMotion(myChar, myHrp, restoreCollision)
+        pcall(function()
+            if myHrp then
+                myHrp.Anchored = false
+                myHrp.AssemblyLinearVelocity = Vector3.zero
+                myHrp.AssemblyAngularVelocity = Vector3.zero
+                pcall(function() CollectionService:RemoveTag(myHrp, "doing action") end)
+            end
+            if myChar then
+                myChar:SetAttribute("Rooted", false)
+                myChar:SetAttribute("Immobile", false)
+                myChar:SetAttribute("AC_ServerAnchor", nil)
+                pcall(function() CollectionService:RemoveTag(myChar, "doing action") end)
+                local hum = myChar:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    hum.PlatformStand = false
+                end
+                if restoreCollision then
+                    for _, part in ipairs(myChar:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            if part.Name == "HumanoidRootPart" or part.Name == "Torso" or part.Name == "UpperTorso" or part.Name == "LowerTorso" then
+                                part.CanCollide = true
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    local function stopRescueEX(restorePosition)
+        vdESPState.rescueEXSession = (vdESPState.rescueEXSession or 0) + 1
+        vdESPState.rescueEXHoldPos = nil
+        currentRescueTargetChar = nil
+        rescueEXAnchorPart = nil
+        rescueEXGroundY = nil
+        rescueEXDepthStage = 1
+
+        if rescueEXHeartbeatConn then
+            pcall(function() rescueEXHeartbeatConn:Disconnect() end)
+            rescueEXHeartbeatConn = nil
+        end
+
+        pcall(function()
+            local myChar = player.Character
+            local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            if myChar then
+                myChar:SetAttribute("isUnhooking", false)
+                unlockRescueEXMotion(myChar, myHrp, true)
+            end
+            if restorePosition and rescueEXOriginalCFrame and myHrp then
+                myHrp.CFrame = rescueEXOriginalCFrame
+                myHrp.AssemblyLinearVelocity = Vector3.zero
+                myHrp.AssemblyAngularVelocity = Vector3.zero
+                rescueEXOriginalCFrame = nil
+            end
+            if unlockCameraAndMovement then
+                unlockCameraAndMovement()
+            end
+        end)
+    end
+
+    local function getDesiredRescuePos(anchorPos, groundY, depthStage)
+        local offsetsGround = { 3.8, 3.1, 2.5 }
+        local offsetsRaw = { 5.2, 4.3, 3.5 }
+        local idx = math.clamp(depthStage or 1, 1, 3)
+
+        local desiredY
+        if groundY then
+            desiredY = groundY - offsetsGround[idx]
+            -- Also avoid dropping farther than ~6.8 studs from hook unhook anchor if hook sits high
+            local minReachY = anchorPos.Y - 6.8
+            if desiredY < minReachY and (groundY - 2.6) >= minReachY then
+                desiredY = math.max(minReachY, groundY - 3.6)
+            end
+        else
+            desiredY = anchorPos.Y - offsetsRaw[idx]
+        end
+
+        return Vector3.new(anchorPos.X, desiredY, anchorPos.Z)
+    end
+
+    local function findHookGroundY(anchorPart, anchorPos, targetChar)
+        local hookModel = anchorPart and anchorPart:FindFirstAncestorOfClass("Model")
+        if hookModel == workspace or hookModel == targetChar then
+            hookModel = nil
+        end
+
+        local exclude = {}
+        local lobby = workspace:FindFirstChild("Lobby")
+        if lobby then table.insert(exclude, lobby) end
+        local cam = workspace.CurrentCamera
+        if cam then table.insert(exclude, cam) end
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Character then
+                table.insert(exclude, p.Character)
+            end
+        end
+        if hookModel then
+            table.insert(exclude, hookModel)
+        end
+
+        local rp = RaycastParams.new()
+        rp.FilterType = Enum.RaycastFilterType.Exclude
+        rp.FilterDescendantsInstances = exclude
+        rp.IgnoreWater = true
+
+        local hit = workspace:Raycast(Vector3.new(anchorPos.X, anchorPos.Y + 3, anchorPos.Z), Vector3.new(0, -35, 0), rp)
+        if hit and hit.Instance and hit.Instance.CanCollide and not hit.Instance:FindFirstAncestor("Lobby") then
+            return hit.Position.Y
+        end
+        return nil
+    end
+
+    local function enforceRescueEXUndergroundPos(threshold)
+        if not vdESPState.rescueEXEnabled then return end
+        if vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking then return end
+
+        local myChar = player.Character
+        local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if not myChar or not myHrp then return end
+
+        -- Keep live coordinates tightly synchronized with hook anchor
+        if rescueEXAnchorPart and rescueEXAnchorPart.Parent then
+            vdESPState.rescueEXHoldPos = getDesiredRescuePos(rescueEXAnchorPart.Position, rescueEXGroundY, rescueEXDepthStage)
+        elseif currentRescueTargetChar and currentRescueTargetChar.Parent then
+            local tHrp = currentRescueTargetChar:FindFirstChild("HumanoidRootPart")
+            if tHrp then
+                vdESPState.rescueEXHoldPos = getDesiredRescuePos(tHrp.Position, rescueEXGroundY, rescueEXDepthStage)
+            end
+        end
+
+        local targetPos = vdESPState.rescueEXHoldPos
+        if not targetPos then return end
+
+        for _, part in ipairs(myChar:GetDescendants()) do
+            if part:IsA("BasePart") and part.CanCollide then
+                part.CanCollide = false
+            end
+        end
+
+        myHrp.Anchored = false
+        myHrp.AssemblyLinearVelocity = Vector3.zero
+        myHrp.AssemblyAngularVelocity = Vector3.zero
+        myChar:SetAttribute("Rooted", false)
+        myChar:SetAttribute("Immobile", false)
+        myChar:SetAttribute("AC_ServerAnchor", nil)
+
+        local realDist = (myHrp.Position - targetPos).Magnitude
+        if realDist > (threshold or 0.25) or myHrp.Anchored then
+            myHrp.CFrame = CFrame.new(targetPos)
+        end
+    end
+
+    local function findNearestHookedTeammateEX(myHrp)
+        local bestChar, bestPlr, bestDist = nil, nil, math.huge
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= player and plr.Character and plr.Character:IsDescendantOf(workspace) then
+                if (not isTeammateRescuable or isTeammateRescuable(plr)) and isCharacterHooked(plr.Character) then
+                    local tHrp = plr.Character:FindFirstChild("HumanoidRootPart")
+                    if tHrp then
+                        local d = (myHrp.Position - tHrp.Position).Magnitude
+                        if d < bestDist then
+                            bestDist = d
+                            bestChar = plr.Character
+                            bestPlr = plr
+                        end
+                    end
+                end
+            end
+        end
+        return bestChar, bestPlr, bestDist
+    end
+
+    local function fireUnhookActions(remotes, targetChar, unhookPt, myChar)
+        pcall(function()
+            local myHrp = myChar:FindFirstChild("HumanoidRootPart")
+            if myHrp then
+                pcall(function() CollectionService:RemoveTag(myHrp, "doing action") end)
+            end
+            pcall(function() CollectionService:RemoveTag(myChar, "doing action") end)
+            myChar:SetAttribute("isRepairing", false)
+            myChar:SetAttribute("isHealing", false)
+            myChar:SetAttribute("isExiting", false)
+            myChar:SetAttribute("Rooted", false)
+            myChar:SetAttribute("Immobile", false)
+            myChar:SetAttribute("isUnhooking", true)
+
+            if remotes and remotes.Carry and remotes.Carry:FindFirstChild("UnHookEvent") then
+                if unhookPt and unhookPt:IsA("BasePart") and unhookPt ~= targetChar:FindFirstChild("HumanoidRootPart") then
+                    remotes.Carry.UnHookEvent:FireServer(unhookPt, myChar)
+                end
+                remotes.Carry.UnHookEvent:FireServer(targetChar, myChar)
+            end
+        end)
+
+        if typeof(fireproximityprompt) == "function" then
+            pcall(function()
+                local fired = {}
+                local function firePromptsUnder(root)
+                    if not root then return end
+                    for _, desc in ipairs(root:GetDescendants()) do
+                        if desc:IsA("ProximityPrompt") and desc.Enabled and not fired[desc] and not desc:IsDescendantOf(myChar) then
+                            fired[desc] = true
+                            pcall(function() desc.RequiresLineOfSight = false end)
+                            pcall(fireproximityprompt, desc)
+                        end
+                    end
+                end
+
+                firePromptsUnder(targetChar)
+                if unhookPt then
+                    firePromptsUnder(unhookPt)
+                    local hookModel = unhookPt:FindFirstAncestorOfClass("Model")
+                    if hookModel and hookModel ~= workspace then
+                        firePromptsUnder(hookModel)
+                    elseif unhookPt.Parent then
+                        firePromptsUnder(unhookPt.Parent)
+                    end
+                end
+
+                local refPos = (unhookPt and unhookPt.Position) or (targetChar:FindFirstChild("HumanoidRootPart") and targetChar.HumanoidRootPart.Position)
+                if refPos then
+                    local map = workspace:FindFirstChild("Map") or workspace:FindFirstChild("map")
+                    local hooksFolder = map and map:FindFirstChild("Hooks")
+                    if hooksFolder then
+                        for _, obj in ipairs(hooksFolder:GetDescendants()) do
+                            if obj:IsA("ProximityPrompt") and obj.Enabled and not fired[obj] then
+                                local parentPart = obj.Parent and obj.Parent:IsA("BasePart") and obj.Parent or nil
+                                if parentPart and (parentPart.Position - refPos).Magnitude <= 14 then
+                                    fired[obj] = true
+                                    pcall(function() obj.RequiresLineOfSight = false end)
+                                    pcall(fireproximityprompt, obj)
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+
+    local function startRescueEXThread()
+        vdESPState.rescueEXSession = (vdESPState.rescueEXSession or 0) + 1
+        local mySession = vdESPState.rescueEXSession
+        local function isSessionValid()
+            return vdESPState.rescueEXEnabled == true and mySession == vdESPState.rescueEXSession and scriptRunning
+        end
+
+        if rescueEXHeartbeatConn then
+            pcall(function() rescueEXHeartbeatConn:Disconnect() end)
+            rescueEXHeartbeatConn = nil
+        end
+
+        -- 1. Frame-accurate Heartbeat underground lock
+        rescueEXHeartbeatConn = RunService.Heartbeat:Connect(function()
+            if not isSessionValid() then
+                if rescueEXHeartbeatConn then
+                    pcall(function() rescueEXHeartbeatConn:Disconnect() end)
+                    rescueEXHeartbeatConn = nil
+                end
+                return
+            end
+            pcall(function()
+                enforceRescueEXUndergroundPos(0.25)
+            end)
+        end)
+
+        -- 2. Ultra-fast 0.0001s Real-Position Checker & Spam Underground Teleport Loop
+        task.spawn(function()
+            while isSessionValid() do
+                pcall(function()
+                    enforceRescueEXUndergroundPos(0.25)
+                end)
+                task.wait(0.0001)
+            end
+        end)
+
+        -- 3. Main Hooked Teammate Detector & Anti-Stall Underground Unhook Thread
+        task.spawn(function()
+            local trackedChar = nil
+
+            while isSessionValid() do
+                local ok = pcall(function()
+                    if isPlayerKiller and isPlayerKiller() then
+                        vdESPState.rescueEXHoldPos = nil
+                        currentRescueTargetChar = nil
+                        rescueEXAnchorPart = nil
+                        task.wait(0.3)
+                        return
+                    end
+
+                    local myChar = player.Character
+                    local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+                    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                    if not myChar or not myHrp or not hum or hum.Health <= 0 then
+                        vdESPState.rescueEXHoldPos = nil
+                        currentRescueTargetChar = nil
+                        rescueEXAnchorPart = nil
+                        rescueEXOriginalCFrame = nil
+                        task.wait(0.2)
+                        return
+                    end
+
+                    if trackedChar ~= myChar then
+                        trackedChar = myChar
+                        rescueEXOriginalCFrame = nil
+                        vdESPState.rescueEXHoldPos = nil
+                        currentRescueTargetChar = nil
+                        rescueEXAnchorPart = nil
+                    end
+
+                    if (isEntityInLobbyOrSpectating and isEntityInLobbyOrSpectating(myChar, player))
+                        or isCharacterHooked(myChar)
+                        or isCharacterKnocked(myChar)
+                        or myChar:GetAttribute("IsCarried") == true then
+                        vdESPState.rescueEXHoldPos = nil
+                        currentRescueTargetChar = nil
+                        rescueEXAnchorPart = nil
+                        myChar:SetAttribute("isUnhooking", false)
+                        task.wait(0.2)
+                        return
+                    end
+
+                    if vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking then
+                        vdESPState.rescueEXHoldPos = nil
+                        myChar:SetAttribute("isUnhooking", false)
+                        unlockRescueEXMotion(myChar, myHrp, true)
+                        task.wait(0.15)
+                        return
+                    end
+
+                    local targetChar, targetPlr = findNearestHookedTeammateEX(myHrp)
+                    if not targetChar or not targetPlr then
+                        local wasRescuing = (vdESPState.rescueEXHoldPos ~= nil or currentRescueTargetChar ~= nil)
+                        vdESPState.rescueEXHoldPos = nil
+                        currentRescueTargetChar = nil
+                        rescueEXAnchorPart = nil
+                        rescueEXGroundY = nil
+                        rescueEXDepthStage = 1
+                        myChar:SetAttribute("isUnhooking", false)
+                        if wasRescuing then
+                            unlockRescueEXMotion(myChar, myHrp, true)
+                            if ghostAutoReturn and rescueEXOriginalCFrame and not ghostRepairEXEnabled and not ghostRepairEnabled then
+                                myHrp.CFrame = rescueEXOriginalCFrame
+                                myHrp.AssemblyLinearVelocity = Vector3.zero
+                                myHrp.AssemblyAngularVelocity = Vector3.zero
+                                rescueEXOriginalCFrame = nil
+                            else
+                                rescueEXOriginalCFrame = nil
+                            end
+                            if unlockCameraAndMovement then
+                                pcall(unlockCameraAndMovement)
+                            end
+                        end
+                        task.wait(0.25)
+                        return
+                    end
+
+                    local targetHrp = targetChar:FindFirstChild("HumanoidRootPart")
+                    if not targetHrp then
+                        task.wait(0.1)
+                        return
+                    end
+
+                    if not rescueEXOriginalCFrame then
+                        rescueEXOriginalCFrame = myHrp.CFrame
+                    end
+
+                    local unhookPt = findUnhookPointForTeammate and findUnhookPointForTeammate(targetChar) or targetHrp
+                    local anchorPart = (unhookPt and unhookPt.Parent) and unhookPt or targetHrp
+                    currentRescueTargetChar = targetChar
+                    rescueEXAnchorPart = anchorPart
+                    rescueEXGroundY = findHookGroundY(anchorPart, anchorPart.Position, targetChar)
+                    rescueEXDepthStage = 1
+
+                    -- Pin underground immediately & settle 0.12s for server position replication before triggering UnHook
+                    vdESPState.rescueEXHoldPos = getDesiredRescuePos(anchorPart.Position, rescueEXGroundY, rescueEXDepthStage)
+                    enforceRescueEXUndergroundPos(0.1)
+                    task.wait(0.12)
+
+                    if not isSessionValid() or not targetChar.Parent or not isCharacterHooked(targetChar) then
+                        return
+                    end
+
+                    local remotes = getVDRemotes and getVDRemotes()
+                    fireUnhookActions(remotes, targetChar, unhookPt, myChar)
+
+                    local attemptStart = tick()
+                    local lastPromptPulse = tick()
+
+                    while isSessionValid()
+                        and targetChar.Parent
+                        and isCharacterHooked(targetChar)
+                        and not isCharacterHooked(myChar)
+                        and not isCharacterKnocked(myChar)
+                        and not (vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking) do
+
+                        -- Gently pulse enabled ProximityPrompts every 0.35s in case prompt requires active interaction
+                        if (tick() - lastPromptPulse) >= 0.35 then
+                            lastPromptPulse = tick()
+                            if typeof(fireproximityprompt) == "function" then
+                                pcall(function()
+                                    for _, root in ipairs({ targetChar, anchorPart.Parent }) do
+                                        if root then
+                                            for _, d in ipairs(root:GetDescendants()) do
+                                                if d:IsA("ProximityPrompt") and d.Enabled and not d:IsDescendantOf(myChar) then
+                                                    pcall(function() d.RequiresLineOfSight = false end)
+                                                    pcall(fireproximityprompt, d)
+                                                end
+                                            end
+                                        end
+                                    end
+                                end)
+                            end
+                        end
+
+                        -- Anti-stall watchdog: if still hooked after 1.5s, step depth closer (still underground),
+                        -- reset any stuck "doing action" tag/state, re-settle, and re-fire UnHook
+                        if (tick() - attemptStart) >= 1.5 then
+                            rescueEXDepthStage = (rescueEXDepthStage % 3) + 1
+                            rescueEXGroundY = findHookGroundY(anchorPart, anchorPart.Position, targetChar) or rescueEXGroundY
+                            vdESPState.rescueEXHoldPos = getDesiredRescuePos(anchorPart.Position, rescueEXGroundY, rescueEXDepthStage)
+                            pcall(function()
+                                myChar:SetAttribute("isUnhooking", false)
+                                CollectionService:RemoveTag(myHrp, "doing action")
+                                CollectionService:RemoveTag(myChar, "doing action")
+                            end)
+                            enforceRescueEXUndergroundPos(0.1)
+                            task.wait(0.08)
+                            if not isSessionValid() or not isCharacterHooked(targetChar) then
+                                break
+                            end
+                            fireUnhookActions(remotes, targetChar, unhookPt, myChar)
+                            attemptStart = tick()
+                            lastPromptPulse = tick()
+                        end
+
+                        task.wait(0.05)
+                    end
+
+                    -- Clean up unhook state once teammate is unhooked or cycle interrupted
+                    pcall(function()
+                        if myChar and myChar.Parent then
+                            myChar:SetAttribute("isUnhooking", false)
+                            CollectionService:RemoveTag(myHrp, "doing action")
+                            CollectionService:RemoveTag(myChar, "doing action")
+                        end
+                    end)
+                end)
+                task.wait(ok and 0.05 or 0.15)
+            end
+
+            stopRescueEX(true)
+        end)
+    end
+
+    vdESPState.rescueEXToggle = V_RescueSection:Toggle({
+        Title = "Rescue Friend EX",
+        Description = "0.0001s instant underground teleport to hooked teammate & complete unhook without stalling",
+        Default = false,
+        Callback = function(v)
+            vdESPState.rescueEXEnabled = v
+            if v then
+                startRescueEXThread()
+            else
+                stopRescueEX(true)
+            end
+        end
+    })
+end)
 
 -- ============================================================
 -- NOCLIP SYSTEM (FOR AUTO REPAIR & AUTO CATCH)

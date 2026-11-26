@@ -8,7 +8,7 @@
 - **Instant Direct File Updates & GitHub Push**: For any requested changes, additions, features, or fixes for the Riel-Private Lua script, ALWAYS directly write and apply all changes immediately to the target script file (`v1` in `c:\Users\Admin\Downloads\rielv2\v1` or the active `Riel-Private` repository), and ALWAYS immediately stage, commit, and push the changes directly to GitHub (`git push origin main`) so that the remote GitHub repository is always updated instantly. Never output code solely as chat snippets without applying it to the file and pushing to GitHub.
 
 ## Riel-Private Versioning & Tracking Rule
-- **Current Version**: `1.13`
+- **Current Version**: `1.14`
 - **Baseline & Persistent Memory**: Riel-Private versioning strictly starts at `1.00`. Always persist and remember the current version number both here (`Current Version` in workspace `c:\Users\Admin\Downloads\rielv2\AGENTS.md` and global `C:\Users\Admin\.gemini\config\AGENTS.md`) and inside `v1` / `v1.lua` (`local RIEL_VERSION = "1.00"`).
 - **Mandatory `+0.01` Increment on Every Update**: On EVERY update, feature addition, bugfix, or script modification to Riel-Private (`v1`, `v1.lua`, or `violence_district.lua`), you MUST:
   1. Read the current version number from `local RIEL_VERSION` in `v1` and `Current Version` above.
