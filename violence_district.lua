@@ -57,11 +57,22 @@ local vdESPState = {
     autoFleeDistance = 40,
     autoFleeSession = 0,
     autoFleePauseUntil = 0,
+    autoFleeBlocking = false,
     autoFleeToggle = nil,
+    fleeKnockEXEnabled = false,
+    fleeKnockEXSession = 0,
+    fleeKnockEXBlocking = false,
+    fleeKnockEXToggle = nil,
     rescueEXEnabled = false,
     rescueEXSession = 0,
     rescueEXHoldPos = nil,
-    rescueEXToggle = nil
+    rescueEXPaused = false,
+    rescueEXToggle = nil,
+    ghostEXPaused = false,
+    setMovementBypass = nil,
+    microTransitTo = nil,
+    findFloorYBelow = nil,
+    findFurthestSafeGround = nil
 }
 
 do
@@ -371,7 +382,7 @@ task.spawn(function()
                 if autoCatchEnabled or autoCatchEXEnabled or autoAimSurvivorEnabled or autoHitSurvivorEnabled or autoHookSurvivorEnabled then
                     -- Killer automation is actively in use
                     lastDetectedRole = "Killer"
-                elseif autoRepairEnabled or ghostRepairEnabled or ghostRepairEXEnabled or autoPalletEnabled or autoParryEnabled or autoDodgeEnabled or autoSaveEnabled or (vdESPState and (vdESPState.autoFleeEnabled or vdESPState.rescueEXEnabled)) then
+                elseif autoRepairEnabled or ghostRepairEnabled or ghostRepairEXEnabled or autoPalletEnabled or autoParryEnabled or autoDodgeEnabled or autoSaveEnabled or (vdESPState and (vdESPState.autoFleeEnabled or vdESPState.rescueEXEnabled or vdESPState.fleeKnockEXEnabled)) then
                     -- Survivor automation is actively in use
                     lastDetectedRole = "Survivor"
                 else
@@ -400,8 +411,12 @@ task.spawn(function()
                                 vdESPState.autoFleeBlocking = false
                                 vdESPState.autoFleePauseUntil = 0
                                 vdESPState.autoFleeSession = (vdESPState.autoFleeSession or 0) + 1
+                                vdESPState.fleeKnockEXEnabled = false
+                                vdESPState.fleeKnockEXBlocking = false
+                                vdESPState.fleeKnockEXSession = (vdESPState.fleeKnockEXSession or 0) + 1
                                 vdESPState.rescueEXEnabled = false
                                 vdESPState.rescueEXHoldPos = nil
+                                vdESPState.rescueEXPaused = false
                                 vdESPState.rescueEXSession = (vdESPState.rescueEXSession or 0) + 1
                             end
                         elseif currentRole == "Survivor" then
@@ -1052,7 +1067,10 @@ local function onMatchOrCharacterReset()
         vdESPState.lastAppliedRole = nil
         vdESPState.autoFleeBlocking = false
         vdESPState.autoFleePauseUntil = 0
+        vdESPState.fleeKnockEXBlocking = false
         vdESPState.rescueEXHoldPos = nil
+        vdESPState.rescueEXPaused = false
+        vdESPState.ghostEXPaused = false
     end
     lastCapturedRepairRequestId = nil
     lastCapturedGenModel = nil
@@ -1060,6 +1078,220 @@ local function onMatchOrCharacterReset()
     lastCapturedHealRequestId = nil
     unlockCameraAndMovement()
 end
+
+-- Shared Anti-Cheat Bypass, Underground Micro-Transit & Safe Map Ground Utilities
+pcall(function()
+    local CollectionService = game:GetService("CollectionService")
+
+    local function buildExcludeList(extraExclude)
+        local exclude = {}
+        local lobby = workspace:FindFirstChild("Lobby")
+        if lobby then table.insert(exclude, lobby) end
+        local cam = workspace.CurrentCamera
+        if cam then table.insert(exclude, cam) end
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Character then
+                table.insert(exclude, p.Character)
+            end
+        end
+        if extraExclude then
+            if typeof(extraExclude) == "Instance" then
+                table.insert(exclude, extraExclude)
+            elseif type(extraExclude) == "table" then
+                for _, item in ipairs(extraExclude) do
+                    if typeof(item) == "Instance" then
+                        table.insert(exclude, item)
+                    end
+                end
+            end
+        end
+        return exclude
+    end
+
+    vdESPState.setMovementBypass = function(char, enabled)
+        if not char or not char.Parent then return end
+        pcall(function()
+            if enabled then
+                if char:GetAttribute("BypassNoclipAntiCheat") ~= true then
+                    char:SetAttribute("BypassNoclipAntiCheat", true)
+                end
+                if char:GetAttribute("donttrack") ~= true then
+                    char:SetAttribute("donttrack", true)
+                end
+                if (char:GetAttribute("NetTraversalUntil") or 0) < 999999999 then
+                    char:SetAttribute("NetTraversalUntil", 999999999)
+                end
+                if char:GetAttribute("AC_ServerAnchor") ~= nil then
+                    char:SetAttribute("AC_ServerAnchor", nil)
+                end
+            else
+                local stillNeeded = noClipEnabled
+                    or (ghostRepairEXEnabled and not vdESPState.ghostEXPaused)
+                    or (vdESPState.rescueEXEnabled and not vdESPState.rescueEXPaused)
+                    or vdESPState.fleeKnockEXBlocking
+                if not stillNeeded then
+                    if char:GetAttribute("BypassNoclipAntiCheat") == true then
+                        char:SetAttribute("BypassNoclipAntiCheat", false)
+                    end
+                    if char:GetAttribute("donttrack") == true then
+                        char:SetAttribute("donttrack", false)
+                    end
+                    if char:GetAttribute("NetTraversalUntil") ~= nil then
+                        char:SetAttribute("NetTraversalUntil", nil)
+                    end
+                end
+            end
+        end)
+    end
+
+    vdESPState.findFloorYBelow = function(x, yStart, z, extraExclude)
+        local rp = RaycastParams.new()
+        rp.FilterType = Enum.RaycastFilterType.Exclude
+        rp.FilterDescendantsInstances = buildExcludeList(extraExclude)
+        rp.IgnoreWater = true
+
+        local curOrigin = Vector3.new(x, yStart + 3, z)
+        for _ = 1, 4 do
+            local hit = workspace:Raycast(curOrigin, Vector3.new(0, -45, 0), rp)
+            if not hit or not hit.Instance then break end
+            if hit.Instance.CanCollide and not hit.Instance:FindFirstAncestor("Lobby") then
+                return hit.Position.Y
+            end
+            curOrigin = hit.Position + Vector3.new(0, -0.5, 0)
+        end
+        return nil
+    end
+
+    vdESPState.microTransitTo = function(myChar, myHrp, targetPos, checkFn, setCollisionFalse)
+        if not myChar or not myHrp or not myHrp.Parent then return false end
+        vdESPState.setMovementBypass(myChar, true)
+
+        if setCollisionFalse then
+            for _, part in ipairs(myChar:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end
+
+        local fromPos = myHrp.Position
+        local totalDist = (targetPos - fromPos).Magnitude
+        if totalDist > 20 then
+            local burstSteps = math.clamp(math.ceil(totalDist / 22), 2, 6)
+            for s = 1, burstSteps do
+                if checkFn and not checkFn() then return false end
+                vdESPState.setMovementBypass(myChar, true)
+                if setCollisionFalse then
+                    for _, part in ipairs(myChar:GetDescendants()) do
+                        if part:IsA("BasePart") and part.CanCollide then
+                            part.CanCollide = false
+                        end
+                    end
+                end
+                if myHrp.Anchored then myHrp.Anchored = false end
+                local stepPos = fromPos:Lerp(targetPos, s / burstSteps)
+                myHrp.AssemblyLinearVelocity = Vector3.zero
+                myHrp.AssemblyAngularVelocity = Vector3.zero
+                myHrp.CFrame = CFrame.new(stepPos)
+                task.wait(0.008)
+            end
+        end
+
+        if myHrp.Anchored then myHrp.Anchored = false end
+        myHrp.AssemblyLinearVelocity = Vector3.zero
+        myHrp.AssemblyAngularVelocity = Vector3.zero
+        myHrp.CFrame = CFrame.new(targetPos)
+        return true
+    end
+
+    vdESPState.findFurthestSafeGround = function(myChar, myPos, kPos)
+        local rp = RaycastParams.new()
+        rp.FilterType = Enum.RaycastFilterType.Exclude
+        rp.FilterDescendantsInstances = buildExcludeList(nil)
+        rp.IgnoreWater = true
+
+        local anchors = {}
+        local minY, maxY = math.huge, -math.huge
+        local function pushAnchor(pos)
+            table.insert(anchors, pos)
+            if pos.Y < minY then minY = pos.Y end
+            if pos.Y > maxY then maxY = pos.Y end
+        end
+
+        pcall(function()
+            for _, pt in ipairs(CollectionService:GetTagged("GeneratorPoint")) do
+                if pt:IsA("BasePart") and pt:IsDescendantOf(workspace) and not pt:FindFirstAncestor("Lobby") then
+                    pushAnchor(pt.Position)
+                end
+            end
+            for _, pt in ipairs(CollectionService:GetTagged("UnhookPoint")) do
+                if pt:IsA("BasePart") and pt:IsDescendantOf(workspace) and not pt:FindFirstAncestor("Lobby") then
+                    pushAnchor(pt.Position)
+                end
+            end
+            local map = workspace:FindFirstChild("Map") or workspace:FindFirstChild("map")
+            if map then
+                for _, folderName in ipairs({ "Generators", "new Generators", "generators", "Hooks", "Exits", "ExitGates", "Gates" }) do
+                    local f = map:FindFirstChild(folderName)
+                    if f then
+                        for _, child in ipairs(f:GetChildren()) do
+                            local p = child:IsA("BasePart") and child or (child:IsA("Model") and (child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart")))
+                            if p then pushAnchor(p.Position) end
+                        end
+                    end
+                end
+            end
+        end)
+
+        if minY == math.huge then
+            minY = myPos.Y - 35
+            maxY = myPos.Y + 35
+        end
+
+        local function tryFloor(x, yHint, z)
+            local hit = workspace:Raycast(Vector3.new(x, yHint + 28, z), Vector3.new(0, -85, 0), rp)
+            if not hit or not hit.Instance then return nil end
+            if not hit.Instance.CanCollide or hit.Instance:FindFirstAncestor("Lobby") then return nil end
+            if hit.Normal.Y < 0.65 then return nil end
+            if hit.Position.Y < (minY - 18) or hit.Position.Y > (maxY + 38) then return nil end
+            local upHit = workspace:Raycast(hit.Position + Vector3.new(0, 1.5, 0), Vector3.new(0, 4.2, 0), rp)
+            if upHit and upHit.Instance and upHit.Instance.CanCollide then return nil end
+            return hit.Position + Vector3.new(0, 3.0, 0)
+        end
+
+        local bestPos, bestKDist = nil, -1
+        for i = 1, math.min(#anchors, 36) do
+            local a = anchors[i]
+            local gp = tryFloor(a.X + 3.0, a.Y, a.Z + 3.0)
+            if gp then
+                local kd = (gp - kPos).Magnitude
+                if kd > bestKDist then
+                    bestKDist = kd
+                    bestPos = gp
+                end
+            end
+        end
+
+        local flatAway = Vector3.new(myPos.X - kPos.X, 0, myPos.Z - kPos.Z)
+        flatAway = (flatAway.Magnitude >= 0.1) and flatAway.Unit or Vector3.new(1, 0, 0)
+        local baseAngle = math.atan2(flatAway.Z, flatAway.X)
+        for _, rad in ipairs({ 120, 180, 240, 290 }) do
+            for _, angOff in ipairs({ 0, 0.55, -0.55, 1.15, -1.15, 2.0, -2.0 }) do
+                local ang = baseAngle + angOff
+                local gp = tryFloor(kPos.X + math.cos(ang) * rad, myPos.Y, kPos.Z + math.sin(ang) * rad)
+                if gp then
+                    local kd = (gp - kPos).Magnitude
+                    if kd > bestKDist then
+                        bestKDist = kd
+                        bestPos = gp
+                    end
+                end
+            end
+        end
+
+        return bestPos, bestKDist
+    end
+end)
 
 -- Connect local player respawn
 player.CharacterAdded:Connect(function(newChar)
@@ -4377,11 +4609,15 @@ pcall(function()
 local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
 local ghostEXOriginalCFrame = nil
+local ghostEXSteppedConn = nil
 local ghostEXHeartbeatConn = nil
 local ghostEXHighlight = nil
 local ghostEXHighlightModel = nil
 local ghostEXRepairRequestId = nil
 local ghostEXActiveDepth = nil
+local ghostEXTransiting = false
+local ghostEXCurrentFloorY = nil
+local ghostEXRetryDepthStep = 0
 
 local function clearGhostEXGenMarker()
     if ghostEXHighlight then
@@ -4430,7 +4666,7 @@ local function setGhostEXGenMarker(genModel, targetPoint)
     end)
 end
 
-local function unlockGhostEXMotion(char, hrp, clearAttributes)
+local function unlockGhostEXMotion(char, hrp, clearAttributes, restoreCollision)
     if hrp and hrp.Anchored then
         pcall(function() hrp.Anchored = false end)
     end
@@ -4443,8 +4679,14 @@ local function unlockGhostEXMotion(char, hrp, clearAttributes)
             end)
         end
         for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") and part.CanCollide then
-                part.CanCollide = false
+            if part:IsA("BasePart") then
+                if restoreCollision then
+                    if part.Name == "HumanoidRootPart" or part.Name == "Torso" or part.Name == "UpperTorso" or part.Name == "LowerTorso" then
+                        part.CanCollide = true
+                    end
+                elseif part.CanCollide then
+                    part.CanCollide = false
+                end
             end
         end
     end
@@ -4564,6 +4806,12 @@ local function findNearestGeneratorSlotsEX()
 end
 
 stopGhostRepairEX = function()
+    vdESPState.ghostEXPaused = false
+    ghostEXTransiting = false
+    if ghostEXSteppedConn then
+        pcall(function() ghostEXSteppedConn:Disconnect() end)
+        ghostEXSteppedConn = nil
+    end
     if ghostEXHeartbeatConn then
         pcall(function() ghostEXHeartbeatConn:Disconnect() end)
         ghostEXHeartbeatConn = nil
@@ -4577,21 +4825,24 @@ stopGhostRepairEX = function()
     end)
     clearGhostEXGenMarker()
     pcall(function()
-        if ghostAutoReturn and ghostEXOriginalCFrame then
-            local myChar = player.Character
-            local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-            if myHrp then
-                myHrp.Anchored = false
-                myHrp.CFrame = ghostEXOriginalCFrame
-                myHrp.AssemblyLinearVelocity = Vector3.zero
-                myHrp.AssemblyAngularVelocity = Vector3.zero
+        local myChar = player.Character
+        local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if ghostAutoReturn and ghostEXOriginalCFrame and myHrp then
+            if vdESPState.microTransitTo then
+                vdESPState.microTransitTo(myChar, myHrp, ghostEXOriginalCFrame.Position, nil, false)
             end
+            myHrp.Anchored = false
+            myHrp.CFrame = ghostEXOriginalCFrame
+            myHrp.AssemblyLinearVelocity = Vector3.zero
+            myHrp.AssemblyAngularVelocity = Vector3.zero
         end
     end)
     ghostEXOriginalCFrame = nil
     ghostEXRepairRequestId = nil
     ghostEXHoldPos = nil
     ghostEXActiveDepth = nil
+    ghostEXCurrentFloorY = nil
+    ghostEXRetryDepthStep = 0
     currentGhostEXPoint = nil
     currentGhostEXModel = nil
     pcall(function()
@@ -4606,6 +4857,9 @@ stopGhostRepairEX = function()
                     part.CanCollide = true
                 end
             end
+            if vdESPState.setMovementBypass then
+                vdESPState.setMovementBypass(player.Character, false)
+            end
         end
     end)
     unlockCameraAndMovement()
@@ -4614,6 +4868,9 @@ end
 local function startGhostRepairEXThread()
     ghostRepairEXSession = ghostRepairEXSession + 1
     local thisSession = ghostRepairEXSession
+    vdESPState.ghostEXPaused = false
+    ghostEXTransiting = false
+    ghostEXRetryDepthStep = 0
 
     local function checkEXActive()
         return ghostRepairEXEnabled and (ghostRepairEXSession == thisSession) and scriptRunning
@@ -4625,29 +4882,57 @@ local function startGhostRepairEXThread()
         ghostEXOriginalCFrame = initialHrp.CFrame
     end
 
-    local function getActiveDepth()
-        return ghostEXActiveDepth or ghostDepthOffset or 7.0
+    local function computeTrueUndergroundGenPos(pt, genModel)
+        local baseDepth = math.clamp(tonumber(ghostEXActiveDepth or ghostDepthOffset) or 7.0, 4.5, 10.0)
+        local floorY = ghostEXCurrentFloorY
+        if not floorY and vdESPState.findFloorYBelow then
+            floorY = vdESPState.findFloorYBelow(pt.Position.X, pt.Position.Y, pt.Position.Z, genModel)
+            ghostEXCurrentFloorY = floorY
+        end
+
+        local desiredY = pt.Position.Y - math.max(baseDepth, 7.2)
+        if floorY then
+            -- Keep entire character (HRP +2.5 head) strictly buried beneath solid floor on Killer POV
+            local minBuriedMargins = { 5.2, 4.7, 4.3 }
+            local margin = minBuriedMargins[(ghostEXRetryDepthStep % 3) + 1] or 5.2
+            local buriedY = floorY - margin
+            if buriedY < desiredY then
+                desiredY = math.max(buriedY, pt.Position.Y - math.max(baseDepth + 2.2, 9.2))
+            end
+        end
+        return Vector3.new(pt.Position.X, desiredY, pt.Position.Z)
     end
 
     local function enforceEXUndergroundPos(maxDistTolerance)
+        if ghostEXTransiting or vdESPState.ghostEXPaused then return false end
         local c = player.Character
         local hrp = c and c:FindFirstChild("HumanoidRootPart")
         local hum = c and c:FindFirstChildOfClass("Humanoid")
         local pt = currentGhostEXPoint
-        local desiredPos = (pt and pt.Parent) and (pt.Position - Vector3.new(0, getActiveDepth(), 0)) or ghostEXHoldPos
-        if not hrp or not hum or hum.Health <= 0 or not desiredPos then
+        if not hrp or not hum or hum.Health <= 0 then
             return false
         end
         if isCharacterHooked(c) or isCharacterKnocked(c) then
             return false
         end
+
+        local desiredPos = (pt and pt.Parent) and computeTrueUndergroundGenPos(pt, currentGhostEXModel) or ghostEXHoldPos
+        if not desiredPos then
+            return false
+        end
+        ghostEXHoldPos = desiredPos
+
+        if vdESPState.setMovementBypass then
+            vdESPState.setMovementBypass(c, true)
+        end
+
         local tol = maxDistTolerance or 0.25
         local realDist = (hrp.Position - desiredPos).Magnitude
         if hrp.CanCollide then
-            unlockGhostEXMotion(c, hrp, false)
+            unlockGhostEXMotion(c, hrp, false, false)
         end
         if realDist > tol or hrp.Anchored then
-            unlockGhostEXMotion(c, hrp, true)
+            unlockGhostEXMotion(c, hrp, true, false)
             hrp.CFrame = CFrame.new(desiredPos)
             hrp.AssemblyLinearVelocity = Vector3.zero
             hrp.AssemblyAngularVelocity = Vector3.zero
@@ -4658,12 +4943,36 @@ local function startGhostRepairEXThread()
         return true
     end
 
+    if ghostEXSteppedConn then
+        pcall(function() ghostEXSteppedConn:Disconnect() end)
+        ghostEXSteppedConn = nil
+    end
     if ghostEXHeartbeatConn then
         pcall(function() ghostEXHeartbeatConn:Disconnect() end)
         ghostEXHeartbeatConn = nil
     end
 
-    -- 1. Frame-locked Heartbeat underground tether (prevents falling or physics bounce above ground)
+    local function isPosYieldedByOtherFeature()
+        return vdESPState and ((vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking) or (vdESPState.rescueEXEnabled and not vdESPState.rescueEXPaused and vdESPState.rescueEXHoldPos ~= nil))
+    end
+
+    -- 1a. Pre-simulation Stepped physics override + NoClip bypass (guarantees Killer POV sees underground)
+    ghostEXSteppedConn = RunService.Stepped:Connect(function()
+        if not checkEXActive() then
+            if ghostEXSteppedConn then
+                pcall(function() ghostEXSteppedConn:Disconnect() end)
+                ghostEXSteppedConn = nil
+            end
+            return
+        end
+        if not isPosYieldedByOtherFeature() then
+            pcall(function()
+                enforceEXUndergroundPos(0.25)
+            end)
+        end
+    end)
+
+    -- 1b. Post-simulation Heartbeat underground tether
     ghostEXHeartbeatConn = RunService.Heartbeat:Connect(function()
         if not checkEXActive() then
             if ghostEXHeartbeatConn then
@@ -4672,7 +4981,7 @@ local function startGhostRepairEXThread()
             end
             return
         end
-        if not (vdESPState and ((vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking) or (vdESPState.rescueEXEnabled and vdESPState.rescueEXHoldPos ~= nil))) then
+        if not isPosYieldedByOtherFeature() then
             pcall(function()
                 enforceEXUndergroundPos(0.25)
             end)
@@ -4682,7 +4991,7 @@ local function startGhostRepairEXThread()
     -- 2. Ultra-fast 0.0001s Real-Position Checker & Spam Teleport Loop
     task.spawn(function()
         while checkEXActive() do
-            if not (vdESPState and ((vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking) or (vdESPState.rescueEXEnabled and vdESPState.rescueEXHoldPos ~= nil))) then
+            if not isPosYieldedByOtherFeature() then
                 pcall(function()
                     enforceEXUndergroundPos(0.25)
                 end)
@@ -4696,10 +5005,11 @@ local function startGhostRepairEXThread()
         local trackedEXChar = nil
         local currentGenSlots = nil
         local currentSlotIdx = 1
+        local repairFailCount = 0
 
         local function isBlockedByStandaloneAutoFlee(pt)
             if not vdESPState then return false end
-            if vdESPState.rescueEXEnabled and vdESPState.rescueEXHoldPos ~= nil then return true end
+            if vdESPState.rescueEXEnabled and not vdESPState.rescueEXPaused and vdESPState.rescueEXHoldPos ~= nil then return true end
             if not vdESPState.autoFleeEnabled then return false end
             if vdESPState.autoFleeBlocking then return true end
             if vdESPState.autoFleePauseUntil and tick() < vdESPState.autoFleePauseUntil then return true end
@@ -4717,10 +5027,14 @@ local function startGhostRepairEXThread()
             local iterOk = pcall(function()
                 local myChar = player.Character
                 if not myChar or not myChar:IsDescendantOf(workspace) then
+                    ghostEXTransiting = true
                     currentGhostEXPoint = nil
                     currentGhostEXModel = nil
                     currentGenSlots = nil
+                    ghostEXHoldPos = nil
                     ghostEXActiveDepth = nil
+                    ghostEXCurrentFloorY = nil
+                    repairFailCount = 0
                     clearGhostEXGenMarker()
                     task.wait(0.2)
                     return
@@ -4728,9 +5042,14 @@ local function startGhostRepairEXThread()
 
                 if trackedEXChar ~= myChar then
                     trackedEXChar = myChar
+                    ghostEXTransiting = false
+                    vdESPState.ghostEXPaused = false
                     ghostEXOriginalCFrame = nil
                     ghostEXHoldPos = nil
                     ghostEXActiveDepth = nil
+                    ghostEXCurrentFloorY = nil
+                    ghostEXRetryDepthStep = 0
+                    repairFailCount = 0
                     currentGhostEXPoint = nil
                     currentGhostEXModel = nil
                     currentGenSlots = nil
@@ -4742,23 +5061,32 @@ local function startGhostRepairEXThread()
                 local hum = myChar:FindFirstChildOfClass("Humanoid")
                 local myHrp = myChar:FindFirstChild("HumanoidRootPart")
                 if not myHrp or not hum or hum.Health <= 0 then
+                    ghostEXTransiting = true
                     ghostEXHoldPos = nil
                     ghostEXActiveDepth = nil
+                    ghostEXCurrentFloorY = nil
                     currentGhostEXPoint = nil
                     currentGhostEXModel = nil
                     currentGenSlots = nil
+                    repairFailCount = 0
                     clearGhostEXGenMarker()
                     task.wait(0.2)
                     return
                 end
 
                 if isCharacterHooked(myChar) or isCharacterKnocked(myChar) then
+                    ghostEXTransiting = true
                     ghostEXHoldPos = nil
                     ghostEXActiveDepth = nil
+                    ghostEXCurrentFloorY = nil
                     currentGhostEXPoint = nil
                     currentGhostEXModel = nil
                     currentGenSlots = nil
                     clearGhostEXGenMarker()
+                    unlockGhostEXMotion(myChar, myHrp, false, true)
+                    if vdESPState.setMovementBypass then
+                        vdESPState.setMovementBypass(myChar, false)
+                    end
                     task.wait(0.2)
                     return
                 end
@@ -4770,8 +5098,12 @@ local function startGhostRepairEXThread()
                 -- Pick nearest unfinished generator only when not already locked onto one
                 if not currentGhostEXPoint or not currentGhostEXPoint.Parent or isGeneratorCompleted(currentGhostEXPoint) then
                     ghostEXActiveDepth = nil
+                    ghostEXCurrentFloorY = nil
+                    ghostEXRetryDepthStep = 0
+                    repairFailCount = 0
                     local nextPt, nextModel, nextSlots = findNearestGeneratorSlotsEX()
                     if not nextPt or not nextModel then
+                        ghostEXTransiting = false
                         clearGhostEXGenMarker()
                         currentGhostEXPoint = nil
                         currentGhostEXModel = nil
@@ -4779,24 +5111,58 @@ local function startGhostRepairEXThread()
                         ghostEXHoldPos = nil
                         WindUI:Notify({ Title = "⚡ Ghost Gen EX", Content = "All generators 100% completed!", Duration = 3 })
                         if ghostAutoReturn and ghostEXOriginalCFrame and myHrp then
-                            unlockGhostEXMotion(myChar, myHrp)
+                            if vdESPState.microTransitTo then
+                                vdESPState.microTransitTo(myChar, myHrp, ghostEXOriginalCFrame.Position, checkEXActive, false)
+                            end
+                            unlockGhostEXMotion(myChar, myHrp, true, true)
                             myHrp.CFrame = ghostEXOriginalCFrame
                             myHrp.AssemblyLinearVelocity = Vector3.zero
+                            myHrp.AssemblyAngularVelocity = Vector3.zero
                             ghostEXOriginalCFrame = nil
+                        else
+                            unlockGhostEXMotion(myChar, myHrp, true, true)
+                        end
+                        if vdESPState.setMovementBypass then
+                            vdESPState.setMovementBypass(myChar, false)
                         end
                         task.wait(2.0)
                         return
                     end
+
+                    if isBlockedByStandaloneAutoFlee(nextPt) then
+                        ghostEXTransiting = false
+                        ghostEXHoldPos = nil
+                        unlockGhostEXMotion(myChar, myHrp, false, true)
+                        task.wait(0.15)
+                        return
+                    end
+
+                    -- Compute floor-buried underground destination & micro-transit BEFORE turning on position lock
+                    ghostEXTransiting = true
+                    currentGhostEXPoint = nil
+                    ghostEXHoldPos = nil
+                    ghostEXCurrentFloorY = vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(nextPt.Position.X, nextPt.Position.Y, nextPt.Position.Z, nextModel) or nil
+                    local initDestPos = computeTrueUndergroundGenPos(nextPt, nextModel)
+
+                    if vdESPState.microTransitTo then
+                        vdESPState.microTransitTo(myChar, myHrp, initDestPos, checkEXActive, true)
+                    end
+                    if not checkEXActive() or not nextPt.Parent then
+                        ghostEXTransiting = false
+                        return
+                    end
+
                     currentGhostEXPoint = nextPt
                     currentGhostEXModel = nextModel
                     currentGenSlots = nextSlots or { nextPt }
                     currentSlotIdx = 1
-                    ghostEXHoldPos = nextPt.Position - Vector3.new(0, getActiveDepth(), 0)
+                    ghostEXHoldPos = initDestPos
+                    ghostEXTransiting = false
                 end
 
                 if isBlockedByStandaloneAutoFlee(currentGhostEXPoint) then
                     ghostEXHoldPos = nil
-                    unlockGhostEXMotion(myChar, myHrp)
+                    unlockGhostEXMotion(myChar, myHrp, false, true)
                     task.wait(0.15)
                     return
                 end
@@ -4819,25 +5185,26 @@ local function startGhostRepairEXThread()
                     Duration = 2
                 })
 
-                -- Wait underground until real position matches AND server position replication settles (~0.10s)
+                -- Wait underground until real position matches AND server position replication settles (~0.12s)
                 local function settleUndergroundForServer(pt)
-                    local dPos = pt.Position - Vector3.new(0, getActiveDepth(), 0)
+                    ghostEXCurrentFloorY = vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(pt.Position.X, pt.Position.Y, pt.Position.Z, genModel) or ghostEXCurrentFloorY
+                    local dPos = computeTrueUndergroundGenPos(pt, genModel)
                     ghostEXHoldPos = dPos
-                    for attempt = 1, 20 do
-                        if not checkEXActive() or not pt.Parent then break end
-                        unlockGhostEXMotion(myChar, myHrp, true)
-                        myHrp.CFrame = CFrame.new(dPos)
-                        myHrp.AssemblyLinearVelocity = Vector3.zero
-                        myHrp.AssemblyAngularVelocity = Vector3.zero
-                        task.wait(0.0001)
-                        if (myHrp.Position - dPos).Magnitude <= 0.35 and not myHrp.Anchored then
-                            break
+                    if myHrp and (myHrp.Position - dPos).Magnitude > 20 and vdESPState.microTransitTo then
+                        ghostEXTransiting = true
+                        vdESPState.microTransitTo(myChar, myHrp, dPos, checkEXActive, true)
+                        ghostEXTransiting = false
+                    else
+                        for _ = 1, 15 do
+                            if not checkEXActive() or not pt.Parent then break end
+                            if enforceEXUndergroundPos(0.25) then break end
+                            task.wait(0.0001)
                         end
                     end
-                    -- Hold pinned underground for 0.10s so server receives updated CFrame BEFORE RepairEvent fires
-                    local settleEnd = tick() + 0.10
+                    -- Hold pinned underground for 0.12s so server receives updated CFrame BEFORE RepairEvent fires
+                    local settleEnd = tick() + 0.12
                     while tick() < settleEnd and checkEXActive() and pt.Parent do
-                        enforceEXUndergroundPos(0.25)
+                        enforceEXUndergroundPos(0.20)
                         task.wait(0.0001)
                     end
                 end
@@ -4869,7 +5236,6 @@ local function startGhostRepairEXThread()
                 local lastPulseSent = 0
                 local lastObservedProg = currentProg or 0
                 local lastProgressTime = tick()
-                local stallRetries = 0
 
                 -- Stay STRICTLY locked on current generator until 100% done
                 while checkEXActive() and currentGhostEXPoint == targetPoint and targetPoint.Parent do
@@ -4883,7 +5249,7 @@ local function startGhostRepairEXThread()
                         end)
                         myChar:SetAttribute("isRepairing", false)
                         ghostEXHoldPos = nil
-                        unlockGhostEXMotion(myChar, myHrp, true)
+                        unlockGhostEXMotion(myChar, myHrp, true, true)
                         break
                     end
 
@@ -4891,8 +5257,15 @@ local function startGhostRepairEXThread()
                     local doneNow, progNow = isGeneratorCompleted(targetPoint)
                     progNow = progNow or 0
                     if doneNow or progNow >= 99.5 then
+                        ghostEXTransiting = true
                         completedGenerators[targetPoint] = true
-                        completedGenerators[genModel] = true
+                        if genModel then completedGenerators[genModel] = true end
+                        if actualGenModel then completedGenerators[actualGenModel] = true end
+                        if currentGenSlots then
+                            for _, sp in ipairs(currentGenSlots) do
+                                completedGenerators[sp] = true
+                            end
+                        end
                         pcall(function()
                             remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, requestId, myChar)
                         end)
@@ -4901,52 +5274,73 @@ local function startGhostRepairEXThread()
                         currentGhostEXPoint = nil
                         currentGhostEXModel = nil
                         currentGenSlots = nil
+                        ghostEXHoldPos = nil
                         ghostEXRepairRequestId = nil
                         ghostEXActiveDepth = nil
+                        ghostEXCurrentFloorY = nil
+                        ghostEXRetryDepthStep = 0
+                        repairFailCount = 0
                         WindUI:Notify({ Title = "🟣 Ghost Gen EX", Content = "✅ " .. genName .. " Fixed 100%! Picking next nearest...", Duration = 2 })
-                        task.wait(0.1)
+                        task.wait(0.08)
                         break
                     end
 
-                    -- Watchdog: track real server progress growth; if stalled >= 3.8s, switch to an unoccupied slot on SAME gen
+                    -- Watchdog & 3-Fail -> 2s Cooldown Pause System
                     if progNow > (lastObservedProg + 0.01) then
                         lastObservedProg = progNow
                         lastProgressTime = tick()
-                        stallRetries = 0
-                    elseif (tick() - lastProgressTime) >= 3.8 then
-                        stallRetries = stallRetries + 1
+                        repairFailCount = 0
+                    elseif (tick() - lastProgressTime) >= 3.0 then
+                        repairFailCount = repairFailCount + 1
                         pcall(function()
                             remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, requestId, myChar)
                         end)
                         myChar:SetAttribute("isRepairing", false)
                         task.wait(0.05)
-                        if not checkEXActive() or currentGhostEXPoint ~= targetPoint then break end
+                        if not checkEXActive() or currentGhostEXPoint ~= targetPoint or not targetPoint.Parent then break end
 
-                        -- Prefer an unoccupied slot on the SAME locked generator model if available
-                        if currentGenSlots and #currentGenSlots > 1 then
-                            local chosenSlot = nil
-                            for offset = 1, #currentGenSlots do
-                                local tryIdx = ((currentSlotIdx - 1 + offset) % #currentGenSlots) + 1
-                                local candSlot = currentGenSlots[tryIdx]
-                                if candSlot and candSlot.Parent and not isGenSlotBusy(candSlot, myChar) then
-                                    currentSlotIdx = tryIdx
-                                    chosenSlot = candSlot
-                                    break
+                        if repairFailCount >= 3 then
+                            -- Turn off underground teleport & repair for 2 seconds after 3 failed repair attempts, then retry
+                            vdESPState.ghostEXPaused = true
+                            ghostEXHoldPos = nil
+                            unlockGhostEXMotion(myChar, myHrp, true, true)
+                            if vdESPState.setMovementBypass then
+                                vdESPState.setMovementBypass(myChar, false)
+                            end
+                            local pauseEnd = tick() + 2.0
+                            while tick() < pauseEnd and checkEXActive() and not isCharacterHooked(myChar) and not isCharacterKnocked(myChar) do
+                                task.wait(0.05)
+                            end
+                            repairFailCount = 0
+                            ghostEXRetryDepthStep = 0
+                            ghostEXActiveDepth = nil
+                            vdESPState.ghostEXPaused = false
+                            if not checkEXActive() or currentGhostEXPoint ~= targetPoint or not targetPoint.Parent or isGeneratorCompleted(targetPoint) then
+                                break
+                            end
+                        else
+                            -- Rotate to an unoccupied slot on the SAME locked generator model & step depth margin safely
+                            if currentGenSlots and #currentGenSlots > 1 then
+                                local chosenSlot = nil
+                                for offset = 1, #currentGenSlots do
+                                    local tryIdx = ((currentSlotIdx - 1 + offset) % #currentGenSlots) + 1
+                                    local candSlot = currentGenSlots[tryIdx]
+                                    if candSlot and candSlot.Parent and not isGenSlotBusy(candSlot, myChar) then
+                                        currentSlotIdx = tryIdx
+                                        chosenSlot = candSlot
+                                        break
+                                    end
+                                end
+                                if not chosenSlot then
+                                    currentSlotIdx = (currentSlotIdx % #currentGenSlots) + 1
+                                    chosenSlot = currentGenSlots[currentSlotIdx]
+                                end
+                                if chosenSlot and chosenSlot.Parent then
+                                    targetPoint = chosenSlot
+                                    currentGhostEXPoint = chosenSlot
                                 end
                             end
-                            if not chosenSlot then
-                                currentSlotIdx = (currentSlotIdx % #currentGenSlots) + 1
-                                chosenSlot = currentGenSlots[currentSlotIdx]
-                            end
-                            if chosenSlot and chosenSlot.Parent then
-                                targetPoint = chosenSlot
-                                currentGhostEXPoint = chosenSlot
-                            end
-                        end
-
-                        -- If stalled >= 2 times and depth > 5.8, bring underground depth slightly closer (5.6 studs) so elevated gens remain inside server repair range
-                        if stallRetries >= 2 and (ghostDepthOffset or 7.0) > 5.8 then
-                            ghostEXActiveDepth = 5.6
+                            ghostEXRetryDepthStep = (ghostEXRetryDepthStep + 1) % 3
                         end
 
                         settleUndergroundForServer(targetPoint)
@@ -5003,7 +5397,7 @@ end
 
 V_ObjectiveSection:Toggle({
     Title = "Underground Repair Generator EX",
-    Description = "0.0001s real-pos underground lock, picks nearest gen & locks until 100% done, marks target purple",
+    Description = "0.0001s floor-buried lock, micro-burst transit, purple target & 2s reset after 3 fails",
     Default = false,
     Callback = function(v)
         ghostRepairEXEnabled = v
@@ -5765,6 +6159,9 @@ pcall(function()
                             end
 
                             if canTeleport then
+                                if vdESPState.microTransitTo then
+                                    vdESPState.microTransitTo(myChar, myHrp, safePos, nil, false)
+                                end
                                 unlockFleeConstraints(myChar, myHrp)
                                 local lookVec = Vector3.new(safePos.X - kHrp.Position.X, 0, safePos.Z - kHrp.Position.Z)
                                 if lookVec.Magnitude > 0.05 then
@@ -5773,6 +6170,9 @@ pcall(function()
                                     myHrp.CFrame = CFrame.new(safePos)
                                 end
                                 unlockFleeConstraints(myChar, myHrp)
+                                if vdESPState.setMovementBypass then
+                                    vdESPState.setMovementBypass(myChar, false)
+                                end
                                 if unlockCameraAndMovement then
                                     pcall(unlockCameraAndMovement)
                                 end
@@ -5817,6 +6217,296 @@ pcall(function()
         },
         Callback = function(val)
             vdESPState.autoFleeDistance = tonumber(val) or 40
+        end
+    })
+end)
+
+-- ============================================================
+-- FLEE KNOCK EX (FLEE FAR FROM KILLER ON KNOCKDOWN + SELF RESCUE)
+-- ============================================================
+pcall(function()
+    local CollectionService = game:GetService("CollectionService")
+
+    local function unlockFleeKnockMotion(myChar, myHrp)
+        pcall(function()
+            if myHrp then
+                if myHrp.Anchored then myHrp.Anchored = false end
+                myHrp.AssemblyLinearVelocity = Vector3.zero
+                myHrp.AssemblyAngularVelocity = Vector3.zero
+                pcall(function() CollectionService:RemoveTag(myHrp, "doing action") end)
+            end
+            if myChar then
+                if myChar:GetAttribute("isRepairing") == true then myChar:SetAttribute("isRepairing", false) end
+                if myChar:GetAttribute("isUnhooking") == true then myChar:SetAttribute("isUnhooking", false) end
+                if myChar:GetAttribute("isExiting") == true then myChar:SetAttribute("isExiting", false) end
+                if myChar:GetAttribute("Rooted") == true then myChar:SetAttribute("Rooted", false) end
+                if myChar:GetAttribute("Immobile") == true then myChar:SetAttribute("Immobile", false) end
+                if myChar:GetAttribute("AC_ServerAnchor") ~= nil then myChar:SetAttribute("AC_ServerAnchor", nil) end
+                pcall(function() CollectionService:RemoveTag(myChar, "doing action") end)
+                for _, part in ipairs(myChar:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        if part.Name == "HumanoidRootPart" or part.Name == "Torso" or part.Name == "UpperTorso" or part.Name == "LowerTorso" then
+                            part.CanCollide = true
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    local function fleeFarFromKillerNow(myChar, myHrp, kHrp, minCooldown, lastFleeAt, requireImprovement)
+        if not myChar or not myHrp or not kHrp or not vdESPState.findFurthestSafeGround then
+            return false, lastFleeAt
+        end
+        local now = tick()
+        if (now - lastFleeAt) < (minCooldown or 0.4) then
+            return false, lastFleeAt
+        end
+
+        local curDist = (myHrp.Position - kHrp.Position).Magnitude
+        local farPos, farDist = vdESPState.findFurthestSafeGround(myChar, myHrp.Position, kHrp.Position)
+        if not farPos then
+            return false, lastFleeAt
+        end
+        if requireImprovement and farDist <= (curDist + 16) then
+            return false, lastFleeAt
+        end
+
+        unlockFleeKnockMotion(myChar, myHrp)
+        if vdESPState.microTransitTo then
+            vdESPState.microTransitTo(myChar, myHrp, farPos, nil, false)
+        end
+        local lookVec = Vector3.new(farPos.X - kHrp.Position.X, 0, farPos.Z - kHrp.Position.Z)
+        if lookVec.Magnitude > 0.05 then
+            myHrp.CFrame = CFrame.lookAt(farPos, farPos + lookVec.Unit)
+        else
+            myHrp.CFrame = CFrame.new(farPos)
+        end
+        unlockFleeKnockMotion(myChar, myHrp)
+        if vdESPState.setMovementBypass then
+            vdESPState.setMovementBypass(myChar, false)
+        end
+        if unlockCameraAndMovement then
+            pcall(unlockCameraAndMovement)
+        end
+        return true, now
+    end
+
+    local function startFleeKnockEXThread()
+        vdESPState.fleeKnockEXSession = (vdESPState.fleeKnockEXSession or 0) + 1
+        local mySession = vdESPState.fleeKnockEXSession
+        local function isSessionValid()
+            return vdESPState.fleeKnockEXEnabled == true and mySession == vdESPState.fleeKnockEXSession and scriptRunning
+        end
+
+        task.spawn(function()
+            local healGuid = nil
+            local wasSelfHealing = false
+            local wasHooked = false
+            local fledThisKnock = false
+            local lastFleeAt = 0
+            local lastHealPulse = 0
+            local lastSelfUnhookAt = 0
+
+            local function stopSelfHealState(myChar, remotes)
+                if not wasSelfHealing then return end
+                wasSelfHealing = false
+                pcall(function()
+                    if myChar and myChar.Parent then
+                        myChar:SetAttribute("isHealing", false)
+                        local hrp = myChar:FindFirstChild("HumanoidRootPart")
+                        if remotes and remotes.Healing then
+                            if remotes.Healing:FindFirstChild("HealEvent") then
+                                if hrp then
+                                    remotes.Healing.HealEvent:FireServer(hrp, false, healGuid or HttpService:GenerateGUID(false), myChar)
+                                end
+                                remotes.Healing.HealEvent:FireServer(myChar, false, healGuid or HttpService:GenerateGUID(false), myChar)
+                            end
+                            if remotes.Healing:FindFirstChild("Reset") then
+                                remotes.Healing.Reset:FireServer(myChar)
+                            end
+                        end
+                    end
+                end)
+                healGuid = nil
+            end
+
+            while isSessionValid() do
+                local ok = pcall(function()
+                    if isPlayerKiller and isPlayerKiller() then
+                        vdESPState.fleeKnockEXBlocking = false
+                        task.wait(0.3)
+                        return
+                    end
+
+                    local myChar = player.Character
+                    local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+                    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                    if not myChar or not myHrp or not hum then
+                        vdESPState.fleeKnockEXBlocking = false
+                        wasSelfHealing = false
+                        wasHooked = false
+                        fledThisKnock = false
+                        healGuid = nil
+                        task.wait(0.2)
+                        return
+                    end
+
+                    if isEntityInLobbyOrSpectating and isEntityInLobbyOrSpectating(myChar, player) then
+                        vdESPState.fleeKnockEXBlocking = false
+                        wasSelfHealing = false
+                        wasHooked = false
+                        fledThisKnock = false
+                        task.wait(0.25)
+                        return
+                    end
+
+                    local remotes = getVDRemotes and getVDRemotes()
+                    if myChar:GetAttribute("IsCarried") == true or myChar:GetAttribute("BeingCarried") == true then
+                        vdESPState.fleeKnockEXBlocking = true
+                        stopSelfHealState(myChar, remotes)
+                        task.wait(0.1)
+                        return
+                    end
+
+                    local hooked = isCharacterHooked and isCharacterHooked(myChar)
+                    local knocked = (not hooked) and isCharacterKnocked and isCharacterKnocked(myChar) and (hum.Health >= 0)
+                    local killer = getKiller and getKiller()
+                    local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
+
+                    if hooked then
+                        vdESPState.fleeKnockEXBlocking = true
+                        wasHooked = true
+                        fledThisKnock = false
+                        stopSelfHealState(myChar, remotes)
+
+                        if (tick() - lastSelfUnhookAt) >= 0.25 then
+                            lastSelfUnhookAt = tick()
+                            if remotes and remotes.Carry and remotes.Carry:FindFirstChild("SelfUnHookEvent") then
+                                pcall(function()
+                                    remotes.Carry.SelfUnHookEvent:FireServer(myChar)
+                                    remotes.Carry.SelfUnHookEvent:FireServer()
+                                end)
+                            end
+                            if typeof(fireproximityprompt) == "function" then
+                                pcall(function()
+                                    for _, desc in ipairs(myChar:GetDescendants()) do
+                                        if desc:IsA("ProximityPrompt") and desc.Enabled then
+                                            pcall(fireproximityprompt, desc)
+                                        end
+                                    end
+                                end)
+                            end
+                        end
+                    elseif knocked then
+                        vdESPState.fleeKnockEXBlocking = true
+                        if wasHooked then
+                            wasHooked = false
+                        end
+
+                        -- 1. Flee far away from Killer whenever knocked down (and re-flee if Killer gets within 60 studs)
+                        if kHrp then
+                            local curDist = (myHrp.Position - kHrp.Position).Magnitude
+                            if (not fledThisKnock) or curDist <= 60 then
+                                local cooldown = fledThisKnock and ((curDist <= 35) and 0.45 or 1.0) or 0.1
+                                local didFlee, newTime = fleeFarFromKillerNow(myChar, myHrp, kHrp, cooldown, lastFleeAt, fledThisKnock)
+                                if didFlee then
+                                    lastFleeAt = newTime
+                                    fledThisKnock = true
+                                elseif not fledThisKnock then
+                                    fledThisKnock = true
+                                end
+                            end
+                        end
+
+                        -- 2. Self-Rescue: self-heal / recover while downed
+                        if (tick() - lastHealPulse) >= 0.65 then
+                            lastHealPulse = tick()
+                            healGuid = healGuid or HttpService:GenerateGUID(false)
+                            wasSelfHealing = true
+                            lastCapturedHealRequestId = healGuid
+                            pcall(function()
+                                myChar:SetAttribute("isHealing", true)
+                                CollectionService:RemoveTag(myHrp, "doing action")
+                                CollectionService:RemoveTag(myChar, "doing action")
+                            end)
+
+                            if remotes and remotes.Healing then
+                                if remotes.Healing:FindFirstChild("HealEvent") then
+                                    pcall(function()
+                                        remotes.Healing.HealEvent:FireServer(myHrp, true, healGuid, myChar)
+                                        remotes.Healing.HealEvent:FireServer(myChar, true, healGuid, myChar)
+                                    end)
+                                end
+                                if remotes.Healing:FindFirstChild("SkillCheckResultEvent") then
+                                    pcall(function()
+                                        remotes.Healing.SkillCheckResultEvent:FireServer("success", 1, myChar, healGuid, myChar)
+                                    end)
+                                end
+                            end
+
+                            if typeof(fireproximityprompt) == "function" then
+                                pcall(function()
+                                    for _, desc in ipairs(myChar:GetDescendants()) do
+                                        if desc:IsA("ProximityPrompt") and desc.Enabled then
+                                            pcall(fireproximityprompt, desc)
+                                        end
+                                    end
+                                end)
+                            end
+                        end
+                    else
+                        -- Recovered / unhooked safely
+                        if wasHooked then
+                            wasHooked = false
+                            if kHrp and (myHrp.Position - kHrp.Position).Magnitude <= 95 then
+                                local didFlee, newTime = fleeFarFromKillerNow(myChar, myHrp, kHrp, 0.1, lastFleeAt, true)
+                                if didFlee then lastFleeAt = newTime end
+                            end
+                        end
+                        stopSelfHealState(myChar, remotes)
+                        fledThisKnock = false
+                        vdESPState.fleeKnockEXBlocking = false
+                    end
+                end)
+                task.wait(ok and 0.05 or 0.15)
+            end
+
+            vdESPState.fleeKnockEXBlocking = false
+            pcall(function()
+                local myChar = player.Character
+                if myChar and vdESPState.setMovementBypass then
+                    vdESPState.setMovementBypass(myChar, false)
+                end
+            end)
+        end)
+    end
+
+    vdESPState.fleeKnockEXToggle = V_CombatSection:Toggle({
+        Title = "Flee Knock EX",
+        Description = "Flees far from Killer when knocked down and continuously performs self-rescue (recover / self-unhook)",
+        Default = false,
+        Callback = function(v)
+            vdESPState.fleeKnockEXEnabled = v
+            if v then
+                startFleeKnockEXThread()
+            else
+                vdESPState.fleeKnockEXSession = (vdESPState.fleeKnockEXSession or 0) + 1
+                vdESPState.fleeKnockEXBlocking = false
+                pcall(function()
+                    local myChar = player.Character
+                    local remotes = getVDRemotes and getVDRemotes()
+                    if myChar then
+                        myChar:SetAttribute("isHealing", false)
+                        if remotes and remotes.Healing and remotes.Healing:FindFirstChild("Reset") then
+                            remotes.Healing.Reset:FireServer(myChar)
+                        end
+                        if vdESPState.setMovementBypass then
+                            vdESPState.setMovementBypass(myChar, false)
+                        end
+                    end
+                end)
+            end
         end
     })
 end)
@@ -6209,32 +6899,30 @@ pcall(function()
     local RunService = game:GetService("RunService")
     local CollectionService = game:GetService("CollectionService")
 
+    local rescueEXSteppedConn = nil
     local rescueEXHeartbeatConn = nil
     local rescueEXOriginalCFrame = nil
     local currentRescueTargetChar = nil
     local rescueEXAnchorPart = nil
     local rescueEXGroundY = nil
     local rescueEXDepthStage = 1
-
-    local function checkRescueEXActive()
-        return vdESPState.rescueEXEnabled == true and scriptRunning
-    end
+    local rescueEXTransiting = false
 
     local function unlockRescueEXMotion(myChar, myHrp, restoreCollision)
         pcall(function()
             if myHrp then
-                myHrp.Anchored = false
+                if myHrp.Anchored then myHrp.Anchored = false end
                 myHrp.AssemblyLinearVelocity = Vector3.zero
                 myHrp.AssemblyAngularVelocity = Vector3.zero
                 pcall(function() CollectionService:RemoveTag(myHrp, "doing action") end)
             end
             if myChar then
-                myChar:SetAttribute("Rooted", false)
-                myChar:SetAttribute("Immobile", false)
-                myChar:SetAttribute("AC_ServerAnchor", nil)
+                if myChar:GetAttribute("Rooted") == true then myChar:SetAttribute("Rooted", false) end
+                if myChar:GetAttribute("Immobile") == true then myChar:SetAttribute("Immobile", false) end
+                if myChar:GetAttribute("AC_ServerAnchor") ~= nil then myChar:SetAttribute("AC_ServerAnchor", nil) end
                 pcall(function() CollectionService:RemoveTag(myChar, "doing action") end)
                 local hum = myChar:FindFirstChildOfClass("Humanoid")
-                if hum then
+                if hum and hum.PlatformStand then
                     hum.PlatformStand = false
                 end
                 if restoreCollision then
@@ -6253,11 +6941,17 @@ pcall(function()
     local function stopRescueEX(restorePosition)
         vdESPState.rescueEXSession = (vdESPState.rescueEXSession or 0) + 1
         vdESPState.rescueEXHoldPos = nil
+        vdESPState.rescueEXPaused = false
+        rescueEXTransiting = false
         currentRescueTargetChar = nil
         rescueEXAnchorPart = nil
         rescueEXGroundY = nil
         rescueEXDepthStage = 1
 
+        if rescueEXSteppedConn then
+            pcall(function() rescueEXSteppedConn:Disconnect() end)
+            rescueEXSteppedConn = nil
+        end
         if rescueEXHeartbeatConn then
             pcall(function() rescueEXHeartbeatConn:Disconnect() end)
             rescueEXHeartbeatConn = nil
@@ -6269,8 +6963,14 @@ pcall(function()
             if myChar then
                 myChar:SetAttribute("isUnhooking", false)
                 unlockRescueEXMotion(myChar, myHrp, true)
+                if vdESPState.setMovementBypass then
+                    vdESPState.setMovementBypass(myChar, false)
+                end
             end
             if restorePosition and rescueEXOriginalCFrame and myHrp then
+                if vdESPState.microTransitTo then
+                    vdESPState.microTransitTo(myChar, myHrp, rescueEXOriginalCFrame.Position, nil, false)
+                end
                 myHrp.CFrame = rescueEXOriginalCFrame
                 myHrp.AssemblyLinearVelocity = Vector3.zero
                 myHrp.AssemblyAngularVelocity = Vector3.zero
@@ -6283,16 +6983,15 @@ pcall(function()
     end
 
     local function getDesiredRescuePos(anchorPos, groundY, depthStage)
-        local offsetsGround = { 3.8, 3.1, 2.5 }
-        local offsetsRaw = { 5.2, 4.3, 3.5 }
+        local offsetsGround = { 4.6, 3.8, 3.1 }
+        local offsetsRaw = { 5.8, 4.8, 3.9 }
         local idx = math.clamp(depthStage or 1, 1, 3)
 
         local desiredY
         if groundY then
             desiredY = groundY - offsetsGround[idx]
-            -- Also avoid dropping farther than ~6.8 studs from hook unhook anchor if hook sits high
-            local minReachY = anchorPos.Y - 6.8
-            if desiredY < minReachY and (groundY - 2.6) >= minReachY then
+            local minReachY = anchorPos.Y - 7.0
+            if desiredY < minReachY and (groundY - 3.0) >= minReachY then
                 desiredY = math.max(minReachY, groundY - 3.6)
             end
         else
@@ -6307,40 +7006,23 @@ pcall(function()
         if hookModel == workspace or hookModel == targetChar then
             hookModel = nil
         end
-
-        local exclude = {}
-        local lobby = workspace:FindFirstChild("Lobby")
-        if lobby then table.insert(exclude, lobby) end
-        local cam = workspace.CurrentCamera
-        if cam then table.insert(exclude, cam) end
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p.Character then
-                table.insert(exclude, p.Character)
-            end
-        end
-        if hookModel then
-            table.insert(exclude, hookModel)
-        end
-
-        local rp = RaycastParams.new()
-        rp.FilterType = Enum.RaycastFilterType.Exclude
-        rp.FilterDescendantsInstances = exclude
-        rp.IgnoreWater = true
-
-        local hit = workspace:Raycast(Vector3.new(anchorPos.X, anchorPos.Y + 3, anchorPos.Z), Vector3.new(0, -35, 0), rp)
-        if hit and hit.Instance and hit.Instance.CanCollide and not hit.Instance:FindFirstAncestor("Lobby") then
-            return hit.Position.Y
+        if vdESPState.findFloorYBelow then
+            return vdESPState.findFloorYBelow(anchorPos.X, anchorPos.Y, anchorPos.Z, hookModel)
         end
         return nil
     end
 
     local function enforceRescueEXUndergroundPos(threshold)
-        if not vdESPState.rescueEXEnabled then return end
+        if not vdESPState.rescueEXEnabled or vdESPState.rescueEXPaused or rescueEXTransiting then return end
         if vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking then return end
 
         local myChar = player.Character
         local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
         if not myChar or not myHrp then return end
+
+        if vdESPState.setMovementBypass then
+            vdESPState.setMovementBypass(myChar, true)
+        end
 
         -- Keep live coordinates tightly synchronized with hook anchor
         if rescueEXAnchorPart and rescueEXAnchorPart.Parent then
@@ -6404,7 +7086,7 @@ pcall(function()
         return bestChar, bestPlr, bestDist
     end
 
-    local function fireUnhookActions(remotes, targetChar, unhookPt, myChar)
+    local function fireUnhookActions(remotes, targetChar, unhookPt, myChar, includePrompts)
         pcall(function()
             local myHrp = myChar:FindFirstChild("HumanoidRootPart")
             if myHrp then
@@ -6414,8 +7096,8 @@ pcall(function()
             myChar:SetAttribute("isRepairing", false)
             myChar:SetAttribute("isHealing", false)
             myChar:SetAttribute("isExiting", false)
-            myChar:SetAttribute("Rooted", false)
-            myChar:SetAttribute("Immobile", false)
+            if myChar:GetAttribute("Rooted") == true then myChar:SetAttribute("Rooted", false) end
+            if myChar:GetAttribute("Immobile") == true then myChar:SetAttribute("Immobile", false) end
             myChar:SetAttribute("isUnhooking", true)
 
             if remotes and remotes.Carry and remotes.Carry:FindFirstChild("UnHookEvent") then
@@ -6426,7 +7108,7 @@ pcall(function()
             end
         end)
 
-        if typeof(fireproximityprompt) == "function" then
+        if includePrompts and typeof(fireproximityprompt) == "function" then
             pcall(function()
                 local fired = {}
                 local function firePromptsUnder(root)
@@ -6479,12 +7161,30 @@ pcall(function()
             return vdESPState.rescueEXEnabled == true and mySession == vdESPState.rescueEXSession and scriptRunning
         end
 
+        if rescueEXSteppedConn then
+            pcall(function() rescueEXSteppedConn:Disconnect() end)
+            rescueEXSteppedConn = nil
+        end
         if rescueEXHeartbeatConn then
             pcall(function() rescueEXHeartbeatConn:Disconnect() end)
             rescueEXHeartbeatConn = nil
         end
 
-        -- 1. Frame-accurate Heartbeat underground lock
+        -- 1a. Pre-simulation Stepped physics override + NoClip bypass (prevents floor push-back on Killer POV)
+        rescueEXSteppedConn = RunService.Stepped:Connect(function()
+            if not isSessionValid() then
+                if rescueEXSteppedConn then
+                    pcall(function() rescueEXSteppedConn:Disconnect() end)
+                    rescueEXSteppedConn = nil
+                end
+                return
+            end
+            pcall(function()
+                enforceRescueEXUndergroundPos(0.25)
+            end)
+        end)
+
+        -- 1b. Post-simulation Heartbeat underground lock
         rescueEXHeartbeatConn = RunService.Heartbeat:Connect(function()
             if not isSessionValid() then
                 if rescueEXHeartbeatConn then
@@ -6508,9 +7208,10 @@ pcall(function()
             end
         end)
 
-        -- 3. Main Hooked Teammate Detector & Anti-Stall Underground Unhook Thread
+        -- 3. Main Hooked Teammate Detector & 3-Fail -> 2s Pause Anti-Stall Unhook Thread
         task.spawn(function()
             local trackedChar = nil
+            local rescueFailCount = 0
 
             while isSessionValid() do
                 local ok = pcall(function()
@@ -6518,6 +7219,7 @@ pcall(function()
                         vdESPState.rescueEXHoldPos = nil
                         currentRescueTargetChar = nil
                         rescueEXAnchorPart = nil
+                        rescueFailCount = 0
                         task.wait(0.3)
                         return
                     end
@@ -6530,6 +7232,7 @@ pcall(function()
                         currentRescueTargetChar = nil
                         rescueEXAnchorPart = nil
                         rescueEXOriginalCFrame = nil
+                        rescueFailCount = 0
                         task.wait(0.2)
                         return
                     end
@@ -6540,6 +7243,7 @@ pcall(function()
                         vdESPState.rescueEXHoldPos = nil
                         currentRescueTargetChar = nil
                         rescueEXAnchorPart = nil
+                        rescueFailCount = 0
                     end
 
                     if (isEntityInLobbyOrSpectating and isEntityInLobbyOrSpectating(myChar, player))
@@ -6550,6 +7254,7 @@ pcall(function()
                         currentRescueTargetChar = nil
                         rescueEXAnchorPart = nil
                         myChar:SetAttribute("isUnhooking", false)
+                        rescueFailCount = 0
                         task.wait(0.2)
                         return
                     end
@@ -6570,10 +7275,17 @@ pcall(function()
                         rescueEXAnchorPart = nil
                         rescueEXGroundY = nil
                         rescueEXDepthStage = 1
+                        rescueFailCount = 0
                         myChar:SetAttribute("isUnhooking", false)
                         if wasRescuing then
                             unlockRescueEXMotion(myChar, myHrp, true)
+                            if vdESPState.setMovementBypass then
+                                vdESPState.setMovementBypass(myChar, false)
+                            end
                             if ghostAutoReturn and rescueEXOriginalCFrame and not ghostRepairEXEnabled and not ghostRepairEnabled then
+                                if vdESPState.microTransitTo then
+                                    vdESPState.microTransitTo(myChar, myHrp, rescueEXOriginalCFrame.Position, isSessionValid, false)
+                                end
                                 myHrp.CFrame = rescueEXOriginalCFrame
                                 myHrp.AssemblyLinearVelocity = Vector3.zero
                                 myHrp.AssemblyAngularVelocity = Vector3.zero
@@ -6601,26 +7313,48 @@ pcall(function()
 
                     local unhookPt = findUnhookPointForTeammate and findUnhookPointForTeammate(targetChar) or targetHrp
                     local anchorPart = (unhookPt and unhookPt.Parent) and unhookPt or targetHrp
+                    local groundY = findHookGroundY(anchorPart, anchorPart.Position, targetChar)
+                    local destPos = getDesiredRescuePos(anchorPart.Position, groundY, rescueEXDepthStage)
+
+                    -- Micro-burst transit underground FIRST (prevents server anti-cheat rollback on >22 stud teleports)
+                    rescueEXTransiting = true
+                    vdESPState.rescueEXHoldPos = nil
+                    currentRescueTargetChar = nil
+                    rescueEXAnchorPart = nil
+                    rescueEXGroundY = groundY
+
+                    if vdESPState.microTransitTo then
+                        vdESPState.microTransitTo(myChar, myHrp, destPos, isSessionValid, true)
+                    end
+                    if not isSessionValid() or not targetChar.Parent or not isCharacterHooked(targetChar) then
+                        rescueEXTransiting = false
+                        return
+                    end
+
                     currentRescueTargetChar = targetChar
                     rescueEXAnchorPart = anchorPart
-                    rescueEXGroundY = findHookGroundY(anchorPart, anchorPart.Position, targetChar)
-                    rescueEXDepthStage = 1
+                    vdESPState.rescueEXHoldPos = destPos
+                    rescueEXTransiting = false
 
-                    -- Pin underground immediately & settle 0.12s for server position replication before triggering UnHook
-                    vdESPState.rescueEXHoldPos = getDesiredRescuePos(anchorPart.Position, rescueEXGroundY, rescueEXDepthStage)
-                    enforceRescueEXUndergroundPos(0.1)
-                    task.wait(0.12)
+                    -- Settle pinned underground 0.12s so server commits underground location before UnHook fires
+                    local settleEnd = tick() + 0.12
+                    while tick() < settleEnd and isSessionValid() and targetChar.Parent and isCharacterHooked(targetChar) do
+                        enforceRescueEXUndergroundPos(0.15)
+                        task.wait(0.0001)
+                    end
 
                     if not isSessionValid() or not targetChar.Parent or not isCharacterHooked(targetChar) then
                         return
                     end
 
                     local remotes = getVDRemotes and getVDRemotes()
-                    fireUnhookActions(remotes, targetChar, unhookPt, myChar)
+                    fireUnhookActions(remotes, targetChar, unhookPt, myChar, true)
 
                     local attemptStart = tick()
+                    local lastRemotePulse = tick()
                     local lastPromptPulse = tick()
 
+                    -- Single rescue attempt window (~1.8s): unhook channel normally takes ~1.5s
                     while isSessionValid()
                         and targetChar.Parent
                         and isCharacterHooked(targetChar)
@@ -6628,50 +7362,24 @@ pcall(function()
                         and not isCharacterKnocked(myChar)
                         and not (vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking) do
 
-                        -- Gently pulse enabled ProximityPrompts every 0.35s in case prompt requires active interaction
-                        if (tick() - lastPromptPulse) >= 0.35 then
-                            lastPromptPulse = tick()
-                            if typeof(fireproximityprompt) == "function" then
-                                pcall(function()
-                                    for _, root in ipairs({ targetChar, anchorPart.Parent }) do
-                                        if root then
-                                            for _, d in ipairs(root:GetDescendants()) do
-                                                if d:IsA("ProximityPrompt") and d.Enabled and not d:IsDescendantOf(myChar) then
-                                                    pcall(function() d.RequiresLineOfSight = false end)
-                                                    pcall(fireproximityprompt, d)
-                                                end
-                                            end
-                                        end
-                                    end
-                                end)
-                            end
+                        if (tick() - lastRemotePulse) >= 0.18 then
+                            lastRemotePulse = tick()
+                            fireUnhookActions(remotes, targetChar, unhookPt, myChar, false)
                         end
 
-                        -- Anti-stall watchdog: if still hooked after 1.5s, step depth closer (still underground),
-                        -- reset any stuck "doing action" tag/state, re-settle, and re-fire UnHook
-                        if (tick() - attemptStart) >= 1.5 then
-                            rescueEXDepthStage = (rescueEXDepthStage % 3) + 1
-                            rescueEXGroundY = findHookGroundY(anchorPart, anchorPart.Position, targetChar) or rescueEXGroundY
-                            vdESPState.rescueEXHoldPos = getDesiredRescuePos(anchorPart.Position, rescueEXGroundY, rescueEXDepthStage)
-                            pcall(function()
-                                myChar:SetAttribute("isUnhooking", false)
-                                CollectionService:RemoveTag(myHrp, "doing action")
-                                CollectionService:RemoveTag(myChar, "doing action")
-                            end)
-                            enforceRescueEXUndergroundPos(0.1)
-                            task.wait(0.08)
-                            if not isSessionValid() or not isCharacterHooked(targetChar) then
-                                break
-                            end
-                            fireUnhookActions(remotes, targetChar, unhookPt, myChar)
-                            attemptStart = tick()
+                        if (tick() - lastPromptPulse) >= 0.45 then
                             lastPromptPulse = tick()
+                            fireUnhookActions(remotes, targetChar, unhookPt, myChar, true)
+                        end
+
+                        if (tick() - attemptStart) >= 1.8 then
+                            break
                         end
 
                         task.wait(0.05)
                     end
 
-                    -- Clean up unhook state once teammate is unhooked or cycle interrupted
+                    -- Clean up current attempt state
                     pcall(function()
                         if myChar and myChar.Parent then
                             myChar:SetAttribute("isUnhooking", false)
@@ -6679,6 +7387,38 @@ pcall(function()
                             CollectionService:RemoveTag(myChar, "doing action")
                         end
                     end)
+
+                    -- Check whether rescue succeeded or failed
+                    if not targetChar.Parent or not isCharacterHooked(targetChar) then
+                        rescueFailCount = 0
+                        rescueEXDepthStage = 1
+                    elseif isSessionValid()
+                        and not isCharacterHooked(myChar)
+                        and not isCharacterKnocked(myChar)
+                        and not (vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking) then
+                        rescueFailCount = rescueFailCount + 1
+                        if rescueFailCount >= 3 then
+                            -- Turn off instant underground teleport & unhook for 2s after 3 consecutive fails, then retry
+                            vdESPState.rescueEXPaused = true
+                            vdESPState.rescueEXHoldPos = nil
+                            currentRescueTargetChar = nil
+                            rescueEXAnchorPart = nil
+                            unlockRescueEXMotion(myChar, myHrp, true)
+                            if vdESPState.setMovementBypass then
+                                vdESPState.setMovementBypass(myChar, false)
+                            end
+                            local pauseEnd = tick() + 2.0
+                            while tick() < pauseEnd and isSessionValid() do
+                                task.wait(0.05)
+                            end
+                            rescueFailCount = 0
+                            rescueEXDepthStage = 1
+                            vdESPState.rescueEXPaused = false
+                        else
+                            rescueEXDepthStage = (rescueEXDepthStage % 3) + 1
+                            task.wait(0.08)
+                        end
+                    end
                 end)
                 task.wait(ok and 0.05 or 0.15)
             end
@@ -6689,7 +7429,7 @@ pcall(function()
 
     vdESPState.rescueEXToggle = V_RescueSection:Toggle({
         Title = "Rescue Friend EX",
-        Description = "0.0001s instant underground teleport to hooked teammate & complete unhook without stalling",
+        Description = "0.0001s underground teleport & unhook (auto 2s reset after 3 failed attempts)",
         Default = false,
         Callback = function(v)
             vdESPState.rescueEXEnabled = v
