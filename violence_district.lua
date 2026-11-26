@@ -4373,7 +4373,9 @@ V_ObjectiveSection:Toggle({
 -- ============================================================
 -- 4.2 UNDERGROUND REPAIR GENERATOR EX (0.0001s REAL-POS LOCK & PURPLE TARGET)
 -- ============================================================
-do
+pcall(function()
+local CollectionService = game:GetService("CollectionService")
+local RunService = game:GetService("RunService")
 local ghostEXOriginalCFrame = nil
 local ghostEXHeartbeatConn = nil
 local ghostEXHighlight = nil
@@ -4428,16 +4430,18 @@ local function setGhostEXGenMarker(genModel, targetPoint)
     end)
 end
 
-local function unlockGhostEXMotion(char, hrp)
+local function unlockGhostEXMotion(char, hrp, clearAttributes)
     if hrp and hrp.Anchored then
         pcall(function() hrp.Anchored = false end)
     end
     if char then
-        pcall(function()
-            char:SetAttribute("Immobile", false)
-            char:SetAttribute("AC_ServerAnchor", false)
-            char:SetAttribute("Rooted", false)
-        end)
+        if clearAttributes then
+            pcall(function()
+                if char:GetAttribute("Immobile") == true then char:SetAttribute("Immobile", false) end
+                if char:GetAttribute("AC_ServerAnchor") ~= nil then char:SetAttribute("AC_ServerAnchor", nil) end
+                if char:GetAttribute("Rooted") == true then char:SetAttribute("Rooted", false) end
+            end)
+        end
         for _, part in ipairs(char:GetDescendants()) do
             if part:IsA("BasePart") and part.CanCollide then
                 part.CanCollide = false
@@ -4455,11 +4459,18 @@ local function isGenSlotBusy(pt, myChar)
     if pt:GetAttribute("Occupied") == true or pt:GetAttribute("InUse") == true then
         return true
     end
+    local slotPrompt = pt:FindFirstChildOfClass("ProximityPrompt")
+    if slotPrompt and not slotPrompt.Enabled then
+        return true
+    end
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= player and plr.Character and plr.Character ~= myChar then
             local oHrp = plr.Character:FindFirstChild("HumanoidRootPart")
-            if oHrp and (oHrp.Position - pt.Position).Magnitude <= 4.2 and plr.Character:GetAttribute("isRepairing") == true then
-                return true
+            if oHrp then
+                local dist = (oHrp.Position - pt.Position).Magnitude
+                if (dist <= 6.8 and plr.Character:GetAttribute("isRepairing") == true) or dist <= 3.8 then
+                    return true
+                end
             end
         end
     end
@@ -4503,8 +4514,7 @@ local function findNearestGeneratorSlotsEX()
     end
 
     pcall(function()
-        local CS = game:GetService("CollectionService")
-        for _, pt in ipairs(CS:GetTagged("GeneratorPoint")) do
+        for _, pt in ipairs(CollectionService:GetTagged("GeneratorPoint")) do
             addPoint(pt)
         end
     end)
@@ -4517,8 +4527,6 @@ local function findNearestGeneratorSlotsEX()
                 for _, desc in ipairs(gen:GetDescendants()) do
                     if desc:IsA("BasePart") and (desc.Name:find("GeneratorPoint") or desc.Name == "RepairPoint") then
                         addPoint(desc)
-                    elseif desc:IsA("ProximityPrompt") and desc.Parent and desc.Parent:IsA("BasePart") then
-                        addPoint(desc.Parent)
                     end
                 end
             end
@@ -4535,7 +4543,7 @@ local function findNearestGeneratorSlotsEX()
 
     local candidates = {}
     for _, bucket in pairs(genBuckets) do
-        -- Prefer unoccupied slots with enabled ProximityPrompts first within this generator
+        -- Prefer unoccupied slots first within this generator
         table.sort(bucket.points, function(a, b)
             local busyA = isGenSlotBusy(a, myChar) and 1 or 0
             local busyB = isGenSlotBusy(b, myChar) and 1 or 0
@@ -4635,14 +4643,16 @@ local function startGhostRepairEXThread()
         end
         local tol = maxDistTolerance or 0.25
         local realDist = (hrp.Position - desiredPos).Magnitude
+        if hrp.CanCollide then
+            unlockGhostEXMotion(c, hrp, false)
+        end
         if realDist > tol or hrp.Anchored then
-            unlockGhostEXMotion(c, hrp)
+            unlockGhostEXMotion(c, hrp, true)
             hrp.CFrame = CFrame.new(desiredPos)
             hrp.AssemblyLinearVelocity = Vector3.zero
             hrp.AssemblyAngularVelocity = Vector3.zero
             return false
         end
-        unlockGhostEXMotion(c, hrp)
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
         return true
@@ -4815,7 +4825,7 @@ local function startGhostRepairEXThread()
                     ghostEXHoldPos = dPos
                     for attempt = 1, 20 do
                         if not checkEXActive() or not pt.Parent then break end
-                        unlockGhostEXMotion(myChar, myHrp)
+                        unlockGhostEXMotion(myChar, myHrp, true)
                         myHrp.CFrame = CFrame.new(dPos)
                         myHrp.AssemblyLinearVelocity = Vector3.zero
                         myHrp.AssemblyAngularVelocity = Vector3.zero
@@ -4833,33 +4843,18 @@ local function startGhostRepairEXThread()
                 end
 
                 local function beginEXRepairOnSlot(pt, curReqId)
-                    if CollectionService and myHrp then
-                        pcall(function() CollectionService:RemoveTag(myHrp, "doing action") end)
+                    if CollectionService then
+                        if myHrp then pcall(function() CollectionService:RemoveTag(myHrp, "doing action") end) end
+                        if myChar then pcall(function() CollectionService:RemoveTag(myChar, "doing action") end) end
                     end
                     local actualModel = resolveGeneratorInstance(pt, genModel)
                     lastCapturedGenModel = actualModel
                     lastCapturedGenPoint = pt
                     lastCapturedRepairRequestId = curReqId
 
-                    -- Trigger any ProximityPrompt on the slot/generator as backup
-                    pcall(function()
-                        if typeof(fireproximityprompt) == "function" then
-                            local slotPrompt = pt:FindFirstChildOfClass("ProximityPrompt")
-                            if slotPrompt and slotPrompt.Enabled then
-                                fireproximityprompt(slotPrompt)
-                            elseif genModel then
-                                for _, desc in ipairs(genModel:GetDescendants()) do
-                                    if desc:IsA("ProximityPrompt") and desc.Enabled and (desc.Parent == pt or (desc.Parent and desc.Parent:IsA("BasePart") and (desc.Parent.Position - pt.Position).Magnitude <= 6)) then
-                                        fireproximityprompt(desc)
-                                        break
-                                    end
-                                end
-                            end
-                        end
-                    end)
-
                     pcall(function()
                         remotes.Generator.RepairEvent:FireServer(pt, true, nil, curReqId, myChar)
+                        myChar:SetAttribute("isRepairing", true)
                     end)
                     return actualModel
                 end
@@ -4871,7 +4866,7 @@ local function startGhostRepairEXThread()
                 ghostEXRepairRequestId = requestId
                 local actualGenModel = beginEXRepairOnSlot(targetPoint, requestId)
 
-                local lastPulseSent = tick()
+                local lastPulseSent = 0
                 local lastObservedProg = currentProg or 0
                 local lastProgressTime = tick()
                 local stallRetries = 0
@@ -4888,7 +4883,7 @@ local function startGhostRepairEXThread()
                         end)
                         myChar:SetAttribute("isRepairing", false)
                         ghostEXHoldPos = nil
-                        unlockGhostEXMotion(myChar, myHrp)
+                        unlockGhostEXMotion(myChar, myHrp, true)
                         break
                     end
 
@@ -4901,6 +4896,7 @@ local function startGhostRepairEXThread()
                         pcall(function()
                             remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, requestId, myChar)
                         end)
+                        myChar:SetAttribute("isRepairing", false)
                         clearGhostEXGenMarker()
                         currentGhostEXPoint = nil
                         currentGhostEXModel = nil
@@ -4912,27 +4908,39 @@ local function startGhostRepairEXThread()
                         break
                     end
 
-
-                    -- Watchdog: track real server progress growth; if stalled >= 2.2s, recover without leaving target gen!
-                    if progNow > (lastObservedProg + 0.05) then
+                    -- Watchdog: track real server progress growth; if stalled >= 3.8s, switch to an unoccupied slot on SAME gen
+                    if progNow > (lastObservedProg + 0.01) then
                         lastObservedProg = progNow
                         lastProgressTime = tick()
                         stallRetries = 0
-                    elseif (tick() - lastProgressTime) >= 2.2 then
+                    elseif (tick() - lastProgressTime) >= 3.8 then
                         stallRetries = stallRetries + 1
                         pcall(function()
                             remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, requestId, myChar)
                         end)
+                        myChar:SetAttribute("isRepairing", false)
                         task.wait(0.05)
                         if not checkEXActive() or currentGhostEXPoint ~= targetPoint then break end
 
-                        -- Rotate to next GeneratorPoint slot on the SAME locked generator model
+                        -- Prefer an unoccupied slot on the SAME locked generator model if available
                         if currentGenSlots and #currentGenSlots > 1 then
-                            currentSlotIdx = (currentSlotIdx % #currentGenSlots) + 1
-                            local nextSlot = currentGenSlots[currentSlotIdx]
-                            if nextSlot and nextSlot.Parent then
-                                targetPoint = nextSlot
-                                currentGhostEXPoint = nextSlot
+                            local chosenSlot = nil
+                            for offset = 1, #currentGenSlots do
+                                local tryIdx = ((currentSlotIdx - 1 + offset) % #currentGenSlots) + 1
+                                local candSlot = currentGenSlots[tryIdx]
+                                if candSlot and candSlot.Parent and not isGenSlotBusy(candSlot, myChar) then
+                                    currentSlotIdx = tryIdx
+                                    chosenSlot = candSlot
+                                    break
+                                end
+                            end
+                            if not chosenSlot then
+                                currentSlotIdx = (currentSlotIdx % #currentGenSlots) + 1
+                                chosenSlot = currentGenSlots[currentSlotIdx]
+                            end
+                            if chosenSlot and chosenSlot.Parent then
+                                targetPoint = chosenSlot
+                                currentGhostEXPoint = chosenSlot
                             end
                         end
 
@@ -4946,7 +4954,7 @@ local function startGhostRepairEXThread()
                         ghostEXRepairRequestId = requestId
                         actualGenModel = beginEXRepairOnSlot(targetPoint, requestId)
                         lastProgressTime = tick()
-                        lastPulseSent = tick()
+                        lastPulseSent = 0
                     end
 
                     -- Maintain purple highlight & fire periodic repair + Great skillcheck progression pulses
@@ -4955,6 +4963,7 @@ local function startGhostRepairEXThread()
                         lastPulseSent = tick()
                         pcall(function()
                             remotes.Generator.RepairEvent:FireServer(targetPoint, true, nil, requestId, myChar)
+                            myChar:SetAttribute("isRepairing", true)
                         end)
                         if remotes.Generator:FindFirstChild("SkillCheckResultEvent") then
                             local sendGenModel = resolveGeneratorInstance(targetPoint, actualGenModel or genModel)
@@ -4977,6 +4986,7 @@ local function startGhostRepairEXThread()
                 if currentGhostEXPoint == targetPoint then
                     pcall(function()
                         remotes.Generator.RepairEvent:FireServer(targetPoint, false, nil, requestId, myChar)
+                        myChar:SetAttribute("isRepairing", false)
                     end)
                 end
             end)
@@ -5016,7 +5026,7 @@ V_ObjectiveSection:Toggle({
         end
     end
 })
-end
+end)
 
 V_ObjectiveSection:Slider({
     Title = "Ghost Depth Offset",
@@ -6345,21 +6355,31 @@ pcall(function()
         local targetPos = vdESPState.rescueEXHoldPos
         if not targetPos then return end
 
-        for _, part in ipairs(myChar:GetDescendants()) do
-            if part:IsA("BasePart") and part.CanCollide then
-                part.CanCollide = false
+        if myHrp.CanCollide then
+            for _, part in ipairs(myChar:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
             end
         end
 
-        myHrp.Anchored = false
+        local wasAnchored = myHrp.Anchored
+        if wasAnchored then
+            myHrp.Anchored = false
+        end
         myHrp.AssemblyLinearVelocity = Vector3.zero
         myHrp.AssemblyAngularVelocity = Vector3.zero
-        myChar:SetAttribute("Rooted", false)
-        myChar:SetAttribute("Immobile", false)
-        myChar:SetAttribute("AC_ServerAnchor", nil)
 
         local realDist = (myHrp.Position - targetPos).Magnitude
-        if realDist > (threshold or 0.25) or myHrp.Anchored then
+        if realDist > (threshold or 0.25) or wasAnchored then
+            if myChar:GetAttribute("Rooted") == true then myChar:SetAttribute("Rooted", false) end
+            if myChar:GetAttribute("Immobile") == true then myChar:SetAttribute("Immobile", false) end
+            if myChar:GetAttribute("AC_ServerAnchor") ~= nil then myChar:SetAttribute("AC_ServerAnchor", nil) end
+            for _, part in ipairs(myChar:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
             myHrp.CFrame = CFrame.new(targetPos)
         end
     end
