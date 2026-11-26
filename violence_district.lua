@@ -67,6 +67,8 @@ local vdESPState = {
     rescueEXSession = 0,
     rescueEXHoldPos = nil,
     rescueEXPaused = false,
+    rescueEXWantsPriority = false,
+    rescueEXSafeDist = 40,
     rescueEXToggle = nil,
     ghostEXPaused = false,
     setMovementBypass = nil,
@@ -417,6 +419,7 @@ task.spawn(function()
                                 vdESPState.rescueEXEnabled = false
                                 vdESPState.rescueEXHoldPos = nil
                                 vdESPState.rescueEXPaused = false
+                                vdESPState.rescueEXWantsPriority = false
                                 vdESPState.rescueEXSession = (vdESPState.rescueEXSession or 0) + 1
                             end
                         elseif currentRole == "Survivor" then
@@ -1070,6 +1073,7 @@ local function onMatchOrCharacterReset()
         vdESPState.fleeKnockEXBlocking = false
         vdESPState.rescueEXHoldPos = nil
         vdESPState.rescueEXPaused = false
+        vdESPState.rescueEXWantsPriority = false
         vdESPState.ghostEXPaused = false
     end
     lastCapturedRepairRequestId = nil
@@ -4953,7 +4957,13 @@ local function startGhostRepairEXThread()
     end
 
     local function isPosYieldedByOtherFeature()
-        return vdESPState and ((vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking) or (vdESPState.rescueEXEnabled and not vdESPState.rescueEXPaused and vdESPState.rescueEXHoldPos ~= nil))
+        if not vdESPState then return false end
+        if vdESPState.fleeKnockEXEnabled and vdESPState.fleeKnockEXBlocking then return true end
+        if vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking then return true end
+        if vdESPState.rescueEXEnabled and (vdESPState.rescueEXWantsPriority or (not vdESPState.rescueEXPaused and vdESPState.rescueEXHoldPos ~= nil)) then
+            return true
+        end
+        return false
     end
 
     -- 1a. Pre-simulation Stepped physics override + NoClip bypass (guarantees Killer POV sees underground)
@@ -5009,7 +5019,10 @@ local function startGhostRepairEXThread()
 
         local function isBlockedByStandaloneAutoFlee(pt)
             if not vdESPState then return false end
-            if vdESPState.rescueEXEnabled and not vdESPState.rescueEXPaused and vdESPState.rescueEXHoldPos ~= nil then return true end
+            if vdESPState.fleeKnockEXEnabled and vdESPState.fleeKnockEXBlocking then return true end
+            if vdESPState.rescueEXEnabled and (vdESPState.rescueEXWantsPriority or (not vdESPState.rescueEXPaused and vdESPState.rescueEXHoldPos ~= nil)) then
+                return true
+            end
             if not vdESPState.autoFleeEnabled then return false end
             if vdESPState.autoFleeBlocking then return true end
             if vdESPState.autoFleePauseUntil and tick() < vdESPState.autoFleePauseUntil then return true end
@@ -5132,7 +5145,10 @@ local function startGhostRepairEXThread()
                     if isBlockedByStandaloneAutoFlee(nextPt) then
                         ghostEXTransiting = false
                         ghostEXHoldPos = nil
-                        unlockGhostEXMotion(myChar, myHrp, false, true)
+                        local yieldingToRescue = vdESPState and vdESPState.rescueEXEnabled and vdESPState.rescueEXWantsPriority
+                        if not yieldingToRescue then
+                            unlockGhostEXMotion(myChar, myHrp, false, true)
+                        end
                         task.wait(0.15)
                         return
                     end
@@ -5162,7 +5178,10 @@ local function startGhostRepairEXThread()
 
                 if isBlockedByStandaloneAutoFlee(currentGhostEXPoint) then
                     ghostEXHoldPos = nil
-                    unlockGhostEXMotion(myChar, myHrp, false, true)
+                    local yieldingToRescue = vdESPState and vdESPState.rescueEXEnabled and vdESPState.rescueEXWantsPriority
+                    if not yieldingToRescue then
+                        unlockGhostEXMotion(myChar, myHrp, false, true)
+                    end
                     task.wait(0.15)
                     return
                 end
@@ -5249,7 +5268,8 @@ local function startGhostRepairEXThread()
                         end)
                         myChar:SetAttribute("isRepairing", false)
                         ghostEXHoldPos = nil
-                        unlockGhostEXMotion(myChar, myHrp, true, true)
+                        local yieldingToRescue = vdESPState and vdESPState.rescueEXEnabled and vdESPState.rescueEXWantsPriority
+                        unlockGhostEXMotion(myChar, myHrp, true, not yieldingToRescue)
                         break
                     end
 
@@ -6376,6 +6396,9 @@ pcall(function()
 
                     if hooked then
                         vdESPState.fleeKnockEXBlocking = true
+                        ghostEXHoldPos = nil
+                        vdESPState.rescueEXHoldPos = nil
+                        vdESPState.rescueEXWantsPriority = false
                         wasHooked = true
                         fledThisKnock = false
                         stopSelfHealState(myChar, remotes)
@@ -6400,6 +6423,9 @@ pcall(function()
                         end
                     elseif knocked then
                         vdESPState.fleeKnockEXBlocking = true
+                        ghostEXHoldPos = nil
+                        vdESPState.rescueEXHoldPos = nil
+                        vdESPState.rescueEXWantsPriority = false
                         if wasHooked then
                             wasHooked = false
                         end
@@ -6942,6 +6968,7 @@ pcall(function()
         vdESPState.rescueEXSession = (vdESPState.rescueEXSession or 0) + 1
         vdESPState.rescueEXHoldPos = nil
         vdESPState.rescueEXPaused = false
+        vdESPState.rescueEXWantsPriority = false
         rescueEXTransiting = false
         currentRescueTargetChar = nil
         rescueEXAnchorPart = nil
@@ -6967,13 +6994,15 @@ pcall(function()
                     vdESPState.setMovementBypass(myChar, false)
                 end
             end
-            if restorePosition and rescueEXOriginalCFrame and myHrp then
+            if restorePosition and rescueEXOriginalCFrame and myHrp and not ghostRepairEXEnabled and not ghostRepairEnabled then
                 if vdESPState.microTransitTo then
                     vdESPState.microTransitTo(myChar, myHrp, rescueEXOriginalCFrame.Position, nil, false)
                 end
                 myHrp.CFrame = rescueEXOriginalCFrame
                 myHrp.AssemblyLinearVelocity = Vector3.zero
                 myHrp.AssemblyAngularVelocity = Vector3.zero
+                rescueEXOriginalCFrame = nil
+            else
                 rescueEXOriginalCFrame = nil
             end
             if unlockCameraAndMovement then
@@ -7012,13 +7041,39 @@ pcall(function()
         return nil
     end
 
+    local function getEffectiveRescueSafeDist()
+        local userSafe = tonumber(vdESPState.rescueEXSafeDist)
+        if userSafe == nil then userSafe = 40 end
+        if vdESPState.autoFleeEnabled then
+            local fleeMin = math.min(tonumber(vdESPState.autoFleeDistance) or 40, 120)
+            return math.max(userSafe, fleeMin)
+        end
+        return userSafe
+    end
+
+    local function isKillerNearHookTarget(targetChar, anchorPart, safeDist)
+        if (safeDist or 0) <= 0 then return false end
+        local killer = getKiller and getKiller()
+        local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
+        if not kHrp then return false end
+        local tHrp = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+        if tHrp and (kHrp.Position - tHrp.Position).Magnitude <= safeDist then
+            return true
+        end
+        if anchorPart and anchorPart.Parent and (kHrp.Position - anchorPart.Position).Magnitude <= safeDist then
+            return true
+        end
+        return false
+    end
+
     local function enforceRescueEXUndergroundPos(threshold)
         if not vdESPState.rescueEXEnabled or vdESPState.rescueEXPaused or rescueEXTransiting then return end
+        if vdESPState.fleeKnockEXEnabled and vdESPState.fleeKnockEXBlocking then return end
         if vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking then return end
 
         local myChar = player.Character
         local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-        if not myChar or not myHrp then return end
+        if not myChar or not myHrp or isCharacterKnocked(myChar) or isCharacterHooked(myChar) then return end
 
         if vdESPState.setMovementBypass then
             vdESPState.setMovementBypass(myChar, true)
@@ -7068,16 +7123,20 @@ pcall(function()
 
     local function findNearestHookedTeammateEX(myHrp)
         local bestChar, bestPlr, bestDist = nil, nil, math.huge
+        local safeDist = getEffectiveRescueSafeDist()
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= player and plr.Character and plr.Character:IsDescendantOf(workspace) then
                 if (not isTeammateRescuable or isTeammateRescuable(plr)) and isCharacterHooked(plr.Character) then
                     local tHrp = plr.Character:FindFirstChild("HumanoidRootPart")
                     if tHrp then
-                        local d = (myHrp.Position - tHrp.Position).Magnitude
-                        if d < bestDist then
-                            bestDist = d
-                            bestChar = plr.Character
-                            bestPlr = plr
+                        local unhookPt = findUnhookPointForTeammate and findUnhookPointForTeammate(plr.Character)
+                        if not isKillerNearHookTarget(plr.Character, unhookPt, safeDist) then
+                            local d = (myHrp.Position - tHrp.Position).Magnitude
+                            if d < bestDist then
+                                bestDist = d
+                                bestChar = plr.Character
+                                bestPlr = plr
+                            end
                         end
                     end
                 end
@@ -7217,6 +7276,7 @@ pcall(function()
                 local ok = pcall(function()
                     if isPlayerKiller and isPlayerKiller() then
                         vdESPState.rescueEXHoldPos = nil
+                        vdESPState.rescueEXWantsPriority = false
                         currentRescueTargetChar = nil
                         rescueEXAnchorPart = nil
                         rescueFailCount = 0
@@ -7229,6 +7289,7 @@ pcall(function()
                     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
                     if not myChar or not myHrp or not hum or hum.Health <= 0 then
                         vdESPState.rescueEXHoldPos = nil
+                        vdESPState.rescueEXWantsPriority = false
                         currentRescueTargetChar = nil
                         rescueEXAnchorPart = nil
                         rescueEXOriginalCFrame = nil
@@ -7241,6 +7302,7 @@ pcall(function()
                         trackedChar = myChar
                         rescueEXOriginalCFrame = nil
                         vdESPState.rescueEXHoldPos = nil
+                        vdESPState.rescueEXWantsPriority = false
                         currentRescueTargetChar = nil
                         rescueEXAnchorPart = nil
                         rescueFailCount = 0
@@ -7249,18 +7311,21 @@ pcall(function()
                     if (isEntityInLobbyOrSpectating and isEntityInLobbyOrSpectating(myChar, player))
                         or isCharacterHooked(myChar)
                         or isCharacterKnocked(myChar)
+                        or (vdESPState.fleeKnockEXEnabled and vdESPState.fleeKnockEXBlocking)
                         or myChar:GetAttribute("IsCarried") == true then
                         vdESPState.rescueEXHoldPos = nil
+                        vdESPState.rescueEXWantsPriority = false
                         currentRescueTargetChar = nil
                         rescueEXAnchorPart = nil
                         myChar:SetAttribute("isUnhooking", false)
                         rescueFailCount = 0
-                        task.wait(0.2)
+                        task.wait(0.15)
                         return
                     end
 
                     if vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking then
                         vdESPState.rescueEXHoldPos = nil
+                        vdESPState.rescueEXWantsPriority = false
                         myChar:SetAttribute("isUnhooking", false)
                         unlockRescueEXMotion(myChar, myHrp, true)
                         task.wait(0.15)
@@ -7269,8 +7334,9 @@ pcall(function()
 
                     local targetChar, targetPlr = findNearestHookedTeammateEX(myHrp)
                     if not targetChar or not targetPlr then
-                        local wasRescuing = (vdESPState.rescueEXHoldPos ~= nil or currentRescueTargetChar ~= nil)
+                        local wasRescuing = (vdESPState.rescueEXHoldPos ~= nil or currentRescueTargetChar ~= nil or vdESPState.rescueEXWantsPriority)
                         vdESPState.rescueEXHoldPos = nil
+                        vdESPState.rescueEXWantsPriority = false
                         currentRescueTargetChar = nil
                         rescueEXAnchorPart = nil
                         rescueEXGroundY = nil
@@ -7297,12 +7363,13 @@ pcall(function()
                                 pcall(unlockCameraAndMovement)
                             end
                         end
-                        task.wait(0.25)
+                        task.wait(0.20)
                         return
                     end
 
                     local targetHrp = targetChar:FindFirstChild("HumanoidRootPart")
                     if not targetHrp then
+                        vdESPState.rescueEXWantsPriority = false
                         task.wait(0.1)
                         return
                     end
@@ -7311,10 +7378,14 @@ pcall(function()
                         rescueEXOriginalCFrame = myHrp.CFrame
                     end
 
+                    -- Claim top rescue priority over Generator EX immediately when a safe hooked friend exists
+                    vdESPState.rescueEXWantsPriority = true
+
                     local unhookPt = findUnhookPointForTeammate and findUnhookPointForTeammate(targetChar) or targetHrp
                     local anchorPart = (unhookPt and unhookPt.Parent) and unhookPt or targetHrp
                     local groundY = findHookGroundY(anchorPart, anchorPart.Position, targetChar)
                     local destPos = getDesiredRescuePos(anchorPart.Position, groundY, rescueEXDepthStage)
+                    local safeDist = getEffectiveRescueSafeDist()
 
                     -- Micro-burst transit underground FIRST (prevents server anti-cheat rollback on >22 stud teleports)
                     rescueEXTransiting = true
@@ -7324,10 +7395,25 @@ pcall(function()
                     rescueEXGroundY = groundY
 
                     if vdESPState.microTransitTo then
-                        vdESPState.microTransitTo(myChar, myHrp, destPos, isSessionValid, true)
+                        vdESPState.microTransitTo(myChar, myHrp, destPos, function()
+                            return isSessionValid()
+                                and targetChar.Parent
+                                and isCharacterHooked(targetChar)
+                                and not isCharacterKnocked(myChar)
+                                and not isCharacterHooked(myChar)
+                                and not (vdESPState.fleeKnockEXEnabled and vdESPState.fleeKnockEXBlocking)
+                                and not isKillerNearHookTarget(targetChar, anchorPart, safeDist)
+                        end, true)
                     end
-                    if not isSessionValid() or not targetChar.Parent or not isCharacterHooked(targetChar) then
+                    if not isSessionValid()
+                        or not targetChar.Parent
+                        or not isCharacterHooked(targetChar)
+                        or isCharacterKnocked(myChar)
+                        or (vdESPState.fleeKnockEXEnabled and vdESPState.fleeKnockEXBlocking)
+                        or isKillerNearHookTarget(targetChar, anchorPart, safeDist) then
                         rescueEXTransiting = false
+                        vdESPState.rescueEXHoldPos = nil
+                        vdESPState.rescueEXWantsPriority = false
                         return
                     end
 
@@ -7338,12 +7424,24 @@ pcall(function()
 
                     -- Settle pinned underground 0.12s so server commits underground location before UnHook fires
                     local settleEnd = tick() + 0.12
-                    while tick() < settleEnd and isSessionValid() and targetChar.Parent and isCharacterHooked(targetChar) do
+                    while tick() < settleEnd
+                        and isSessionValid()
+                        and targetChar.Parent
+                        and isCharacterHooked(targetChar)
+                        and not isCharacterKnocked(myChar)
+                        and not isKillerNearHookTarget(targetChar, anchorPart, safeDist) do
                         enforceRescueEXUndergroundPos(0.15)
                         task.wait(0.0001)
                     end
 
-                    if not isSessionValid() or not targetChar.Parent or not isCharacterHooked(targetChar) then
+                    if not isSessionValid()
+                        or not targetChar.Parent
+                        or not isCharacterHooked(targetChar)
+                        or isCharacterKnocked(myChar)
+                        or (vdESPState.fleeKnockEXEnabled and vdESPState.fleeKnockEXBlocking)
+                        or isKillerNearHookTarget(targetChar, anchorPart, safeDist) then
+                        vdESPState.rescueEXHoldPos = nil
+                        vdESPState.rescueEXWantsPriority = false
                         return
                     end
 
@@ -7353,14 +7451,21 @@ pcall(function()
                     local attemptStart = tick()
                     local lastRemotePulse = tick()
                     local lastPromptPulse = tick()
+                    local abortedBySafety = false
 
-                    -- Single rescue attempt window (~1.8s): unhook channel normally takes ~1.5s
+                    -- Single rescue attempt window (~1.8s): aborts immediately if Killer nears hook or player is knocked
                     while isSessionValid()
                         and targetChar.Parent
                         and isCharacterHooked(targetChar)
                         and not isCharacterHooked(myChar)
                         and not isCharacterKnocked(myChar)
+                        and not (vdESPState.fleeKnockEXEnabled and vdESPState.fleeKnockEXBlocking)
                         and not (vdESPState.autoFleeEnabled and vdESPState.autoFleeBlocking) do
+
+                        if isKillerNearHookTarget(targetChar, anchorPart, safeDist) then
+                            abortedBySafety = true
+                            break
+                        end
 
                         if (tick() - lastRemotePulse) >= 0.18 then
                             lastRemotePulse = tick()
@@ -7388,10 +7493,29 @@ pcall(function()
                         end
                     end)
 
+                    if abortedBySafety
+                        or isCharacterKnocked(myChar)
+                        or isCharacterHooked(myChar)
+                        or (vdESPState.fleeKnockEXEnabled and vdESPState.fleeKnockEXBlocking) then
+                        vdESPState.rescueEXHoldPos = nil
+                        vdESPState.rescueEXWantsPriority = false
+                        currentRescueTargetChar = nil
+                        rescueEXAnchorPart = nil
+                        unlockRescueEXMotion(myChar, myHrp, true)
+                        if vdESPState.setMovementBypass then
+                            vdESPState.setMovementBypass(myChar, false)
+                        end
+                        task.wait(0.15)
+                        return
+                    end
+
                     -- Check whether rescue succeeded or failed
                     if not targetChar.Parent or not isCharacterHooked(targetChar) then
                         rescueFailCount = 0
                         rescueEXDepthStage = 1
+                        vdESPState.rescueEXHoldPos = nil
+                        currentRescueTargetChar = nil
+                        rescueEXAnchorPart = nil
                     elseif isSessionValid()
                         and not isCharacterHooked(myChar)
                         and not isCharacterKnocked(myChar)
@@ -7408,7 +7532,10 @@ pcall(function()
                                 vdESPState.setMovementBypass(myChar, false)
                             end
                             local pauseEnd = tick() + 2.0
-                            while tick() < pauseEnd and isSessionValid() do
+                            while tick() < pauseEnd
+                                and isSessionValid()
+                                and not isCharacterKnocked(myChar)
+                                and not (vdESPState.fleeKnockEXEnabled and vdESPState.fleeKnockEXBlocking) do
                                 task.wait(0.05)
                             end
                             rescueFailCount = 0
@@ -7429,7 +7556,7 @@ pcall(function()
 
     vdESPState.rescueEXToggle = V_RescueSection:Toggle({
         Title = "Rescue Friend EX",
-        Description = "0.0001s underground teleport & unhook (auto 2s reset after 3 failed attempts)",
+        Description = "Priority underground rescue when no Killer is near hook (pauses Gen EX, 2s reset after 3 fails)",
         Default = false,
         Callback = function(v)
             vdESPState.rescueEXEnabled = v
@@ -7438,6 +7565,20 @@ pcall(function()
             else
                 stopRescueEX(true)
             end
+        end
+    })
+
+    V_RescueSection:Slider({
+        Title = "Rescue Safe Distance (Killer)",
+        Description = "Only rescue hooked teammate when Killer is farther than this distance (0 - 150 studs, default 40)",
+        Step = 5,
+        Value = {
+            Min = 0,
+            Max = 150,
+            Default = 40,
+        },
+        Callback = function(val)
+            vdESPState.rescueEXSafeDist = tonumber(val) or 40
         end
     })
 end)
