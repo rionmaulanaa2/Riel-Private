@@ -7,6 +7,7 @@
 
 local ViolenceTab = nil
 local V_ESPSection = nil
+local V_SurvivorEXSection = nil
 local V_ObjectiveSection = nil
 local V_CombatSection = nil
 local V_RescueSection = nil
@@ -91,6 +92,10 @@ ViolenceTab = Window:Tab({
 
 V_ESPSection = ViolenceTab:Section({
     Title = "ESP & Visuals"
+})
+
+V_SurvivorEXSection = ViolenceTab:Section({
+    Title = "Survivor EX"
 })
 
 V_ObjectiveSection = ViolenceTab:Section({
@@ -5537,7 +5542,7 @@ local function startGhostRepairEXThread()
     end)
 end
 
-V_ObjectiveSection:Toggle({
+V_SurvivorEXSection:Toggle({
     Title = "Underground Repair Generator EX",
     Description = "0.0001s floor-buried lock, micro-burst transit, purple target & 2s reset after 3 fails",
     Default = false,
@@ -6423,7 +6428,7 @@ pcall(function()
     end
 
     if vdESPState then
-        vdESPState.autoLeverEXToggle = V_ObjectiveSection:Toggle({
+        vdESPState.autoLeverEXToggle = V_SurvivorEXSection:Toggle({
             Title = "Auto Lever EX",
             Description = "0.0001s underground Exit Gate opener with priority over Ghost Gen EX when accessible or >= 4 gens fixed",
             Default = false,
@@ -6486,7 +6491,7 @@ V_ObjectiveSection:Toggle({
 -- 5. AUTO PALLET STUN
 -- ============================================================
 -- Unified autoPalletEnabled
-
+pcall(function()
 local function findNearbyPallets()
     local myChar = player.Character
     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -6909,6 +6914,7 @@ V_CombatSection:Slider({
         autoDodgeDistance = tonumber(val) or 15
     end
 })
+end)
 
 -- ============================================================
 -- AUTO FLEE KILLER (1 - 300 STUDS STANDALONE SAFE ESCAPE)
@@ -7212,8 +7218,8 @@ pcall(function()
         end)
     end
 
-    vdESPState.autoFleeToggle = V_CombatSection:Toggle({
-        Title = "Auto Flee Killer",
+    vdESPState.autoFleeToggle = V_SurvivorEXSection:Toggle({
+        Title = "Auto Flee EX",
         Description = "Automatically flee to safe ground whenever the Killer enters your configured range",
         Default = false,
         Callback = function(v)
@@ -7228,7 +7234,7 @@ pcall(function()
         end
     })
 
-    V_CombatSection:Slider({
+    V_SurvivorEXSection:Slider({
         Title = "Auto Flee Distance",
         Description = "Trigger distance in studs to automatically flee from Killer (1 - 300 studs)",
         Step = 1,
@@ -7510,7 +7516,7 @@ pcall(function()
         end)
     end
 
-    vdESPState.fleeKnockEXToggle = V_CombatSection:Toggle({
+    vdESPState.fleeKnockEXToggle = V_SurvivorEXSection:Toggle({
         Title = "Flee Knock EX",
         Description = "Flees far from Killer when knocked down and continuously performs self-rescue (recover / self-unhook)",
         Default = false,
@@ -8683,7 +8689,7 @@ pcall(function()
         end)
     end
 
-    vdESPState.rescueEXToggle = V_RescueSection:Toggle({
+    vdESPState.rescueEXToggle = V_SurvivorEXSection:Toggle({
         Title = "Rescue Friend EX",
         Description = "Priority underground rescue when no Killer is near hook (pauses Gen EX, 2s reset after 3 fails)",
         Default = false,
@@ -8697,7 +8703,7 @@ pcall(function()
         end
     })
 
-    V_RescueSection:Slider({
+    V_SurvivorEXSection:Slider({
         Title = "Rescue Safe Distance (Killer)",
         Description = "Only rescue hooked teammate when Killer is farther than this distance (0 - 150 studs, default 40)",
         Step = 5,
