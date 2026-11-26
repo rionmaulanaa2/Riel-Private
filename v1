@@ -1,10 +1,10 @@
 -- ============================================================
 -- RIEL PRIVATE: OFFICIALLY RESTORED WINDUI ARCHITECTURE (MONTH 10)
--- Version: 1.24
+-- Version: 1.25
 -- 100% Pure Lua 5.1 & Delta Executor Android Compatibility
 -- ============================================================
 
-local RIEL_VERSION = "1.24"
+local RIEL_VERSION = "1.25"
 
 print("==================================================")
 print("🛡️ [Riel Private v" .. RIEL_VERSION .. "] Initializing Script on Delta Executor...")
@@ -3167,7 +3167,7 @@ pcall(function()
         return Vector3.new(pt.Position.X, desiredY, pt.Position.Z), floorY
     end
 
-    vdESPState.microTransitTo = function(myChar, myHrp, targetPos, checkFn, setCollisionFalse, verifyTol)
+    vdESPState.microTransitTo = function(myChar, myHrp, targetPos, checkFn, setCollisionFalse, verifyTol, isUrgent)
         if not myChar or not myHrp or not myHrp.Parent then return false end
         local RS = game:GetService("RunService")
 
@@ -3256,11 +3256,12 @@ pcall(function()
             return false
         end
 
-        -- Tier 2: Burst budget available (< 2 big jumps in 55s & no recent AC anchor) -> instant <1ms jump + server sync check
+        -- Tier 2: Burst budget available (reserve 2nd instant slot strictly for urgent danger escapes!) -> <1ms instant jump
         local now = tick()
         local activeBursts = pruneBurstTimestamps(now)
+        local maxBursts = isUrgent and 2 or 1
         local sinceAnchor = now - math.max(vdESPState.lastServerAnchorTick or 0, vdESPState.lastACAnchorTick or 0)
-        if activeBursts < 2 and sinceAnchor > 12.0 then
+        if activeBursts < maxBursts and sinceAnchor > 10.0 then
             table.insert(vdESPState.bigJumpTimestamps, now)
             local jumpStartedAt = tick()
             prepTransit()
@@ -3291,12 +3292,12 @@ pcall(function()
                 return true
             end
             -- Server rejected burst jump: accept server position calmly instead of creating client/server desync
-            task.wait(0.20)
+            task.wait(0.14)
             if checkFn and not checkFn() then return false end
             if not myHrp or not myHrp.Parent then return false end
         end
 
-        -- Tier 3: Discrete 17-stud server-synced hops (0 continuous 185-studs/s void-glide anti-fly triggers)
+        -- Tier 3: Fast discrete 21-stud server-synced hops (~155 studs/s peak, adaptive fallback on rollback)
         curPos = myHrp.Position
         local startTime = tick()
         local rollbackHits = 0
@@ -3309,7 +3310,7 @@ pcall(function()
             curPos = myHrp.Position
             local remVec = targetPos - curPos
             local remDist = remVec.Magnitude
-            if remDist <= 17.5 then
+            if remDist <= 21.5 then
                 local finalStart = tick()
                 prepTransit()
                 myHrp.AssemblyLinearVelocity = Vector3.zero
@@ -3327,7 +3328,7 @@ pcall(function()
                 return (myHrp.Position - targetPos).Magnitude <= math.max(tol, 8.0)
             end
 
-            local hopLen = (rollbackHits > 0) and 11.5 or 17.0
+            local hopLen = (rollbackHits > 0) and 16.5 or 21.0
             local hopXZ
             local flatVec = Vector3.new(remVec.X, 0, remVec.Z)
             if flatVec.Magnitude >= 0.2 then
@@ -3360,8 +3361,8 @@ pcall(function()
             myHrp.AssemblyAngularVelocity = Vector3.zero
             myHrp.CFrame = CFrame.new(nextPos)
 
-            -- Pace discrete hops (~0.24s) while verifying server accepts X/Z (no fake client-only drifting)
-            local settleTime = (rollbackHits > 0) and 0.30 or 0.24
+            -- Pace discrete hops (~0.135s -> ~155 studs/s) while verifying server accepts X/Z (no fake client-only drifting)
+            local settleTime = (rollbackHits > 0) and 0.21 or 0.135
             local settleEnd = tick() + settleTime
             local hopRejected = false
             while tick() < settleEnd do
@@ -3397,7 +3398,7 @@ pcall(function()
                 if lockHits >= 2 or rollbackHits >= 3 then
                     return false
                 end
-                task.wait(0.25)
+                task.wait(0.12)
             end
         end
 
@@ -9572,6 +9573,8 @@ pcall(function()
             if lastCapturedGenPoint and remotes and remotes.Generator and remotes.Generator:FindFirstChild("RepairEvent") then
                 wasRepairing = true
                 remotes.Generator.RepairEvent:FireServer(lastCapturedGenPoint, false, nil, lastCapturedRepairRequestId or HttpService:GenerateGUID(false), myChar)
+                lastCapturedGenPoint = nil
+                lastCapturedRepairRequestId = nil
             end
         end)
         return wasRepairing
@@ -9773,7 +9776,7 @@ pcall(function()
                         local drifted = (not holdPos) or ((myHrp.Position - holdPos).Magnitude > 6.5)
 
                         local shouldMove = fleePendingGlide or drifted
-                        if not shouldMove and (now - lastFleeAt) >= 0.85 then
+                        if not shouldMove and (curDist <= 42 or (now - lastFleeAt) >= 0.30) then
                             local candPos, candDist = pickFastUndergroundTarget(myChar, myHrp.Position, kHrp.Position, targetDist)
                             if candPos and candDist > (curDist + 28) and (holdPos - candPos).Magnitude > 22 then
                                 shouldMove = true
@@ -9783,8 +9786,8 @@ pcall(function()
                         if shouldMove then
                             local exitedRepair = cancelActiveRepairImmediately(myChar)
                             if exitedRepair then
-                                -- Clear RepairEvent / doing-action server lock before moving so server never rejects flee
-                                task.wait(0.05)
+                                -- Brief 0.025s settle so server clears RepairEvent lock cleanly without slowing flee
+                                task.wait(0.025)
                                 cancelActiveRepairImmediately(myChar)
                             end
                             if not isFleeValid() or isCharacterKnocked(myChar) or (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar)) then
@@ -9804,7 +9807,7 @@ pcall(function()
                                 if vdESPState.microTransitTo then
                                     landed = vdESPState.microTransitTo(myChar, myHrp, undergroundPos, function()
                                         return isFleeValid() and not isCharacterKnocked(myChar) and not (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar))
-                                    end, true, 6.5)
+                                    end, true, 6.5, true)
                                 end
                                 fleeTransiting = false
 
@@ -10065,7 +10068,7 @@ pcall(function()
                 return isSessionValid()
                     and not isCharacterHooked(myChar)
                     and not (vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(myChar))
-            end, true, 6.5)
+            end, true, 6.5, true)
         else
             myHrp.CFrame = CFrame.new(undergroundFarPos)
         end
