@@ -1424,7 +1424,7 @@ pcall(function()
         return score, endKDist, pathClearance
     end
 
-    vdESPState.microTransitTo = function(myChar, myHrp, targetPos, checkFn, setCollisionFalse, verifyTol, steerFn)
+    vdESPState.microTransitTo = function(myChar, myHrp, targetPos, checkFn, setCollisionFalse, verifyTol, steerFn, normalSpeed)
         if not myChar or not myHrp or not myHrp.Parent then return false, targetPos end
         local RS = game:GetService("RunService")
 
@@ -1486,93 +1486,115 @@ pcall(function()
         local curPos = myHrp.Position
         local totalDist = (targetPos - curPos).Magnitude
 
-        -- Tier 1: Short distance (<= 22 studs) - instant 1-frame snap, 0 burst tokens spent
-        if totalDist <= 22.0 then
-            prepTransit()
-            myHrp.AssemblyLinearVelocity = Vector3.zero
-            myHrp.AssemblyAngularVelocity = Vector3.zero
-            myHrp.CFrame = CFrame.new(targetPos)
-            for _ = 1, 2 do
-                RS.Heartbeat:Wait()
-                if checkFn and not checkFn() then return false end
-                if not myHrp or not myHrp.Parent then return false end
-                if isServerAnchored() then
-                    vdESPState.lastServerAnchorTick = tick()
-                    return false
-                end
-            end
-            if (myHrp.Position - targetPos).Magnitude <= math.max(tol, 10.0) then
-                if (myHrp.Position - targetPos).Magnitude > tol then
-                    myHrp.CFrame = CFrame.new(targetPos)
-                    myHrp.AssemblyLinearVelocity = Vector3.zero
-                    myHrp.AssemblyAngularVelocity = Vector3.zero
-                end
-                return (myHrp.Position - targetPos).Magnitude <= tol
-            end
-            vdESPState.lastServerAnchorTick = tick()
-            return false
-        end
-
-        -- Tier 2: Burst budget available (< 2 big jumps in 55s & no recent AC anchor) -> instant <1ms jump + server sync check
-        local now = tick()
-        local activeBursts = pruneBurstTimestamps(now)
-        local sinceAnchor = now - math.max(vdESPState.lastServerAnchorTick or 0, vdESPState.lastACAnchorTick or 0)
-        if activeBursts < 2 and sinceAnchor > 12.0 then
-            table.insert(vdESPState.bigJumpTimestamps, now)
-            local jumpStartedAt = tick()
-            prepTransit()
-            myHrp.AssemblyLinearVelocity = Vector3.zero
-            myHrp.AssemblyAngularVelocity = Vector3.zero
-            myHrp.CFrame = CFrame.new(targetPos)
-
-            local serverAccepted = true
-            for _ = 1, 2 do
-                RS.Heartbeat:Wait()
-                if checkFn and not checkFn() then return false end
-                if not myHrp or not myHrp.Parent then return false end
-                if isServerAnchored() or (vdESPState.lastACAnchorTick or 0) >= jumpStartedAt then
-                    vdESPState.lastServerAnchorTick = tick()
-                    serverAccepted = false
-                    break
-                end
-                if (myHrp.Position - targetPos).Magnitude > math.max(tol, 12.0) then
-                    vdESPState.lastServerAnchorTick = tick()
-                    serverAccepted = false
-                    break
-                end
-            end
-
-            if serverAccepted and (myHrp.Position - targetPos).Magnitude <= math.max(tol, 8.0) then
+        -- Tier 1 & Tier 2 instant snaps (skipped when normalSpeed = true so fleeing never triggers burst/snap rejections)
+        if not normalSpeed then
+            -- Tier 1: Short distance (<= 22 studs) - instant 1-frame snap, 0 burst tokens spent
+            if totalDist <= 22.0 then
+                prepTransit()
                 myHrp.AssemblyLinearVelocity = Vector3.zero
                 myHrp.AssemblyAngularVelocity = Vector3.zero
-                return true
+                myHrp.CFrame = CFrame.new(targetPos)
+                for _ = 1, 2 do
+                    RS.Heartbeat:Wait()
+                    if checkFn and not checkFn() then return false end
+                    if not myHrp or not myHrp.Parent then return false end
+                    if isServerAnchored() then
+                        vdESPState.lastServerAnchorTick = tick()
+                        return false
+                    end
+                end
+                if (myHrp.Position - targetPos).Magnitude <= math.max(tol, 10.0) then
+                    if (myHrp.Position - targetPos).Magnitude > tol then
+                        myHrp.CFrame = CFrame.new(targetPos)
+                        myHrp.AssemblyLinearVelocity = Vector3.zero
+                        myHrp.AssemblyAngularVelocity = Vector3.zero
+                    end
+                    return (myHrp.Position - targetPos).Magnitude <= tol
+                end
+                vdESPState.lastServerAnchorTick = tick()
+                return false
             end
-            -- Server rejected burst jump: accept server position calmly instead of creating client/server desync
-            task.wait(0.20)
-            if checkFn and not checkFn() then return false end
-            if not myHrp or not myHrp.Parent then return false end
+
+            -- Tier 2: Burst budget available (< 2 big jumps in 55s & no recent AC anchor) -> instant <1ms jump + server sync check
+            local now = tick()
+            local activeBursts = pruneBurstTimestamps(now)
+            local sinceAnchor = now - math.max(vdESPState.lastServerAnchorTick or 0, vdESPState.lastACAnchorTick or 0)
+            if activeBursts < 2 and sinceAnchor > 12.0 then
+                table.insert(vdESPState.bigJumpTimestamps, now)
+                local jumpStartedAt = tick()
+                prepTransit()
+                myHrp.AssemblyLinearVelocity = Vector3.zero
+                myHrp.AssemblyAngularVelocity = Vector3.zero
+                myHrp.CFrame = CFrame.new(targetPos)
+
+                local serverAccepted = true
+                for _ = 1, 2 do
+                    RS.Heartbeat:Wait()
+                    if checkFn and not checkFn() then return false end
+                    if not myHrp or not myHrp.Parent then return false end
+                    if isServerAnchored() or (vdESPState.lastACAnchorTick or 0) >= jumpStartedAt then
+                        vdESPState.lastServerAnchorTick = tick()
+                        serverAccepted = false
+                        break
+                    end
+                    if (myHrp.Position - targetPos).Magnitude > math.max(tol, 12.0) then
+                        vdESPState.lastServerAnchorTick = tick()
+                        serverAccepted = false
+                        break
+                    end
+                end
+
+                if serverAccepted and (myHrp.Position - targetPos).Magnitude <= math.max(tol, 8.0) then
+                    myHrp.AssemblyLinearVelocity = Vector3.zero
+                    myHrp.AssemblyAngularVelocity = Vector3.zero
+                    return true
+                end
+                -- Server rejected burst jump: accept server position calmly instead of creating client/server desync
+                task.wait(0.20)
+                if checkFn and not checkFn() then return false end
+                if not myHrp or not myHrp.Parent then return false end
+            end
         end
 
-        -- Tier 3: Smooth 60Hz continuous underground glide (~74 studs/s server-safe speed) with real-time Killer & boundary steering
+        -- Tier 3: Smooth 60Hz deep-underground glide at server-safe normal sprint speed (~24 studs/s)
         curPos = myHrp.Position
-        local subDepth = 4.6
+        local subDepth = math.clamp(math.max(tonumber(ghostDepthOffset) or 7.0, 6.6), 6.6, 8.8)
         local initFloorY = (setCollisionFalse and vdESPState.findFloorYBelow) and vdESPState.findFloorYBelow(curPos.X, curPos.Y + 6.5, curPos.Z, nil) or nil
         local subStartY = initFloorY and math.min(curPos.Y, initFloorY - subDepth) or math.min(curPos.Y, targetPos.Y)
-        if setCollisionFalse and curPos.Y > (subStartY + 1.0) then
-            local sinkY = math.max(subStartY, curPos.Y - 5.2)
-            curPos = Vector3.new(curPos.X, sinkY, curPos.Z)
-            prepTransit()
-            myHrp.AssemblyLinearVelocity = Vector3.zero
-            myHrp.AssemblyAngularVelocity = Vector3.zero
-            myHrp.CFrame = CFrame.new(curPos)
-            RS.Heartbeat:Wait()
-            if checkFn and not checkFn() then return false, targetPos end
-            if not myHrp or not myHrp.Parent then return false, targetPos end
-            curPos = myHrp.Position
+        if setCollisionFalse then
+            for _ = 1, 4 do
+                if curPos.Y <= (subStartY + 0.6) then break end
+                local sinkY = math.max(subStartY, curPos.Y - 3.2)
+                curPos = Vector3.new(curPos.X, sinkY, curPos.Z)
+                prepTransit()
+                myHrp.AssemblyLinearVelocity = Vector3.zero
+                myHrp.AssemblyAngularVelocity = Vector3.zero
+                myHrp.CFrame = CFrame.new(curPos)
+                RS.Heartbeat:Wait()
+                if checkFn and not checkFn() then return false, targetPos end
+                if not myHrp or not myHrp.Parent then return false, targetPos end
+                curPos = myHrp.Position
+            end
         end
+
+        local sprintWasSynced = false
+        local function syncSprintState(active)
+            pcall(function()
+                if myChar and myChar.Parent then
+                    myChar:SetAttribute("Sprinting", active)
+                    local remotes = getVDRemotes and getVDRemotes()
+                    if remotes and remotes.Chase and remotes.Chase:FindFirstChild("Runevent") then
+                        remotes.Chase.Runevent:FireServer(myChar, active)
+                    end
+                end
+            end)
+        end
+        syncSprintState(true)
+        sprintWasSynced = true
 
         local subCeilingY = setCollisionFalse and (math.max(subStartY, targetPos.Y) + 0.35) or math.huge
         local totalHorizDist = math.max(Vector3.new(targetPos.X - curPos.X, 0, targetPos.Z - curPos.Z).Magnitude, 1.0)
+        local maxTransitTime = normalSpeed and 15.0 or 12.0
 
         local startTime = tick()
         local rollbackHits = 0
@@ -1586,8 +1608,11 @@ pcall(function()
         local prevExpectedPos = curPos
         local lastAnchorMark = tick()
 
-        while (tick() - startTime) < 7.5 do
-            if checkFn and not checkFn() then return false, targetPos end
+        while (tick() - startTime) < maxTransitTime do
+            if checkFn and not checkFn() then
+                if sprintWasSynced then syncSprintState(false) end
+                return false, targetPos
+            end
             if not myHrp or not myHrp.Parent then return false, targetPos end
 
             if lastRejectedDir and tick() >= rejectExpireAt then
@@ -1602,25 +1627,33 @@ pcall(function()
                 lastRejectedDir = activeDir
                 rejectExpireAt = tick() + 0.55
                 if lockHits >= 2 then
+                    if sprintWasSynced then syncSprintState(false) end
                     return false, targetPos
                 end
                 task.wait(0.22)
-                if checkFn and not checkFn() then return false, targetPos end
+                if checkFn and not checkFn() then
+                    if sprintWasSynced then syncSprintState(false) end
+                    return false, targetPos
+                end
                 if not myHrp or not myHrp.Parent then return false, targetPos end
                 curPos = myHrp.Position
                 prevExpectedPos = curPos
                 lastAnchorMark = tick()
                 lastSteerAt = 0
-            elseif horizRollback > 11.5 then
+            elseif horizRollback > 9.0 then
                 vdESPState.lastServerAnchorTick = tick()
                 rollbackHits = rollbackHits + 1
                 lastRejectedDir = activeDir
                 rejectExpireAt = tick() + 0.55
                 if rollbackHits >= 4 then
+                    if sprintWasSynced then syncSprintState(false) end
                     return false, targetPos
                 end
                 task.wait(0.18)
-                if checkFn and not checkFn() then return false, targetPos end
+                if checkFn and not checkFn() then
+                    if sprintWasSynced then syncSprintState(false) end
+                    return false, targetPos
+                end
                 if not myHrp or not myHrp.Parent then return false, targetPos end
                 curPos = myHrp.Position
                 prevExpectedPos = curPos
@@ -1655,6 +1688,7 @@ pcall(function()
                 myHrp.AssemblyAngularVelocity = Vector3.zero
                 myHrp.CFrame = CFrame.new(targetPos)
                 RS.Heartbeat:Wait()
+                if sprintWasSynced then syncSprintState(false) end
                 if checkFn and not checkFn() then return false, targetPos end
                 if not myHrp or not myHrp.Parent then return false, targetPos end
                 if isServerAnchored() or (vdESPState.lastACAnchorTick or 0) >= finalStart then
@@ -1747,11 +1781,15 @@ pcall(function()
             end
 
             local dt = RS.Heartbeat:Wait()
-            if checkFn and not checkFn() then return false, targetPos end
+            if checkFn and not checkFn() then
+                if sprintWasSynced then syncSprintState(false) end
+                return false, targetPos
+            end
             if not myHrp or not myHrp.Parent then return false, targetPos end
 
-            local speed = (rollbackHits > 0) and 58 or 74
-            local stepLen = math.clamp((dt or 0.016) * speed, 0.35, 2.2)
+            -- Normal-speed sprint envelope (~24 studs/s, 19 fallback): accepted smoothly without AC_ServerAnchor
+            local speed = (rollbackHits > 0) and 19.0 or 24.0
+            local stepLen = math.clamp((dt or 0.016) * speed, 0.25, 0.85)
 
             local nextPos
             if activeDir and flatDist >= 0.2 then
@@ -1764,9 +1802,9 @@ pcall(function()
                     local progFrac = math.clamp(1.0 - (remHoriz / totalHorizDist), 0.0, 1.0)
                     local tunnelY = subStartY + (targetPos.Y - subStartY) * progFrac
                     nextY = math.min(tunnelY, subCeilingY)
-                    -- Gently dip slightly lower only if local valley floor is below tunnelY; never fly up over walls/roofs
-                    if activeFloorY and (activeFloorY - 4.2) < nextY and (nextY - (activeFloorY - 4.2)) <= 8.0 then
-                        nextY = math.max(nextY - 0.18, activeFloorY - 4.2)
+                    -- Gently dip slightly lower only if local valley floor is below tunnelY; never rise into Killer swing range
+                    if activeFloorY and (activeFloorY - subDepth) < nextY and (nextY - (activeFloorY - subDepth)) <= 8.0 then
+                        nextY = math.max(nextY - 0.18, activeFloorY - subDepth)
                     end
                 else
                     local frac = math.clamp(stepLen / math.max(remDist, 1), 0, 1)
@@ -1788,6 +1826,7 @@ pcall(function()
             prevExpectedPos = nextPos
         end
 
+        if sprintWasSynced then syncSprintState(false) end
         return (myHrp.Position - targetPos).Magnitude <= tol, targetPos
     end
 
@@ -7991,35 +8030,12 @@ pcall(function()
         end
         unlockFleeConstraints(myChar, myHrp, false)
 
-        -- Only do immediate emergency step if Killer is in melee danger, NOT actively stuck in server Repair lock, and above ground or close
+        -- Sink straight vertically deep underground without sudden horizontal warps so server never rejects & Killer M1 misses
         local recentAnchor = (tick() - math.max(vdESPState.lastServerAnchorTick or 0, vdESPState.lastACAnchorTick or 0)) < 2.0
-        if not wasRepairing and not recentAnchor and kHrp and kHrp.Parent then
-            local kPos = kHrp.Position
-            local curKDist = (curPos - kPos).Magnitude
-            if curKDist <= 26 then
-                local awayXZ = Vector3.new(curPos.X - kPos.X, 0, curPos.Z - kPos.Z)
-                if awayXZ.Magnitude < 0.8 then
-                    local backVec = -kHrp.CFrame.LookVector
-                    awayXZ = Vector3.new(backVec.X, 0, backVec.Z)
-                end
-                if awayXZ.Magnitude >= 0.05 then
-                    local evadeDir = awayXZ.Unit
-                    local stepOut = math.clamp(22 - curKDist, 14, 19)
-                    local evadeX = curPos.X + evadeDir.X * stepOut
-                    local evadeZ = curPos.Z + evadeDir.Z * stepOut
-                    local evadeFY = (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(evadeX, curPos.Y + 4, evadeZ, nil)) or localFloorY
-                    local depth = getCachedUndergroundDepth()
-                    local buriedY = math.min(curPos.Y, evadeFY - depth)
-                    if (curPos.Y - buriedY) > 6.5 then buriedY = curPos.Y - 6.5 end
-                    myHrp.Anchored = false
-                    myHrp.AssemblyLinearVelocity = Vector3.zero
-                    myHrp.AssemblyAngularVelocity = Vector3.zero
-                    myHrp.CFrame = CFrame.new(evadeX, buriedY, evadeZ)
-                end
-            elseif curPos.Y > (localFloorY - 2.2) then
-                -- Drop cleanly below surface without pinning autoFleeHoldPos at old generator
-                local depth = getCachedUndergroundDepth()
-                local buriedY = math.max(curPos.Y - 5.5, localFloorY - depth)
+        if not wasRepairing and not recentAnchor then
+            local depth = math.clamp(math.max(tonumber(ghostDepthOffset) or 7.0, 6.6), 6.6, 8.8)
+            if curPos.Y > (localFloorY - (depth - 1.5)) then
+                local buriedY = math.max(curPos.Y - 3.8, localFloorY - depth)
                 myHrp.Anchored = false
                 myHrp.AssemblyLinearVelocity = Vector3.zero
                 myHrp.AssemblyAngularVelocity = Vector3.zero
@@ -8224,7 +8240,7 @@ pcall(function()
                                             end
                                         end
                                         return lkPos, newTarget
-                                    end)
+                                    end, true)
                                 end
                                 fleeTransiting = false
 
@@ -8497,7 +8513,7 @@ pcall(function()
                 local kLive = getKiller and getKiller()
                 local kLiveHrp = kLive and kLive:FindFirstChild("HumanoidRootPart")
                 return kLiveHrp and kLiveHrp.Position or nil, nil
-            end)
+            end, true)
         else
             myHrp.CFrame = CFrame.new(undergroundFarPos)
         end
@@ -10338,7 +10354,8 @@ local function performInstantUnfreeze()
         -- 5. Physics Inertia & Velocity Unstick:
         -- Following a server CFrame snapback, AssemblyLinearVelocity is pinned to zero,
         -- creating a multi-second physics dead-zone. Re-inject directional momentum if user is moving.
-        if hum.MoveDirection.Magnitude > 0.05 then
+        local exGliding = vdESPState and (vdESPState.autoFleeBlocking or vdESPState.fleeKnockEXBlocking)
+        if not exGliding and hum.MoveDirection.Magnitude > 0.05 then
             local horizVel = Vector3.new(hrp.AssemblyLinearVelocity.X, 0, hrp.AssemblyLinearVelocity.Z)
             if horizVel.Magnitude < 0.25 then
                 hrp.AssemblyLinearVelocity = Vector3.new(
