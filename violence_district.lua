@@ -8,6 +8,7 @@
 local ViolenceTab = nil
 local V_ESPSection = nil
 local V_SurvivorEXSection = nil
+local V_TestLabSection = nil
 local V_ObjectiveSection = nil
 local V_CombatSection = nil
 local V_RescueSection = nil
@@ -95,9 +96,16 @@ local vdESPState = {
     transitMonitoringAnchor = false,
     testUndergroundEnabled = false,
     testUndergroundSpeed = 20,
+    testUndergroundDepth = 7.0,
     testUndergroundSession = 0,
     testUndergroundHoldPos = nil,
-    testUndergroundToggle = nil
+    testUndergroundToggle = nil,
+    testHonestAnchorMode = false,
+    testAnchorCount = 0,
+    testACAnchorCount = 0,
+    testRollbackCount = 0,
+    testHUDEnabled = false,
+    testLabStatus = "IDLE"
 }
 
 do
@@ -112,6 +120,10 @@ V_ESPSection = ViolenceTab:Section({
 
 V_SurvivorEXSection = ViolenceTab:Section({
     Title = "Survivor EX"
+})
+
+V_TestLabSection = ViolenceTab:Section({
+    Title = "Underground Test Lab"
 })
 
 V_ObjectiveSection = ViolenceTab:Section({
@@ -9950,31 +9962,44 @@ pcall(function()
 end)
 
 -- ============================================================
--- TEST UNDERGROUND TELEPORT (EX DIAGNOSTIC: STRAIGHT SINK AT STANDING POSITION)
+-- TEST UNDERGROUND TELEPORT & DIAGNOSTIC TEST LAB (UNDERGROUND FIX & ESCAPE)
 -- ============================================================
 pcall(function()
+    local CollectionService = game:GetService("CollectionService")
+    local HttpService = game:GetService("HttpService")
+    local CoreGui = game:GetService("CoreGui")
+
     local testSteppedConn = nil
     local testHeartbeatConn = nil
     local testStandFloorY = nil
 
-    local function restoreTestCollisionsAndSurface(myChar, myHrp, restoreSurface)
+    local function setPartsNoCollide(char, state)
+        if not char then return end
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                if state then
+                    if part.CanCollide then part.CanCollide = false end
+                elseif part.Name == "HumanoidRootPart" or part.Name == "Torso" or part.Name == "UpperTorso" or part.Name == "LowerTorso" then
+                    part.CanCollide = true
+                end
+            end
+        end
+    end
+
+    local function restoreTestCollisionsAndSurface(myChar, myHrp, floorRef, restoreSurface)
         pcall(function()
             if myHrp then
-                if restoreSurface and testStandFloorY and myHrp.Position.Y < (testStandFloorY - 0.5) then
-                    myHrp.CFrame = CFrame.new(myHrp.Position.X, testStandFloorY + 3.2, myHrp.Position.Z)
+                if restoreSurface and floorRef and myHrp.Position.Y < (floorRef - 0.5) then
+                    myHrp.CFrame = CFrame.new(myHrp.Position.X, floorRef + 3.2, myHrp.Position.Z)
                 end
-                myHrp.Anchored = false
+                if not vdESPState.testHonestAnchorMode then
+                    myHrp.Anchored = false
+                end
                 myHrp.AssemblyLinearVelocity = Vector3.zero
                 myHrp.AssemblyAngularVelocity = Vector3.zero
             end
             if myChar then
-                for _, part in ipairs(myChar:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        if part.Name == "HumanoidRootPart" or part.Name == "Torso" or part.Name == "UpperTorso" or part.Name == "LowerTorso" then
-                            part.CanCollide = true
-                        end
-                    end
-                end
+                setPartsNoCollide(myChar, false)
                 if vdESPState.setMovementBypass then
                     vdESPState.setMovementBypass(myChar, false)
                 end
@@ -9991,9 +10016,10 @@ pcall(function()
         local myChar = player.Character
         local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
         if myChar and myHrp then
-            restoreTestCollisionsAndSurface(myChar, myHrp, restoreSurface)
+            restoreTestCollisionsAndSurface(myChar, myHrp, testStandFloorY, restoreSurface)
         end
         testStandFloorY = nil
+        vdESPState.testLabStatus = "IDLE"
     end
 
     local function startTestUnderground()
@@ -10014,20 +10040,14 @@ pcall(function()
         local floorY = (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(standX, standPos.Y + 4.0, standZ, nil)) or (standPos.Y - 3.0)
         testStandFloorY = floorY
 
-        local targetDepth = math.clamp(tonumber(ghostDepthOffset) or 7.0, 5.5, 9.5)
+        local targetDepth = math.clamp(tonumber(vdESPState.testUndergroundDepth) or 7.0, 3.0, 12.0)
         local targetY = floorY - targetDepth
         local curY = standPos.Y
         local arrived = (curY <= targetY + 0.05)
         local testStartedAt = tick()
         local anchorWarned = false
-
-        local function setNoCollide()
-            for _, part in ipairs(myChar:GetDescendants()) do
-                if part:IsA("BasePart") and part.CanCollide then
-                    part.CanCollide = false
-                end
-            end
-        end
+        local snapWarned = false
+        vdESPState.testLabStatus = "SINKING..."
 
         local function isSessionValid()
             return vdESPState.testUndergroundEnabled == true
@@ -10040,16 +10060,28 @@ pcall(function()
                 and hum.Health > 0
         end
 
-        local function checkAnchorRejection()
-            if anchorWarned then return end
+        local function checkAnchorRejection(expectedY)
             local acTick = math.max(vdESPState.lastServerAnchorTick or 0, vdESPState.lastACAnchorTick or 0)
             local anchoredNow = myHrp.Anchored or (myChar:GetAttribute("AC_ServerAnchor") ~= nil) or (acTick >= testStartedAt)
-            if anchoredNow then
+            if anchoredNow and not anchorWarned then
                 anchorWarned = true
                 local sp = tonumber(vdESPState.testUndergroundSpeed) or 20
+                vdESPState.testLabStatus = string.format("ANCHORED @ %d/s", math.floor(sp + 0.5))
+                print(string.format("[TEST-LAB] Test Underground: SERVER ANCHORED at speed=%d depth=%.1f", math.floor(sp + 0.5), targetDepth))
                 WindUI:Notify({
                     Title = "Test Underground",
-                    Content = string.format("⚠️ Server anchored / rejected at %d studs/s!", math.floor(sp + 0.5)),
+                    Content = string.format("⚠️ Server anchored at %d studs/s (depth %.1f)!", math.floor(sp + 0.5), targetDepth),
+                    Duration = 3
+                })
+            end
+            if not snapWarned and (myHrp.Position.Y - expectedY) > 1.8 then
+                snapWarned = true
+                vdESPState.testRollbackCount = (vdESPState.testRollbackCount or 0) + 1
+                vdESPState.testLabStatus = string.format("Y-SNAP +%.1f", myHrp.Position.Y - expectedY)
+                print(string.format("[TEST-LAB] Test Underground: SERVER SNAPPED Y UP by %.1f studs!", myHrp.Position.Y - expectedY))
+                WindUI:Notify({
+                    Title = "Test Underground",
+                    Content = string.format("⚠️ Server snapped Y back up %.1f studs!", myHrp.Position.Y - expectedY),
                     Duration = 3
                 })
             end
@@ -10058,18 +10090,18 @@ pcall(function()
         if vdESPState.setMovementBypass then
             vdESPState.setMovementBypass(myChar, true)
         end
-        setNoCollide()
-        vdESPState.transitMonitoringAnchor = not arrived
+        setPartsNoCollide(myChar, true)
+        vdESPState.transitMonitoringAnchor = true
         vdESPState.testUndergroundHoldPos = Vector3.new(standX, curY, standZ)
 
         testSteppedConn = RunService.Stepped:Connect(function()
             if not isSessionValid() then return end
             pcall(function()
-                setNoCollide()
+                setPartsNoCollide(myChar, true)
                 if hum.PlatformStand then hum.PlatformStand = false end
                 if hum.Sit then hum.Sit = false end
                 local hold = vdESPState.testUndergroundHoldPos
-                if hold and not myHrp.Anchored and (myHrp.Position - hold).Magnitude > 0.1 then
+                if hold and not myHrp.Anchored and (not vdESPState.testHonestAnchorMode or not anchorWarned) and (myHrp.Position - hold).Magnitude > 0.1 then
                     myHrp.AssemblyLinearVelocity = Vector3.zero
                     myHrp.AssemblyAngularVelocity = Vector3.zero
                     myHrp.CFrame = CFrame.new(hold)
@@ -10083,7 +10115,10 @@ pcall(function()
                 return
             end
             pcall(function()
-                checkAnchorRejection()
+                checkAnchorRejection(curY)
+                if vdESPState.testHonestAnchorMode and (myHrp.Anchored or anchorWarned or snapWarned) then
+                    return
+                end
                 if not arrived then
                     local speed = math.clamp(tonumber(vdESPState.testUndergroundSpeed) or 20, 2, 450)
                     local stepY = math.max(0.05, (dt or 0.016) * speed)
@@ -10091,7 +10126,8 @@ pcall(function()
                     if curY <= targetY + 0.05 then
                         curY = targetY
                         arrived = true
-                        vdESPState.transitMonitoringAnchor = false
+                        vdESPState.testLabStatus = string.format("HELD %.1f BELOW", targetDepth)
+                        print(string.format("[TEST-LAB] Test Underground: ARRIVED depth=%.1f speed=%d", targetDepth, math.floor(speed + 0.5)))
                         WindUI:Notify({
                             Title = "Test Underground",
                             Content = string.format("Underground reached (%.1f studs below floor at %d studs/s)", targetDepth, math.floor(speed + 0.5)),
@@ -10112,7 +10148,7 @@ pcall(function()
 
     vdESPState.testUndergroundToggle = V_SurvivorEXSection:Toggle({
         Title = "Test Underground Teleport",
-        Description = "Go straight underground where you stand at the selected speed (returns above ground when off)",
+        Description = "Go straight underground where you stand at the selected speed & depth (returns up when off)",
         Default = false,
         Callback = function(v)
             vdESPState.testUndergroundEnabled = v
@@ -10135,6 +10171,627 @@ pcall(function()
         },
         Callback = function(val)
             vdESPState.testUndergroundSpeed = tonumber(val) or 20
+        end
+    })
+
+    V_SurvivorEXSection:Slider({
+        Title = "Test Underground Depth",
+        Description = "Target depth in studs below floor for underground test (3.0 - 12.0, default 7.0)",
+        Step = 0.5,
+        Value = {
+            Min = 3.0,
+            Max = 12.0,
+            Default = 7.0,
+        },
+        Callback = function(val)
+            vdESPState.testUndergroundDepth = tonumber(val) or 7.0
+        end
+    })
+
+    -- ============================================================
+    -- UNDERGROUND FIX & ESCAPE DIAGNOSTIC TEST LAB
+    -- ============================================================
+    local labHUDGui = nil
+    local labHUDLabel = nil
+    local labHUDThread = nil
+
+    local function destroyLabHUD()
+        if labHUDGui then pcall(function() labHUDGui:Destroy() end) labHUDGui = nil end
+        labHUDLabel = nil
+    end
+
+    local function ensureLabHUD()
+        if labHUDGui and labHUDGui.Parent and labHUDLabel then return end
+        destroyLabHUD()
+        pcall(function()
+            local sg = Instance.new("ScreenGui")
+            sg.Name = "RielVDTestLabHUD"
+            sg.ResetOnSpawn = false
+            sg.IgnoreGuiInset = true
+            sg.DisplayOrder = 999999
+            local okCg = pcall(function() sg.Parent = CoreGui end)
+            if not okCg or not sg.Parent then
+                sg.Parent = player:WaitForChild("PlayerGui")
+            end
+
+            local lbl = Instance.new("TextLabel")
+            lbl.Size = UDim2.new(0, 315, 0, 128)
+            lbl.Position = UDim2.new(1, -325, 0, 12)
+            lbl.BackgroundColor3 = Color3.fromRGB(16, 18, 26)
+            lbl.BackgroundTransparency = 0.22
+            lbl.TextColor3 = Color3.fromRGB(235, 245, 255)
+            lbl.TextStrokeTransparency = 0.6
+            lbl.Font = Enum.Font.Code
+            lbl.TextSize = 13
+            lbl.TextXAlignment = Enum.TextXAlignment.Left
+            lbl.TextYAlignment = Enum.TextYAlignment.Top
+            lbl.Active = false
+            lbl.Parent = sg
+            local pad = Instance.new("UIPadding")
+            pad.PaddingLeft = UDim.new(0, 8)
+            pad.PaddingRight = UDim.new(0, 8)
+            pad.PaddingTop = UDim.new(0, 6)
+            pad.Parent = lbl
+            local cr = Instance.new("UICorner")
+            cr.CornerRadius = UDim.new(0, 6)
+            cr.Parent = lbl
+            labHUDGui = sg
+            labHUDLabel = lbl
+        end)
+    end
+
+    V_TestLabSection:Toggle({
+        Title = "Show Live Test Telemetry HUD",
+        Description = "Shows real-time depth below floor, HRP Anchored, AC_ServerAnchor, Rollbacks & nearest Gen range",
+        Default = false,
+        Callback = function(v)
+            vdESPState.testHUDEnabled = v
+            if not v then
+                destroyLabHUD()
+                return
+            end
+            ensureLabHUD()
+            if labHUDThread then return end
+            labHUDThread = task.spawn(function()
+                while vdESPState.testHUDEnabled and scriptRunning do
+                    pcall(function()
+                        ensureLabHUD()
+                        if not labHUDLabel then return end
+                        local c = player.Character
+                        local hrp = c and c:FindFirstChild("HumanoidRootPart")
+                        local posStr = "No Character"
+                        local depthStr = "--"
+                        local anchStr = "--"
+                        local genStr = "No Gen"
+                        if c and hrp then
+                            local p = hrp.Position
+                            local fy = (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(p.X, p.Y + 4, p.Z, nil)) or nil
+                            local dBelow = fy and (fy - p.Y) or nil
+                            posStr = string.format("(%.0f, %.1f, %.0f)", p.X, p.Y, p.Z)
+                            depthStr = dBelow and string.format("%.1f below floor", dBelow) or "N/A"
+                            anchStr = string.format("HrpAnch=%s AC=%s (Cnt:%d/%d RB:%d)",
+                                tostring(hrp.Anchored),
+                                tostring(c:GetAttribute("AC_ServerAnchor")),
+                                vdESPState.testAnchorCount or 0,
+                                vdESPState.testACAnchorCount or 0,
+                                vdESPState.testRollbackCount or 0)
+                            local bestPt, bestD = nil, math.huge
+                            for _, pt in ipairs(CollectionService:GetTagged("GeneratorPoint")) do
+                                if pt:IsA("BasePart") and pt:IsDescendantOf(workspace) and not pt:FindFirstAncestor("Lobby") then
+                                    local d = (p - pt.Position).Magnitude
+                                    if d < bestD then
+                                        bestD = d
+                                        bestPt = pt
+                                    end
+                                end
+                            end
+                            if bestPt then
+                                local _, prog = isGeneratorCompleted(bestPt)
+                                genStr = string.format("D=%.1f (dY=%.1f) %.0f%% Rep=%s Tag=%s",
+                                    bestD, bestPt.Position.Y - p.Y, prog or 0,
+                                    tostring(c:GetAttribute("isRepairing") == true),
+                                    tostring(CollectionService:HasTag(hrp, "doing action")))
+                            end
+                        end
+                        labHUDLabel.Text = string.format(
+                            "[VD TEST LAB] %s\nPos: %s | Depth: %s\n%s\nGen: %s\nHonestMode=%s",
+                            tostring(vdESPState.testLabStatus or "IDLE"),
+                            posStr, depthStr, anchStr, genStr,
+                            tostring(vdESPState.testHonestAnchorMode == true)
+                        )
+                    end)
+                    task.wait(0.15)
+                end
+                labHUDThread = nil
+                destroyLabHUD()
+            end)
+        end
+    })
+
+    V_TestLabSection:Toggle({
+        Title = "Strict Server Honesty (No Client Un-Anchor)",
+        Description = "When ON, stops local Auto-Unfreeze from hiding server anchors/AC_ServerAnchor so rejections show honestly",
+        Default = false,
+        Callback = function(v)
+            vdESPState.testHonestAnchorMode = v
+        end
+    })
+
+    V_TestLabSection:Button({
+        Title = "Reset Test Counters & Print Snapshot",
+        Description = "Zeroes anchor/AC/rollback counters and logs current position & attribute snapshot to F9",
+        Callback = function()
+            vdESPState.testAnchorCount = 0
+            vdESPState.testACAnchorCount = 0
+            vdESPState.testRollbackCount = 0
+            local c = player.Character
+            local hrp = c and c:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local fy = vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(hrp.Position.X, hrp.Position.Y + 4, hrp.Position.Z, nil)
+                print(string.format("[TEST-LAB RESET] Y=%.2f FloorY=%s Anch=%s AC=%s Sprinting=%s",
+                    hrp.Position.Y, tostring(fy), tostring(hrp.Anchored), tostring(c:GetAttribute("AC_ServerAnchor")), tostring(c:GetAttribute("Sprinting"))))
+            end
+            WindUI:Notify({ Title = "Test Lab", Content = "Counters reset to 0!", Duration = 2 })
+        end
+    })
+
+    local labDisableColEnabled = false
+    local labSprintBoostEnabled = false
+    local labSpeedboostVal = 1.5
+    local labEscapeMethod = "Discrete Underground Hops"
+    local labEscapeParam = 17
+    local labEscapeDelayMs = 240
+    local labEscapeActive = false
+    local labEscapeSession = 0
+
+    local function applyLabRemoteFlags(myChar, active)
+        pcall(function()
+            if labDisableColEnabled then
+                if active then fireDisableCollision() else fireEnableCollision() end
+            end
+            if labSprintBoostEnabled and myChar and myChar.Parent then
+                myChar:SetAttribute("Sprinting", active)
+                local remotes = getVDRemotes and getVDRemotes()
+                if remotes and remotes.Chase and remotes.Chase:FindFirstChild("Runevent") then
+                    remotes.Chase.Runevent:FireServer(myChar, active)
+                end
+                fireChangeAttribute("speedboost", active and labSpeedboostVal or 1)
+            end
+        end)
+    end
+
+    V_TestLabSection:Toggle({
+        Title = "Test Remote: Server DisableCollision",
+        Description = "Fires Collision.DisableCollision while running Lab Escape/Repair tests to check server acceptance",
+        Default = false,
+        Callback = function(v)
+            labDisableColEnabled = v
+            if v then fireDisableCollision() else fireEnableCollision() end
+        end
+    })
+
+    V_TestLabSection:Toggle({
+        Title = "Test Remote: Sprint + Speedboost Sync",
+        Description = "Syncs Runevent(true) + ChangeAttribute('speedboost', mult) during Lab travel tests",
+        Default = false,
+        Callback = function(v)
+            labSprintBoostEnabled = v
+            local c = player.Character
+            if not v and c then
+                pcall(function()
+                    c:SetAttribute("Sprinting", false)
+                    local remotes = getVDRemotes and getVDRemotes()
+                    if remotes and remotes.Chase and remotes.Chase:FindFirstChild("Runevent") then
+                        remotes.Chase.Runevent:FireServer(c, false)
+                    end
+                    fireChangeAttribute("speedboost", 1)
+                end)
+            end
+        end
+    })
+
+    V_TestLabSection:Slider({
+        Title = "Test Lab Speedboost Mult",
+        Description = "Speedboost multiplier when Sprint + Speedboost Sync is enabled (1.0 - 2.5)",
+        Step = 0.1,
+        Value = { Min = 1.0, Max = 2.5, Default = 1.5 },
+        Callback = function(val)
+            labSpeedboostVal = tonumber(val) or 1.5
+        end
+    })
+
+    V_TestLabSection:Dropdown({
+        Title = "Escape Test Method",
+        Description = "Select transport algorithm for the 120-stud underground escape test",
+        Values = {
+            "Discrete Underground Hops",
+            "Smooth Underground Glide",
+            "Instant Warps (x3 Burst)",
+            "Smooth Surface Sprint",
+            "Surface Hops -> Bury At End"
+        },
+        Value = "Discrete Underground Hops",
+        Callback = function(v)
+            labEscapeMethod = v
+        end
+    })
+
+    V_TestLabSection:Slider({
+        Title = "Escape Test Hop / Speed",
+        Description = "Hop/Warp Size (studs) for Discrete/Warp OR Speed (studs/s) for Smooth modes (5 - 200)",
+        Step = 1,
+        Value = { Min = 5, Max = 200, Default = 17 },
+        Callback = function(val)
+            labEscapeParam = tonumber(val) or 17
+        end
+    })
+
+    V_TestLabSection:Slider({
+        Title = "Escape Test Hop Delay (ms)",
+        Description = "Delay in milliseconds between discrete hops/warps (30 - 1000 ms, default 240)",
+        Step = 10,
+        Value = { Min = 30, Max = 1000, Default = 240 },
+        Callback = function(val)
+            labEscapeDelayMs = tonumber(val) or 240
+        end
+    })
+
+    V_TestLabSection:Toggle({
+        Title = "Run 120-Stud Escape Test",
+        Description = "Travels 120 studs using selected Method, Depth & Server Flags and reports real server acceptance",
+        Default = false,
+        Callback = function(v)
+            labEscapeActive = v
+            labEscapeSession = labEscapeSession + 1
+            local mySess = labEscapeSession
+            if not v then
+                vdESPState.transitMonitoringAnchor = false
+                local c = player.Character
+                local hrp = c and c:FindFirstChild("HumanoidRootPart")
+                if c and hrp then
+                    applyLabRemoteFlags(c, false)
+                    local fy = vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(hrp.Position.X, hrp.Position.Y + 12, hrp.Position.Z, nil)
+                    if fy and hrp.Position.Y < (fy - 0.5) then
+                        hrp.CFrame = CFrame.new(hrp.Position.X, fy + 3.2, hrp.Position.Z)
+                    end
+                    setPartsNoCollide(c, false)
+                    if vdESPState.setMovementBypass then vdESPState.setMovementBypass(c, false) end
+                end
+                vdESPState.testLabStatus = "IDLE"
+                return
+            end
+
+            task.spawn(function()
+                local c = player.Character
+                local hrp = c and c:FindFirstChild("HumanoidRootPart")
+                local hum = c and c:FindFirstChildOfClass("Humanoid")
+                if not c or not hrp or not hum or hum.Health <= 0 then
+                    WindUI:Notify({ Title = "Escape Test", Content = "No alive character!", Duration = 2 })
+                    return
+                end
+
+                local depth = math.clamp(tonumber(vdESPState.testUndergroundDepth) or 7.0, 3.0, 12.0)
+                local startPos = hrp.Position
+                local startAnchors = vdESPState.testAnchorCount or 0
+                local startAC = vdESPState.testACAnchorCount or 0
+                local startRB = vdESPState.testRollbackCount or 0
+
+                local dirFlat = nil
+                local killer = getKiller and getKiller()
+                local kHrp = killer and killer:FindFirstChild("HumanoidRootPart")
+                if kHrp and (startPos - kHrp.Position).Magnitude >= 0.5 then
+                    dirFlat = Vector3.new(startPos.X - kHrp.Position.X, 0, startPos.Z - kHrp.Position.Z).Unit
+                else
+                    local cam = workspace.CurrentCamera
+                    local lv = cam and cam.CFrame.LookVector or hrp.CFrame.LookVector
+                    dirFlat = Vector3.new(lv.X, 0, lv.Z)
+                    dirFlat = (dirFlat.Magnitude >= 0.1) and dirFlat.Unit or Vector3.new(0, 0, -1)
+                end
+
+                local totalGoalDist = 120.0
+                local destXZ = Vector3.new(startPos.X + dirFlat.X * totalGoalDist, 0, startPos.Z + dirFlat.Z * totalGoalDist)
+                local initFY = (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(startPos.X, startPos.Y + 4, startPos.Z, nil)) or (startPos.Y - 3.0)
+                local destFY = (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(destXZ.X, startPos.Y + 8, destXZ.Z, nil)) or initFY
+
+                local isSurfaceOnly = (labEscapeMethod == "Smooth Surface Sprint")
+                local isBuryAtEnd = (labEscapeMethod == "Surface Hops -> Bury At End")
+                local buryDuringTravel = (not isSurfaceOnly) and (not isBuryAtEnd)
+
+                if vdESPState.setMovementBypass then vdESPState.setMovementBypass(c, true) end
+                setPartsNoCollide(c, buryDuringTravel or isSurfaceOnly)
+                applyLabRemoteFlags(c, true)
+                vdESPState.transitMonitoringAnchor = true
+
+                local startTime = tick()
+                local curPos = hrp.Position
+                if buryDuringTravel and curPos.Y > (initFY - depth + 0.5) then
+                    curPos = Vector3.new(curPos.X, initFY - depth, curPos.Z)
+                    hrp.CFrame = CFrame.new(curPos)
+                    RunService.Heartbeat:Wait()
+                end
+
+                local stepDelay = math.clamp((labEscapeDelayMs or 240) / 1000, 0.03, 1.0)
+                local param = math.clamp(labEscapeParam or 17, 5, 200)
+                local traveled = 0
+                local rollbacks = 0
+                local anchoredHit = false
+                local methodUsed = labEscapeMethod
+
+                local function checkLabStop()
+                    return (not labEscapeActive) or (mySess ~= labEscapeSession) or (not scriptRunning) or (c ~= player.Character) or (not hrp.Parent) or (hum.Health <= 0)
+                end
+
+                if methodUsed == "Instant Warps (x3 Burst)" then
+                    local stepSize = math.clamp(param, 10, 200)
+                    for i = 1, 3 do
+                        if checkLabStop() then break end
+                        local exp = Vector3.new(startPos.X + dirFlat.X * (stepSize * i), (destFY - depth), startPos.Z + dirFlat.Z * (stepSize * i))
+                        hrp.AssemblyLinearVelocity = Vector3.zero
+                        hrp.AssemblyAngularVelocity = Vector3.zero
+                        hrp.CFrame = CFrame.new(exp)
+                        local wEnd = tick() + stepDelay
+                        while tick() < wEnd and not checkLabStop() do
+                            RunService.Heartbeat:Wait()
+                            if hrp.Anchored or c:GetAttribute("AC_ServerAnchor") ~= nil then
+                                anchoredHit = true
+                            end
+                            local hErr = Vector3.new(hrp.Position.X - exp.X, 0, hrp.Position.Z - exp.Z).Magnitude
+                            if hErr > 10.5 then
+                                rollbacks = rollbacks + 1
+                                break
+                            end
+                        end
+                        if anchoredHit then break end
+                    end
+                    traveled = Vector3.new(hrp.Position.X - startPos.X, 0, hrp.Position.Z - startPos.Z).Magnitude
+                elseif methodUsed == "Smooth Underground Glide" or methodUsed == "Smooth Surface Sprint" then
+                    local speed = math.clamp(param, 5, 200)
+                    local prevExp = hrp.Position
+                    while traveled < totalGoalDist and (tick() - startTime) < 18.0 and not checkLabStop() do
+                        local dt = RunService.Heartbeat:Wait()
+                        if checkLabStop() then break end
+                        if hrp.Anchored or c:GetAttribute("AC_ServerAnchor") ~= nil then
+                            anchoredHit = true
+                            break
+                        end
+                        local act = hrp.Position
+                        if Vector3.new(act.X - prevExp.X, 0, act.Z - prevExp.Z).Magnitude > 10.0 then
+                            rollbacks = rollbacks + 1
+                            vdESPState.testRollbackCount = (vdESPState.testRollbackCount or 0) + 1
+                            break
+                        end
+                        local step = math.min((dt or 0.016) * speed, totalGoalDist - traveled)
+                        local nx = act.X + dirFlat.X * step
+                        local nz = act.Z + dirFlat.Z * step
+                        local fy = (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(nx, initFY + 6.0, nz, nil)) or initFY
+                        local ny = isSurfaceOnly and (fy + 3.0) or (fy - depth)
+                        local nextP = Vector3.new(nx, ny, nz)
+                        hrp.AssemblyLinearVelocity = Vector3.zero
+                        hrp.AssemblyAngularVelocity = Vector3.zero
+                        hrp.CFrame = CFrame.new(nextP)
+                        prevExp = nextP
+                        traveled = Vector3.new(nextP.X - startPos.X, 0, nextP.Z - startPos.Z).Magnitude
+                    end
+                else
+                    -- Discrete Underground Hops or Surface Hops -> Bury At End
+                    local hopSize = math.clamp(param, 5, 100)
+                    while traveled < totalGoalDist and (tick() - startTime) < 18.0 and not checkLabStop() do
+                        local cur = hrp.Position
+                        local step = math.min(hopSize, totalGoalDist - traveled)
+                        local nx = cur.X + dirFlat.X * step
+                        local nz = cur.Z + dirFlat.Z * step
+                        local fy = (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(nx, initFY + 6.0, nz, nil)) or initFY
+                        local ny = buryDuringTravel and (fy - depth) or (fy + 3.0)
+                        local nextP = Vector3.new(nx, ny, nz)
+                        hrp.AssemblyLinearVelocity = Vector3.zero
+                        hrp.AssemblyAngularVelocity = Vector3.zero
+                        hrp.CFrame = CFrame.new(nextP)
+                        local wEnd = tick() + stepDelay
+                        local hopFailed = false
+                        while tick() < wEnd and not checkLabStop() do
+                            RunService.Heartbeat:Wait()
+                            if hrp.Anchored or c:GetAttribute("AC_ServerAnchor") ~= nil then
+                                anchoredHit = true
+                                hopFailed = true
+                                break
+                            end
+                            local act = hrp.Position
+                            if Vector3.new(act.X - nextP.X, 0, act.Z - nextP.Z).Magnitude > 10.5 then
+                                rollbacks = rollbacks + 1
+                                vdESPState.testRollbackCount = (vdESPState.testRollbackCount or 0) + 1
+                                hopFailed = true
+                                break
+                            end
+                            if math.abs(act.Y - nextP.Y) > 0.14 then
+                                hrp.AssemblyLinearVelocity = Vector3.zero
+                                hrp.CFrame = CFrame.new(act.X, nextP.Y, act.Z)
+                            end
+                        end
+                        if hopFailed then break end
+                        traveled = Vector3.new(hrp.Position.X - startPos.X, 0, hrp.Position.Z - startPos.Z).Magnitude
+                    end
+                    if isBuryAtEnd and not anchoredHit and not checkLabStop() then
+                        setPartsNoCollide(c, true)
+                        local finFY = (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(hrp.Position.X, hrp.Position.Y + 4, hrp.Position.Z, nil)) or destFY
+                        hrp.CFrame = CFrame.new(hrp.Position.X, finFY - depth, hrp.Position.Z)
+                        RunService.Heartbeat:Wait()
+                        if hrp.Anchored or c:GetAttribute("AC_ServerAnchor") ~= nil then anchoredHit = true end
+                    end
+                end
+
+                local elapsed = tick() - startTime
+                local finalDist = Vector3.new(hrp.Position.X - startPos.X, 0, hrp.Position.Z - startPos.Z).Magnitude
+                local dAnch = (vdESPState.testAnchorCount or 0) - startAnchors
+                local dAC = (vdESPState.testACAnchorCount or 0) - startAC
+                local dRB = ((vdESPState.testRollbackCount or 0) - startRB) + rollbacks
+                local verdict = string.format("%s | Dist=%.0f/120 Time=%.2fs | Anch=%s(%d) AC=%d RB=%d",
+                    methodUsed, finalDist, elapsed, tostring(anchoredHit or hrp.Anchored), dAnch, dAC, dRB)
+                vdESPState.testLabStatus = (anchoredHit or hrp.Anchored or dRB > 0) and ("FAIL: " .. string.format("%.0fst", finalDist)) or ("PASS: " .. string.format("%.2fs", elapsed))
+                print("[TEST-LAB ESCAPE] " .. verdict .. string.format(" | Param=%d Delay=%dms Depth=%.1f DisCol=%s SpdSync=%s", param, labEscapeDelayMs, depth, tostring(labDisableColEnabled), tostring(labSprintBoostEnabled)))
+                WindUI:Notify({ Title = "Escape Test Result", Content = verdict, Duration = 5 })
+
+                -- Hold underground cleanly at destination until toggled OFF so Killer POV visibility can also be checked!
+                local holdPos = hrp.Position
+                while labEscapeActive and mySess == labEscapeSession and scriptRunning and c == player.Character and hrp.Parent and hum.Health > 0 do
+                    if not hrp.Anchored and (not vdESPState.testHonestAnchorMode or not anchoredHit) then
+                        if math.abs(hrp.Position.Y - holdPos.Y) > 0.25 then
+                            hrp.AssemblyLinearVelocity = Vector3.zero
+                            hrp.CFrame = CFrame.new(hrp.Position.X, holdPos.Y, hrp.Position.Z)
+                        end
+                    end
+                    RunService.Heartbeat:Wait()
+                end
+            end)
+        end
+    })
+
+    local labRepairMode = "Direct Snap Under Gen"
+    local labRepairRunning = false
+
+    V_TestLabSection:Dropdown({
+        Title = "Repair Test Mode",
+        Description = "How Run Gen Repair Test positions you before firing RepairEvent for 5s",
+        Values = {
+            "Direct Snap Under Gen",
+            "Floor-Clamped Point Under Gen",
+            "Glide 40 Studs -> Under Gen",
+            "Surface Next To Gen (Control)"
+        },
+        Value = "Direct Snap Under Gen",
+        Callback = function(v)
+            labRepairMode = v
+        end
+    })
+
+    V_TestLabSection:Toggle({
+        Title = "Run Gen Repair Test (5s)",
+        Description = "Tests 5s generator repair with selected Repair Mode & Depth and reports Start% -> End%, Dist & Anchors",
+        Default = false,
+        Callback = function(v)
+            labRepairRunning = v
+            if not v then
+                vdESPState.transitMonitoringAnchor = false
+                vdESPState.testLabStatus = "IDLE"
+                return
+            end
+
+            task.spawn(function()
+                local c = player.Character
+                local hrp = c and c:FindFirstChild("HumanoidRootPart")
+                local hum = c and c:FindFirstChildOfClass("Humanoid")
+                local remotes = getVDRemotes and getVDRemotes()
+                if not c or not hrp or not hum or hum.Health <= 0 or not remotes or not remotes.Generator or not remotes.Generator:FindFirstChild("RepairEvent") then
+                    WindUI:Notify({ Title = "Gen Repair Test", Content = "Missing character or RepairEvent!", Duration = 3 })
+                    labRepairRunning = false
+                    return
+                end
+
+                local targetPt, targetModel, bestD = nil, nil, math.huge
+                for _, pt in ipairs(CollectionService:GetTagged("GeneratorPoint")) do
+                    if pt:IsA("BasePart") and pt:IsDescendantOf(workspace) and not pt:FindFirstAncestor("Lobby") then
+                        local done = isGeneratorCompleted and isGeneratorCompleted(pt)
+                        if not done then
+                            local d = (hrp.Position - pt.Position).Magnitude
+                            if d < bestD then
+                                bestD = d
+                                targetPt = pt
+                                targetModel = (getGeneratorModel and getGeneratorModel(pt)) or pt.Parent
+                            end
+                        end
+                    end
+                end
+
+                if not targetPt then
+                    WindUI:Notify({ Title = "Gen Repair Test", Content = "No unfinished generator found!", Duration = 3 })
+                    labRepairRunning = false
+                    return
+                end
+
+                local origCF = hrp.CFrame
+                local depth = math.clamp(tonumber(vdESPState.testUndergroundDepth) or 7.0, 3.0, 12.0)
+                local _, startProg = isGeneratorCompleted(targetPt)
+                startProg = startProg or 0
+                local startAnch = vdESPState.testAnchorCount or 0
+                local startAC = vdESPState.testACAnchorCount or 0
+
+                if vdESPState.setMovementBypass then vdESPState.setMovementBypass(c, true) end
+                local targetPos
+                if labRepairMode == "Surface Next To Gen (Control)" then
+                    setPartsNoCollide(c, false)
+                    targetPos = Vector3.new(targetPt.Position.X, targetPt.Position.Y, targetPt.Position.Z)
+                elseif labRepairMode == "Floor-Clamped Point Under Gen" and vdESPState.computeGenUndergroundPoint then
+                    setPartsNoCollide(c, true)
+                    targetPos = vdESPState.computeGenUndergroundPoint(targetPt, targetModel, depth, nil)
+                else
+                    setPartsNoCollide(c, true)
+                    targetPos = targetPt.Position - Vector3.new(0, depth, 0)
+                end
+
+                vdESPState.transitMonitoringAnchor = true
+                vdESPState.testLabStatus = "REPAIR TEST: " .. labRepairMode
+                if labRepairMode == "Glide 40 Studs -> Under Gen" and vdESPState.microTransitTo then
+                    vdESPState.microTransitTo(c, hrp, targetPos, function() return labRepairRunning and scriptRunning end, true, 6.5)
+                else
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                    hrp.AssemblyAngularVelocity = Vector3.zero
+                    hrp.CFrame = CFrame.new(targetPos)
+                end
+
+                task.wait(0.15)
+                local reqId = HttpService:GenerateGUID(false)
+                pcall(function()
+                    remotes.Generator.RepairEvent:FireServer(targetPt, true, nil, reqId, c)
+                    c:SetAttribute("isRepairing", true)
+                end)
+
+                local endTest = tick() + 5.0
+                local lastPulse = 0
+                while tick() < endTest and labRepairRunning and scriptRunning and c == player.Character and hrp.Parent and hum.Health > 0 do
+                    if labRepairMode ~= "Surface Next To Gen (Control)" and not hrp.Anchored then
+                        setPartsNoCollide(c, true)
+                        hrp.AssemblyLinearVelocity = Vector3.zero
+                        hrp.AssemblyAngularVelocity = Vector3.zero
+                        hrp.CFrame = CFrame.new(targetPos)
+                    end
+                    if (tick() - lastPulse) >= 0.35 then
+                        lastPulse = tick()
+                        pcall(function()
+                            remotes.Generator.RepairEvent:FireServer(targetPt, true, nil, reqId, c)
+                            if remotes.Generator:FindFirstChild("SkillCheckResultEvent") then
+                                local m = resolveGeneratorInstance and resolveGeneratorInstance(targetPt, targetModel) or targetModel
+                                remotes.Generator.SkillCheckResultEvent:FireServer("success", 1, m, targetPt, reqId, { player.Name })
+                            end
+                        end)
+                    end
+                    RunService.Heartbeat:Wait()
+                end
+
+                pcall(function()
+                    remotes.Generator.RepairEvent:FireServer(targetPt, false, nil, reqId, c)
+                    c:SetAttribute("isRepairing", false)
+                end)
+
+                local _, endProg = isGeneratorCompleted(targetPt)
+                endProg = endProg or 0
+                local dist3d = (hrp.Position - targetPt.Position).Magnitude
+                local dAnch = (vdESPState.testAnchorCount or 0) - startAnch
+                local dAC = (vdESPState.testACAnchorCount or 0) - startAC
+                local repAttr = tostring(c:GetAttribute("isRepairing"))
+                local hasTag = tostring(CollectionService:HasTag(hrp, "doing action"))
+                local summary = string.format("%s: %.1f%%->%.1f%% (+%.1f%%) | Dist=%.1f Anch=%d AC=%d Rep=%s Tag=%s",
+                    labRepairMode, startProg, endProg, endProg - startProg, dist3d, dAnch, dAC, repAttr, hasTag)
+                vdESPState.testLabStatus = string.format("GEN +%.1f%% D=%.1f", endProg - startProg, dist3d)
+                print("[TEST-LAB REPAIR] " .. summary)
+                WindUI:Notify({ Title = "Gen Repair Test Result", Content = summary, Duration = 6 })
+
+                vdESPState.transitMonitoringAnchor = false
+                if origCF and not hrp.Anchored then
+                    hrp.CFrame = origCF
+                end
+                setPartsNoCollide(c, false)
+                if vdESPState.setMovementBypass then vdESPState.setMovementBypass(c, false) end
+                labRepairRunning = false
+            end)
         end
     })
 end)
@@ -10451,21 +11108,23 @@ local function performInstantUnfreeze()
     local isCaptured = vdESPState and vdESPState.isLocalCaptured and vdESPState.isLocalCaptured(char)
     if isHooked or isCarried or isCaptured then return end
 
-    -- 1. Anti-Anchor: Record server anchor & leave HRP untouched during EX transit sync monitoring so client POV stays honest
+    -- 1. Anti-Anchor: Record server anchor & leave HRP untouched during EX transit sync monitoring or Honest Test mode
     if hrp.Anchored then
         if vdESPState then
             vdESPState.lastServerAnchorTick = tick()
-            if vdESPState.transitMonitoringAnchor then return end
+            vdESPState.testAnchorCount = (vdESPState.testAnchorCount or 0) + 1
+            if vdESPState.transitMonitoringAnchor or vdESPState.testHonestAnchorMode then return end
         end
         hrp.Anchored = false
     end
 
-    -- 2. Clear server anti-cheat anchor attribute immediately (unless EX transit monitoring is inspecting it)
+    -- 2. Clear server anti-cheat anchor attribute immediately (unless EX transit monitoring or Honest Test mode)
     if char:GetAttribute("AC_ServerAnchor") ~= nil then
         if vdESPState then
             vdESPState.lastACAnchorTick = tick()
             vdESPState.lastServerAnchorTick = tick()
-            if vdESPState.transitMonitoringAnchor then return end
+            vdESPState.testACAnchorCount = (vdESPState.testACAnchorCount or 0) + 1
+            if vdESPState.transitMonitoringAnchor or vdESPState.testHonestAnchorMode then return end
         end
         pcall(function() char:SetAttribute("AC_ServerAnchor", nil) end)
     end
