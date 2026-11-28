@@ -92,7 +92,12 @@ local vdESPState = {
     bigJumpTimestamps = {},
     lastServerAnchorTick = 0,
     lastACAnchorTick = 0,
-    transitMonitoringAnchor = false
+    transitMonitoringAnchor = false,
+    testUndergroundEnabled = false,
+    testUndergroundSpeed = 20,
+    testUndergroundSession = 0,
+    testUndergroundHoldPos = nil,
+    testUndergroundToggle = nil
 }
 
 do
@@ -1210,6 +1215,7 @@ local function onMatchOrCharacterReset()
         vdESPState.lastServerAnchorTick = 0
         vdESPState.lastACAnchorTick = 0
         vdESPState.transitMonitoringAnchor = false
+        vdESPState.testUndergroundHoldPos = nil
     end
     lastCapturedRepairRequestId = nil
     lastCapturedGenModel = nil
@@ -1336,6 +1342,7 @@ pcall(function()
                     or (vdESPState.autoLeverEXEnabled and not vdESPState.autoLeverEXPaused)
                     or (vdESPState.autoFleeHoldPos ~= nil)
                     or (vdESPState.fleeKnockHoldPos ~= nil)
+                    or (vdESPState.testUndergroundEnabled == true)
                 if not stillNeeded then
                     if char:GetAttribute("BypassNoclipAntiCheat") == true then
                         char:SetAttribute("BypassNoclipAntiCheat", false)
@@ -9938,6 +9945,196 @@ pcall(function()
         },
         Callback = function(val)
             vdESPState.rescueEXSafeDist = tonumber(val) or 100
+        end
+    })
+end)
+
+-- ============================================================
+-- TEST UNDERGROUND TELEPORT (EX DIAGNOSTIC: STRAIGHT SINK AT STANDING POSITION)
+-- ============================================================
+pcall(function()
+    local testSteppedConn = nil
+    local testHeartbeatConn = nil
+    local testStandFloorY = nil
+
+    local function restoreTestCollisionsAndSurface(myChar, myHrp, restoreSurface)
+        pcall(function()
+            if myHrp then
+                if restoreSurface and testStandFloorY and myHrp.Position.Y < (testStandFloorY - 0.5) then
+                    myHrp.CFrame = CFrame.new(myHrp.Position.X, testStandFloorY + 3.2, myHrp.Position.Z)
+                end
+                myHrp.Anchored = false
+                myHrp.AssemblyLinearVelocity = Vector3.zero
+                myHrp.AssemblyAngularVelocity = Vector3.zero
+            end
+            if myChar then
+                for _, part in ipairs(myChar:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        if part.Name == "HumanoidRootPart" or part.Name == "Torso" or part.Name == "UpperTorso" or part.Name == "LowerTorso" then
+                            part.CanCollide = true
+                        end
+                    end
+                end
+                if vdESPState.setMovementBypass then
+                    vdESPState.setMovementBypass(myChar, false)
+                end
+            end
+        end)
+    end
+
+    local function stopTestUnderground(restoreSurface)
+        vdESPState.testUndergroundSession = (vdESPState.testUndergroundSession or 0) + 1
+        vdESPState.transitMonitoringAnchor = false
+        vdESPState.testUndergroundHoldPos = nil
+        if testSteppedConn then pcall(function() testSteppedConn:Disconnect() end) testSteppedConn = nil end
+        if testHeartbeatConn then pcall(function() testHeartbeatConn:Disconnect() end) testHeartbeatConn = nil end
+        local myChar = player.Character
+        local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if myChar and myHrp then
+            restoreTestCollisionsAndSurface(myChar, myHrp, restoreSurface)
+        end
+        testStandFloorY = nil
+    end
+
+    local function startTestUnderground()
+        stopTestUnderground(false)
+        local mySession = (vdESPState.testUndergroundSession or 0) + 1
+        vdESPState.testUndergroundSession = mySession
+
+        local myChar = player.Character
+        local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+        local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if not myChar or not myHrp or not hum or hum.Health <= 0 then
+            WindUI:Notify({ Title = "Test Underground", Content = "No active character found!", Duration = 2 })
+            return
+        end
+
+        local standPos = myHrp.Position
+        local standX, standZ = standPos.X, standPos.Z
+        local floorY = (vdESPState.findFloorYBelow and vdESPState.findFloorYBelow(standX, standPos.Y + 4.0, standZ, nil)) or (standPos.Y - 3.0)
+        testStandFloorY = floorY
+
+        local targetDepth = math.clamp(tonumber(ghostDepthOffset) or 7.0, 5.5, 9.5)
+        local targetY = floorY - targetDepth
+        local curY = standPos.Y
+        local arrived = (curY <= targetY + 0.05)
+        local testStartedAt = tick()
+        local anchorWarned = false
+
+        local function setNoCollide()
+            for _, part in ipairs(myChar:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end
+
+        local function isSessionValid()
+            return vdESPState.testUndergroundEnabled == true
+                and mySession == vdESPState.testUndergroundSession
+                and scriptRunning
+                and myChar == player.Character
+                and myChar.Parent ~= nil
+                and myHrp.Parent ~= nil
+                and hum.Parent ~= nil
+                and hum.Health > 0
+        end
+
+        local function checkAnchorRejection()
+            if anchorWarned then return end
+            local acTick = math.max(vdESPState.lastServerAnchorTick or 0, vdESPState.lastACAnchorTick or 0)
+            local anchoredNow = myHrp.Anchored or (myChar:GetAttribute("AC_ServerAnchor") ~= nil) or (acTick >= testStartedAt)
+            if anchoredNow then
+                anchorWarned = true
+                local sp = tonumber(vdESPState.testUndergroundSpeed) or 20
+                WindUI:Notify({
+                    Title = "Test Underground",
+                    Content = string.format("⚠️ Server anchored / rejected at %d studs/s!", math.floor(sp + 0.5)),
+                    Duration = 3
+                })
+            end
+        end
+
+        if vdESPState.setMovementBypass then
+            vdESPState.setMovementBypass(myChar, true)
+        end
+        setNoCollide()
+        vdESPState.transitMonitoringAnchor = not arrived
+        vdESPState.testUndergroundHoldPos = Vector3.new(standX, curY, standZ)
+
+        testSteppedConn = RunService.Stepped:Connect(function()
+            if not isSessionValid() then return end
+            pcall(function()
+                setNoCollide()
+                if hum.PlatformStand then hum.PlatformStand = false end
+                if hum.Sit then hum.Sit = false end
+                local hold = vdESPState.testUndergroundHoldPos
+                if hold and not myHrp.Anchored and (myHrp.Position - hold).Magnitude > 0.1 then
+                    myHrp.AssemblyLinearVelocity = Vector3.zero
+                    myHrp.AssemblyAngularVelocity = Vector3.zero
+                    myHrp.CFrame = CFrame.new(hold)
+                end
+            end)
+        end)
+
+        testHeartbeatConn = RunService.Heartbeat:Connect(function(dt)
+            if not isSessionValid() then
+                stopTestUnderground(false)
+                return
+            end
+            pcall(function()
+                checkAnchorRejection()
+                if not arrived then
+                    local speed = math.clamp(tonumber(vdESPState.testUndergroundSpeed) or 20, 2, 450)
+                    local stepY = math.max(0.05, (dt or 0.016) * speed)
+                    curY = curY - stepY
+                    if curY <= targetY + 0.05 then
+                        curY = targetY
+                        arrived = true
+                        vdESPState.transitMonitoringAnchor = false
+                        WindUI:Notify({
+                            Title = "Test Underground",
+                            Content = string.format("Underground reached (%.1f studs below floor at %d studs/s)", targetDepth, math.floor(speed + 0.5)),
+                            Duration = 2
+                        })
+                    end
+                end
+                local targetHold = Vector3.new(standX, curY, standZ)
+                vdESPState.testUndergroundHoldPos = targetHold
+                if not myHrp.Anchored then
+                    myHrp.AssemblyLinearVelocity = Vector3.zero
+                    myHrp.AssemblyAngularVelocity = Vector3.zero
+                    myHrp.CFrame = CFrame.new(targetHold)
+                end
+            end)
+        end)
+    end
+
+    vdESPState.testUndergroundToggle = V_SurvivorEXSection:Toggle({
+        Title = "Test Underground Teleport",
+        Description = "Go straight underground where you stand at the selected speed (returns above ground when off)",
+        Default = false,
+        Callback = function(v)
+            vdESPState.testUndergroundEnabled = v
+            if v then
+                startTestUnderground()
+            else
+                stopTestUnderground(true)
+            end
+        end
+    })
+
+    V_SurvivorEXSection:Slider({
+        Title = "Test Underground Speed",
+        Description = "Speed to descend underground in studs/sec (2 - 450, 450 = ~instant)",
+        Step = 1,
+        Value = {
+            Min = 2,
+            Max = 450,
+            Default = 20,
+        },
+        Callback = function(val)
+            vdESPState.testUndergroundSpeed = tonumber(val) or 20
         end
     })
 end)
